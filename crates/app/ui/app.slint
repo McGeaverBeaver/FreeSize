@@ -1,0 +1,862 @@
+import { Button, LineEdit, ComboBox, TabWidget, ListView, Palette, Spinner } from "std-widgets.slint";
+
+export struct TreeRow {
+    id: int,
+    depth: int,
+    name: string,
+    size: string,
+    percent: string,
+    fraction: float,
+    expandable: bool,
+    expanded: bool,
+    is-dir: bool,
+    summary: bool,
+    note: string,
+}
+
+export struct MapRect {
+    id: int,
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    color: color,
+    text-color: color,
+    label: string,
+    nested: bool,
+}
+
+export struct FileRow {
+    id: int,
+    name: string,
+    folder: string,
+    size: string,
+    fraction: float,
+}
+
+export struct TypeRow {
+    label: string,
+    size: string,
+    files: string,
+    fraction: float,
+    color: color,
+}
+
+export struct LocationRow {
+    label: string,
+    path: string,
+    detail: string,
+    fraction: float,
+}
+
+global Theme {
+    out property <color> dim: Palette.foreground.transparentize(45%);
+    out property <color> danger: #d64545;
+    out property <color> track: Palette.color-scheme == ColorScheme.dark ? #ffffff1f : #0000001a;
+}
+
+component SizeBar inherits Rectangle {
+    in property <float> fraction;
+    in property <color> fill: Palette.accent-background;
+    height: 8px;
+    border-radius: 3px;
+    background: Theme.track;
+    Rectangle {
+        x: 0;
+        width: parent.width * root.fraction;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: root.fill;
+    }
+}
+
+component Chevron inherits Rectangle {
+    in property <bool> expanded;
+    in property <color> tint;
+    width: 16px;
+    height: 16px;
+    Path {
+        width: 9px;
+        height: 9px;
+        viewbox-width: 8;
+        viewbox-height: 8;
+        commands: root.expanded ? "M 0 2 L 8 2 L 4 7 Z" : "M 2 0 L 7 4 L 2 8 Z";
+        fill: root.tint;
+    }
+}
+
+component TreePane inherits Rectangle {
+    in property <[TreeRow]> rows;
+    in property <int> selected-id;
+    in property <length> row-height;
+    in property <bool> compact;
+    in-out property <length> scroll-y;
+    callback toggle(int);
+    callback select(int);
+
+    list := ListView {
+        content-y <=> root.scroll-y;
+        for row[index] in root.rows: Rectangle {
+            property <bool> selected: row.id == root.selected-id && !row.summary;
+            height: root.row-height;
+            background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
+
+            touch := TouchArea {
+                clicked => {
+                    if (!row.summary) {
+                        root.select(row.id);
+                    }
+                }
+                double-clicked => {
+                    if (row.expandable) {
+                        root.toggle(index);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 4px + row.depth * 14px;
+                padding-right: 8px;
+                spacing: 6px;
+                Rectangle {
+                    width: 18px;
+                    if row.expandable: Chevron {
+                        expanded: row.expanded;
+                        tint: selected ? Palette.selection-foreground : Palette.foreground;
+                        TouchArea {
+                            clicked => {
+                                root.toggle(index);
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: row.name;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    font-weight: row.is-dir ? 600 : 400;
+                    font-italic: row.summary;
+                    color: selected ? Palette.selection-foreground : row.summary ? Theme.dim : Palette.foreground;
+                }
+
+                if row.note != "": Text {
+                    text: row.note;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    color: Theme.danger;
+                }
+                Rectangle {
+                    width: root.compact ? 44px : 64px;
+                    SizeBar {
+                        width: 100%;
+                        fraction: row.fraction;
+                        fill: selected ? Palette.selection-foreground : Palette.accent-background;
+                    }
+                }
+
+                if !root.compact: Text {
+                    text: row.percent;
+                    width: 44px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    font-size: 12px;
+                    color: selected ? Palette.selection-foreground : Theme.dim;
+                }
+
+                Text {
+                    text: row.size;
+                    width: 70px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    color: selected ? Palette.selection-foreground : Palette.foreground;
+                }
+            }
+        }
+    }
+}
+
+component TreemapPane inherits Rectangle {
+    in property <[MapRect]> rects;
+    in property <int> selected-id;
+    callback select(int);
+    callback resized(length, length);
+
+    clip: true;
+    background: Theme.track;
+
+    init => {
+        root.resized(self.width, self.height);
+    }
+    changed width => {
+        root.resized(self.width, self.height);
+    }
+    changed height => {
+        root.resized(self.width, self.height);
+    }
+
+    for r in root.rects: Rectangle {
+        x: r.x;
+        y: r.y;
+        width: r.width;
+        height: r.height;
+        background: r.color;
+        border-width: r.id == root.selected-id ? 2px : 1px;
+        border-color: r.id == root.selected-id ? Palette.foreground : r.color.darker(40%);
+
+        if r.label != "": Text {
+            x: 4px;
+            y: 2px;
+            width: parent.width - 8px;
+            height: r.nested ? 14px : parent.height - 4px;
+            text: r.label;
+            color: r.text-color;
+            font-size: 11px;
+            overflow: elide;
+            wrap: r.nested ? no-wrap : word-wrap;
+            vertical-alignment: top;
+        }
+        TouchArea {
+            clicked => {
+                root.select(r.id);
+            }
+        }
+    }
+}
+
+component LargestPane inherits Rectangle {
+    in property <[FileRow]> files;
+    in property <int> selected-id;
+    callback select(int);
+
+    ListView {
+        for file in root.files: Rectangle {
+            property <bool> selected: file.id == root.selected-id;
+            height: 46px;
+            background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
+            touch := TouchArea {
+                clicked => {
+                    root.select(file.id);
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: file.name;
+                        overflow: elide;
+                        color: selected ? Palette.selection-foreground : Palette.foreground;
+                    }
+
+                    Text {
+                        text: file.folder;
+                        overflow: elide;
+                        font-size: 11px;
+                        color: selected ? Palette.selection-foreground : Theme.dim;
+                    }
+                }
+
+                Rectangle {
+                    width: 64px;
+                    SizeBar {
+                        width: 100%;
+                        fraction: file.fraction;
+                        fill: selected ? Palette.selection-foreground : Palette.accent-background;
+                    }
+                }
+
+                Text {
+                    text: file.size;
+                    width: 70px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    color: selected ? Palette.selection-foreground : Palette.foreground;
+                }
+            }
+        }
+    }
+}
+
+component TypesPane inherits Rectangle {
+    in property <[TypeRow]> types;
+
+    ListView {
+        for t in root.types: Rectangle {
+            height: 36px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 8px;
+                Rectangle {
+                    width: 12px;
+                    Rectangle {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 3px;
+                        background: t.color;
+                    }
+                }
+
+                Text {
+                    text: t.label;
+                    width: 110px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: t.files;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    color: Theme.dim;
+                    font-size: 12px;
+                    overflow: elide;
+                }
+
+                Rectangle {
+                    width: 80px;
+                    SizeBar {
+                        width: 100%;
+                        fraction: t.fraction;
+                        fill: t.color;
+                    }
+                }
+
+                Text {
+                    text: t.size;
+                    width: 70px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component LocationsPane inherits Rectangle {
+    in property <[LocationRow]> locations;
+    in property <length> card-height;
+    callback choose(string);
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        Text {
+            text: "Choose a drive or folder to analyze";
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        ListView {
+            for loc in root.locations: Rectangle {
+                height: root.card-height + 10px;
+                Rectangle {
+                    y: 0;
+                    height: root.card-height;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+                    background: touch.has-hover ? Palette.alternate-background : Palette.control-background;
+                    touch := TouchArea {
+                        clicked => {
+                            root.choose(loc.path);
+                        }
+                    }
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: loc.label;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: loc.detail;
+                                horizontal-stretch: 1;
+                                horizontal-alignment: right;
+                                color: Theme.dim;
+                                font-size: 12px;
+                            }
+                        }
+
+                        SizeBar {
+                            fraction: loc.fraction;
+                        }
+
+                        Text {
+                            text: loc.path;
+                            font-size: 11px;
+                            color: Theme.dim;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ScanningPane inherits Rectangle {
+    in property <string> title;
+    in property <string> counts;
+    in property <string> current;
+    callback cancel();
+
+    VerticalLayout {
+        alignment: center;
+        padding: 24px;
+        spacing: 14px;
+        HorizontalLayout {
+            alignment: center;
+            Spinner {
+                indeterminate: true;
+                width: 48px;
+                height: 48px;
+            }
+        }
+
+        Text {
+            text: root.title;
+            font-size: 18px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.counts;
+            horizontal-alignment: center;
+        }
+
+        Text {
+            text: root.current;
+            horizontal-alignment: center;
+            font-size: 11px;
+            color: Theme.dim;
+            overflow: elide;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            Button {
+                text: "Cancel";
+                clicked => {
+                    root.cancel();
+                }
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "DiskTree";
+    icon: @image-url("icon.png");
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    min-width: 320px;
+    min-height: 420px;
+    background: Palette.background;
+
+    in-out property <string> path;
+    in property <bool> scanning;
+    in property <bool> has-tree;
+    in property <string> status;
+    in property <string> scan-title;
+    in property <string> scan-counts;
+    in property <string> scan-current;
+    in property <[LocationRow]> locations;
+    in property <[TreeRow]> tree-rows;
+    in property <[MapRect]> map-rects;
+    in property <[FileRow]> largest-files;
+    in property <[TypeRow]> file-types;
+    in property <string> focus-label;
+    in property <int> selected-id: -1;
+    in property <string> selected-title;
+    in property <string> selected-detail;
+    in property <bool> can-delete;
+    in property <bool> can-go-up;
+    in property <bool> can-reveal;
+    in property <bool> can-browse;
+    in property <string> delete-label: "Move to Trash";
+    in property <bool> needs-permission;
+    in property <bool> confirm-open;
+    in property <string> confirm-text;
+    in-out property <bool> size-on-disk: true;
+    in-out property <length> tree-scroll;
+
+    // Set from `changed width` rather than bound to it: a binding would make
+    // the window's size depend on itself through the layout.
+    out property <bool> compact;
+    out property <length> tree-row-height: root.compact ? 40px : 28px;
+
+    init => {
+        root.compact = root.width < 760px;
+    }
+    changed width => {
+        root.compact = root.width < 760px;
+    }
+
+    callback start-scan(string);
+    callback cancel-scan();
+    callback browse();
+    callback show-locations();
+    callback toggle-row(int);
+    callback select-node(int, bool);
+    callback map-resized(length, length);
+    callback size-mode-changed();
+    callback go-up();
+    callback reveal-selected();
+    callback delete-requested();
+    callback delete-confirmed();
+    callback delete-cancelled();
+    callback grant-permission();
+
+    VerticalLayout {
+        // Toolbar
+        Rectangle {
+            background: Palette.alternate-background;
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 6px;
+                if root.has-tree && !root.scanning: Button {
+                    text: "Drives";
+                    clicked => {
+                        root.show-locations();
+                    }
+                }
+                LineEdit {
+                    text <=> root.path;
+                    placeholder-text: "Folder to scan";
+                    horizontal-stretch: 1;
+                    enabled: !root.scanning;
+                    accepted(text) => {
+                        root.start-scan(text);
+                    }
+                }
+
+                if root.can-browse: Button {
+                    text: "Browse…";
+                    enabled: !root.scanning;
+                    clicked => {
+                        root.browse();
+                    }
+                }
+                Button {
+                    text: root.scanning ? "Cancel" : "Scan";
+                    primary: !root.scanning;
+                    clicked => {
+                        if (root.scanning) {
+                            root.cancel-scan();
+                        } else {
+                            root.start-scan(root.path);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Android storage permission
+        if root.needs-permission: Rectangle {
+            background: #f0b42933;
+            HorizontalLayout {
+                padding: 10px;
+                spacing: 10px;
+                Text {
+                    text: "DiskTree needs “All files access” to see everything on your storage.";
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                Button {
+                    text: "Grant access";
+                    primary: true;
+                    clicked => {
+                        root.grant-permission();
+                    }
+                }
+            }
+        }
+
+        // Status line
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 8px;
+            padding-top: 4px;
+            padding-bottom: 4px;
+            spacing: 8px;
+            Text {
+                text: root.status;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+                color: Theme.dim;
+                font-size: 12px;
+            }
+
+            if root.has-tree: ComboBox {
+                width: 150px;
+                model: ["Size on disk", "File size"];
+                current-index: 0;
+                selected => {
+                    root.size-on-disk = self.current-index == 0;
+                    root.size-mode-changed();
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Palette.border;
+        }
+
+        // Content
+        if root.scanning: ScanningPane {
+            vertical-stretch: 1;
+            title: root.scan-title;
+            counts: root.scan-counts;
+            current: root.scan-current;
+            cancel => {
+                root.cancel-scan();
+            }
+        }
+        if !root.scanning && !root.has-tree: LocationsPane {
+            vertical-stretch: 1;
+            locations: root.locations;
+            card-height: root.compact ? 86px : 78px;
+            choose(path) => {
+                root.path = path;
+                root.start-scan(path);
+            }
+        }
+        if !root.scanning && root.has-tree && !root.compact: HorizontalLayout {
+            vertical-stretch: 1;
+            TreePane {
+                horizontal-stretch: 45;
+                rows: root.tree-rows;
+                selected-id: root.selected-id;
+                row-height: root.tree-row-height;
+                compact: root.compact;
+                scroll-y <=> root.tree-scroll;
+                toggle(index) => {
+                    root.toggle-row(index);
+                }
+                select(id) => {
+                    root.select-node(id, false);
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Palette.border;
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 55;
+                Text {
+                    text: root.focus-label;
+                    overflow: elide;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    height: 28px;
+                    horizontal-alignment: center;
+                }
+
+                TabWidget {
+                    Tab {
+                        title: "Treemap";
+                        TreemapPane {
+                            rects: root.map-rects;
+                            selected-id: root.selected-id;
+                            select(id) => {
+                                root.select-node(id, true);
+                            }
+                            resized(w, h) => {
+                                root.map-resized(w, h);
+                            }
+                        }
+                    }
+
+                    Tab {
+                        title: "Largest files";
+                        LargestPane {
+                            files: root.largest-files;
+                            selected-id: root.selected-id;
+                            select(id) => {
+                                root.select-node(id, true);
+                            }
+                        }
+                    }
+
+                    Tab {
+                        title: "File types";
+                        TypesPane {
+                            types: root.file-types;
+                        }
+                    }
+                }
+            }
+        }
+        if !root.scanning && root.has-tree && root.compact: TabWidget {
+            vertical-stretch: 1;
+            Tab {
+                title: "Folders";
+                TreePane {
+                    rows: root.tree-rows;
+                    selected-id: root.selected-id;
+                    row-height: root.tree-row-height;
+                    compact: root.compact;
+                    scroll-y <=> root.tree-scroll;
+                    toggle(index) => {
+                        root.toggle-row(index);
+                    }
+                    select(id) => {
+                        root.select-node(id, false);
+                    }
+                }
+            }
+
+            Tab {
+                title: "Map";
+                VerticalLayout {
+                    Text {
+                        text: root.focus-label;
+                        overflow: elide;
+                        font-weight: 600;
+                        height: 28px;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+
+                    TreemapPane {
+                        rects: root.map-rects;
+                        selected-id: root.selected-id;
+                        select(id) => {
+                            root.select-node(id, false);
+                        }
+                        resized(w, h) => {
+                            root.map-resized(w, h);
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Files";
+                LargestPane {
+                    files: root.largest-files;
+                    selected-id: root.selected-id;
+                    select(id) => {
+                        root.select-node(id, true);
+                    }
+                }
+            }
+
+            Tab {
+                title: "Types";
+                TypesPane {
+                    types: root.file-types;
+                }
+            }
+        }
+
+        // Selection bar
+        if !root.scanning && root.has-tree: Rectangle {
+            background: Palette.alternate-background;
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 6px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text {
+                        text: root.selected-title;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: root.selected-detail;
+                        font-size: 11px;
+                        color: Theme.dim;
+                        overflow: elide;
+                    }
+                }
+
+                Button {
+                    text: "Up";
+                    enabled: root.can-go-up;
+                    clicked => {
+                        root.go-up();
+                    }
+                }
+
+                if root.can-reveal: Button {
+                    text: root.compact ? "Open" : "Show in folder";
+                    clicked => {
+                        root.reveal-selected();
+                    }
+                }
+                Button {
+                    text: "Delete";
+                    enabled: root.can-delete;
+                    clicked => {
+                        root.delete-requested();
+                    }
+                }
+            }
+        }
+    }
+
+    // Delete confirmation
+    if root.confirm-open: Rectangle {
+        background: #00000088;
+        TouchArea { }
+
+        Rectangle {
+            width: min(420px, parent.width - 32px);
+            height: dialog.preferred-height;
+            border-radius: 10px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            dialog := VerticalLayout {
+                padding: 18px;
+                spacing: 16px;
+                Text {
+                    text: root.confirm-text;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.delete-cancelled();
+                        }
+                    }
+
+                    Button {
+                        text: root.delete-label;
+                        primary: true;
+                        clicked => {
+                            root.delete-confirmed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

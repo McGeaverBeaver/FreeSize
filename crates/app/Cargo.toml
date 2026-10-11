@@ -1,0 +1,57 @@
+[package]
+name = "disktree-app"
+description = "DiskTree desktop and Android app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lib]
+name = "disktree_app"
+# cdylib is what Android loads; desktop builds use the binary below.
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "disktree-gui"
+path = "src/main.rs"
+
+[dependencies]
+disktree-core.workspace = true
+slint = "1.18.1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd = "0.17.2"
+trash = "5.2.9"
+
+[target.'cfg(target_os = "android")'.dependencies]
+slint = { version = "1.18.1", features = ["backend-android-activity-06"] }
+jni = "0.22.4"
+
+[build-dependencies]
+slint-build = "1.18.1"
+
+# Read by `cargo apk build`.
+[package.metadata.android]
+package = "dev.disktree.app"
+apk_name = "DiskTree"
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 35
+
+[package.metadata.android.application]
+label = "DiskTree"
+
+# Android 10 and older: classic storage permissions.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_EXTERNAL_STORAGE"
+max_sdk_version = 32
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.WRITE_EXTERNAL_STORAGE"
+max_sdk_version = 29
+
+# Android 11+: "All files access", needed to see all of shared storage.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.MANAGE_EXTERNAL_STORAGE"

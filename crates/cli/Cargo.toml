@@ -1,0 +1,15 @@
+[package]
+name = "disktree-cli"
+description = "Command-line disk usage analyzer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "disktree"
+path = "src/main.rs"
+
+[dependencies]
+disktree-core.workspace = true
+clap = { version = "4.6.7", features = ["derive"] }
