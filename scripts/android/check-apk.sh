@@ -31,8 +31,15 @@ for abi in arm64-v8a x86_64; do
     if grep -q "'$abi'" <<<"$abis"; then pass "contains $abi code"; else fail "no $abi native code"; fi
 done
 
-min_sdk="$(sed -n "s/^sdkVersion:'\([0-9]*\)'.*/\1/p" <<<"$badging")"
-target_sdk="$(sed -n "s/^targetSdkVersion:'\([0-9]*\)'.*/\1/p" <<<"$badging")"
+manifest="$("$build_tools/aapt2" dump xmltree --file AndroidManifest.xml "$apk")"
+grep -A3 "E: uses-sdk" <<<"$manifest" || true
+# Read SDK levels from the manifest itself; badging's field names vary between
+# build-tools versions.
+sdk_attr() {
+    sed -n "s/.*android:$1([^)]*)=\([0-9][0-9]*\).*/\1/p" <<<"$manifest" | head -n 1
+}
+min_sdk="$(sdk_attr minSdkVersion)"
+target_sdk="$(sdk_attr targetSdkVersion)"
 if [ "${min_sdk:-0}" -ge 26 ]; then pass "minSdk $min_sdk"; else fail "minSdk is ${min_sdk:-missing}"; fi
 # Android 14+ refuses targetSdk < 23; Google Play wants a recent one.
 if [ "${target_sdk:-0}" -ge 35 ]; then pass "targetSdk $target_sdk"; else fail "targetSdk ${target_sdk:-missing} is too old"; fi
@@ -41,7 +48,6 @@ if grep -q "^launchable-activity:" <<<"$badging"; then pass "has a launcher acti
 if grep -q "^application-debuggable" <<<"$badging"; then fail "release APK is debuggable"; else pass "not debuggable"; fi
 
 # Android 12+ refuses to install apps whose launcher activity doesn't say exported.
-manifest="$("$build_tools/aapt2" dump xmltree --file AndroidManifest.xml "$apk")"
 if grep -Eq 'exported\(0x01010010\)=(true|\(type 0x12\)0xffffffff)' <<<"$manifest"; then
     pass "launcher activity is exported"
 else
