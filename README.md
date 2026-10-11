@@ -48,14 +48,20 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 
 ## Building
 
-You need a recent stable Rust (1.92+).
+Everything builds on your own machine. You need a recent stable Rust (1.92+)
+from [rustup.rs](https://rustup.rs).
 
-**Linux** also needs the fontconfig headers:
+- **Windows**: run `rustup-init.exe` and let it install the Visual Studio C++
+  build tools when it asks.
+- **Linux** also needs a C compiler and the fontconfig headers:
 
-```sh
-sudo apt install libfontconfig1-dev   # Debian/Ubuntu
-sudo dnf install fontconfig-devel     # Fedora
-```
+  ```sh
+  sudo apt install build-essential pkg-config libfontconfig1-dev   # Debian/Ubuntu
+  sudo dnf install gcc pkgconf fontconfig-devel                    # Fedora
+  ```
+
+Get the code with `git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid`
+and run the commands below inside that folder. `git pull` fetches updates.
 
 ### Desktop app
 
@@ -64,8 +70,10 @@ cargo run --release -p disktree-app            # opens the drive picker
 cargo run --release -p disktree-app -- ~/Videos   # scans a folder right away
 ```
 
-The binary is `target/release/disktree-gui`. On Windows release builds it
-doesn't open a console window.
+The binary is `target/release/disktree-gui` (`disktree-gui.exe` on Windows).
+It's a single file you can copy anywhere. On Windows, release builds don't open
+a console window. `cargo build --release -p disktree-app -p disktree-cli`
+builds the app and the command line without starting anything.
 
 ### Command line
 
@@ -88,23 +96,54 @@ Run `disktree --help` for all options (`--apparent` for file sizes,
 
 ### Android
 
-You need:
+The APK builds on Linux, or on Windows inside WSL: run `wsl --install` once in
+an administrator PowerShell, restart, and use the Ubuntu terminal it adds. In
+WSL, keep the repository in your Linux home folder rather than under `/mnt/c`,
+which is much slower.
 
-- the Android SDK with the `platforms;android-36` package and build tools,
-- the NDK,
-- JDK 17, and `cargo-apk`.
-
-Android Studio's SDK Manager is the easiest way to get the SDK and NDK.
+One-time setup (Debian/Ubuntu and WSL; other distros need the same packages):
 
 ```sh
-export ANDROID_HOME=~/Android/Sdk
-export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/<version>
-rustup target add aarch64-linux-android x86_64-linux-android
-cargo install cargo-apk
-
-scripts/android/build-apk.sh                       # -> target/release/apk/DiskTree.apk
-adb install -r target/release/apk/DiskTree.apk     # phone with USB debugging on
+sudo apt install curl unzip openjdk-17-jdk-headless build-essential   # or openjdk-21-…
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if you don't have Rust
+git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid
+cd TreeSizeCloneAndroid
+scripts/android/setup-linux.sh
 ```
+
+`setup-linux.sh` downloads the Android command-line tools, SDK platform 36,
+build tools, NDK and adb into `~/Android/Sdk` (a few GB), then adds the Rust
+Android targets and `cargo-apk`. It doesn't need root. To use an existing SDK,
+for example Android Studio's, set `ANDROID_HOME` to it first.
+
+Build:
+
+```sh
+git pull
+scripts/android/build-apk.sh      # -> target/release/apk/DiskTree.apk
+```
+
+The first build takes several minutes; later ones only rebuild what changed.
+It also creates the signing key that every later build reuses (see
+[Android signing key](#android-signing-key)), so new builds install over the
+old one and keep DiskTree's permissions. A copy from a GitHub release was
+signed with a different key, so uninstall that once first.
+
+To get the APK onto the phone, either:
+
+- copy it over (USB cable, Google Drive, …) and open it on the phone. From
+  WSL, `cp target/release/apk/DiskTree.apk /mnt/c/Users/<you>/Downloads/` puts
+  it in your Windows Downloads folder.
+- or install it over Wi-Fi with adb. Turn on Developer options (Settings →
+  About phone → tap *Build number* seven times), then Settings → System →
+  Developer options → *Wireless debugging* → *Pair device with pairing code*:
+
+  ```sh
+  adb=~/Android/Sdk/platform-tools/adb
+  $adb pair 192.168.1.50:37123      # address and code from the pairing dialog
+  $adb connect 192.168.1.50:41234   # address on the Wireless debugging screen
+  $adb install -r target/release/apk/DiskTree.apk
+  ```
 
 `build-apk.sh` produces one APK for every device: arm64 phones plus x86_64
 emulators and Chromebooks. It links the native code for 16 KB memory pages and
@@ -168,46 +207,60 @@ zooms the treemap out, then returns to the drive list before leaving the app.
 | *Apps & system* stays at "Allow usage access" | DiskTree isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
 | Usage access switch is greyed out, says "Controlled by Restricted Setting", or shows "App was denied access" | Android 13+ blocks Usage access for apps installed from a downloaded file (restricted settings). | Settings → Apps → DiskTree → ⋮ → *Allow restricted settings*, then turn Usage access on. If ⋮ isn't there, try to turn the switch on once first; the menu only appears after Android has blocked it. |
 | "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `disktree-android.apk` from v0.1.1 or later. |
-| "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key. | Uninstall DiskTree, then install the new APK. Set up a release key (below) so future updates install over each other. |
+| "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key. | Uninstall DiskTree, then install the new APK. Build every version with the same signing key (below) so future updates install over each other. |
 | Installing apps from outside the Play Store is blocked entirely | Advanced Protection is on (Settings → Security & privacy), or a work profile forbids it. | Install with `adb install`, or turn that setting off. |
 | "App blocked" because the developer isn't verified | Google is rolling out developer verification region by region. | `adb install` still works. Registering the developer and package `dev.disktree.app` with Google removes the block for everyone. |
 | A folder shows "no access" | `Android/data`, `Android/obb` and other apps' private files are off limits to every app on Android 11+. | Nothing to fix; that's an Android rule. |
 
-## CI and releases
+## Releases
+
+Builds happen locally (see [Building](#building)). The GitHub Actions
+workflows don't run on pushes or tags; they only run when started by hand from
+the Actions tab:
 
 - **CI** (`.github/workflows/ci.yml`) runs formatting, clippy and tests on
-  Windows, macOS and Linux. It also builds and checks the Android APK, which
-  you can download from the run's artifacts.
+  Windows, macOS and Linux, and builds and checks the Android APK.
 - **Release** (`.github/workflows/release.yml`) builds Windows, macOS and
-  Linux archives plus `disktree-android.apk`, and attaches them to a GitHub
-  release. It runs when a tag starting with `v` or `V` is pushed, which
-  includes creating a release with a new tag on GitHub. You can also run it
-  without a tag: Actions → Release → Run workflow, pick the branch, and enter
-  a tag such as `v0.1.3`. It builds that branch and publishes the release,
-  creating the tag.
+  Linux archives plus `disktree-android.apk` and publishes them as a GitHub
+  release: Actions → Release → Run workflow, pick the branch, and enter a tag
+  such as `v0.1.4`.
 
-Before tagging, bump `version` in the root `Cargo.toml`. The Android version
-code is derived from it, and Android only installs an update with a higher one.
+To publish files you built yourself instead, use Releases → *Draft a new
+release* on GitHub, create the tag there and attach the files.
+
+Before a release, bump `version` in the root `Cargo.toml`. The Android version
+code is derived from it, and Android won't install a lower version over a
+higher one.
+
+Before pushing, run the same checks CI does:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
 
 ### Android signing key
 
 Android only installs an update if it's signed with the same key as the
-installed app. Without a key, CI signs with a new throwaway key every time, so
-each build has to be uninstalled before the next one installs. Create a key
-once and store it as two repository secrets
-(Settings → Secrets and variables → Actions):
+installed app. On the first build, `build-apk.sh` creates
+`~/.android/disktree-release.keystore` and a random password in
+`~/.android/disktree-release.keystore.password`, and signs every later build
+with them.
 
-```sh
-keytool -genkeypair -keystore disktree-release.keystore -alias release \
-    -keyalg RSA -keysize 4096 -validity 10000
-base64 -w0 disktree-release.keystore   # value for ANDROID_KEYSTORE_BASE64
-```
+**Back up both files** (a password manager, a USB stick). If you lose them,
+the next build can't update the installed app: you'd have to uninstall it and
+set up its permissions again. To build on another machine, copy both files
+into its `~/.android/`.
 
-- `ANDROID_KEYSTORE_BASE64`: the output of the `base64` command.
-- `ANDROID_KEYSTORE_PASSWORD`: the password you chose.
+To sign with a different key, set `CARGO_APK_RELEASE_KEYSTORE` and
+`CARGO_APK_RELEASE_KEYSTORE_PASSWORD`. The Release workflow on GitHub signs
+with a throwaway key unless the repository has these two secrets (Settings →
+Secrets and variables → Actions):
 
-Back up the keystore. If you lose it, nobody can update the installed app
-without uninstalling it first.
+- `ANDROID_KEYSTORE_BASE64`: the output of
+  `base64 -w0 ~/.android/disktree-release.keystore`
+- `ANDROID_KEYSTORE_PASSWORD`: the contents of the password file.
 
 ## Project layout
 

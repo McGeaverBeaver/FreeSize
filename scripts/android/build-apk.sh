@@ -2,20 +2,22 @@
 # Builds the release APK: one universal file (arm64-v8a + x86_64), native code
 # aligned for 16 KB memory pages, signed, and checked with check-apk.sh.
 #
-# Needs: ANDROID_HOME (SDK with platforms;android-36 and build-tools),
-# ANDROID_NDK_ROOT (NDK), a JDK, `cargo install cargo-apk` and the Rust targets
-# aarch64-linux-android and x86_64-linux-android.
+# Needs the Android SDK and NDK, a JDK, cargo-apk and the Rust Android
+# targets; scripts/android/setup-linux.sh installs them all. The SDK is looked
+# up in ANDROID_HOME, then ~/Android/Sdk.
 #
-# Signing: set CARGO_APK_RELEASE_KEYSTORE and CARGO_APK_RELEASE_KEYSTORE_PASSWORD.
-# Without them a throwaway key is generated. That's fine for testing, but
-# Android only installs an update over an app signed with the same key.
+# Signing: Android only installs an update over an app signed with the same
+# key. The first build creates a key in ~/.android/disktree-release.keystore
+# (password next to it in disktree-release.keystore.password) and every later
+# build reuses it. Back both files up. To sign with another key, set
+# CARGO_APK_RELEASE_KEYSTORE and CARGO_APK_RELEASE_KEYSTORE_PASSWORD.
 #
 # Usage: scripts/android/build-apk.sh [OUTPUT.apk]
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+# shellcheck source=scripts/android/env.sh
+source scripts/android/env.sh
 
-: "${ANDROID_HOME:?set ANDROID_HOME to the Android SDK}"
-: "${ANDROID_NDK_ROOT:?set ANDROID_NDK_ROOT to the Android NDK}"
 output="${1:-target/release/apk/DiskTree.apk}"
 
 # Android 15+ devices may use 16 KB memory pages, and Google Play requires
@@ -24,21 +26,34 @@ output="${1:-target/release/apk/DiskTree.apk}"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Clink-arg=-Wl,-z,max-page-size=16384"
 
 if [ -z "${CARGO_APK_RELEASE_KEYSTORE:-}" ]; then
-    echo "warning: no release keystore set; signing with a throwaway key" >&2
-    keystore="$PWD/target/throwaway-release.keystore"
+    key_dir="${DISKTREE_KEY_DIR:-$HOME/.android}"
+    keystore="$key_dir/disktree-release.keystore"
+    password_file="$keystore.password"
     if [ ! -f "$keystore" ]; then
-        mkdir -p target
-        keytool -genkeypair -keystore "$keystore" -alias release -keyalg RSA -keysize 2048 \
-            -validity 10000 -storepass android -keypass android \
-            -dname "CN=DiskTree unofficial build" >/dev/null
+        mkdir -p "$key_dir"
+        (umask 077 && head -c 24 /dev/urandom | base64 | tr -d '/+=\n' >"$password_file")
+        DISKTREE_KEY_PASSWORD="$(cat "$password_file")" keytool -genkeypair \
+            -keystore "$keystore" -alias release -keyalg RSA -keysize 4096 -validity 10000 \
+            -storepass:env DISKTREE_KEY_PASSWORD -keypass:env DISKTREE_KEY_PASSWORD \
+            -dname "CN=DiskTree" >/dev/null
+        chmod 600 "$keystore"
+        echo "Created the signing key $keystore" >&2
+        echo "and its password file $password_file. Back up both: Android only" >&2
+        echo "installs updates signed with the same key." >&2
+    fi
+    if [ ! -f "$password_file" ]; then
+        echo "error: $keystore exists but $password_file is missing" >&2
+        exit 1
     fi
     export CARGO_APK_RELEASE_KEYSTORE="$keystore"
-    export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+    CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$(cat "$password_file")"
+    export CARGO_APK_RELEASE_KEYSTORE_PASSWORD
 fi
 
 # cargo-apk runs apksigner from the APK's folder, so the path must be absolute.
 keystore_dir="$(cd "$(dirname "$CARGO_APK_RELEASE_KEYSTORE")" && pwd)"
-export CARGO_APK_RELEASE_KEYSTORE="$keystore_dir/$(basename "$CARGO_APK_RELEASE_KEYSTORE")"
+CARGO_APK_RELEASE_KEYSTORE="$keystore_dir/$(basename "$CARGO_APK_RELEASE_KEYSTORE")"
+export CARGO_APK_RELEASE_KEYSTORE
 
 # No --target: cargo-apk builds every entry of build_targets into one APK.
 cargo apk build -p disktree-app --lib --release
@@ -48,4 +63,4 @@ if [ "$built" != "$output" ]; then
     mkdir -p "$(dirname "$output")"
     cp "$built" "$output"
 fi
-"$(dirname "$0")/check-apk.sh" "$output"
+scripts/android/check-apk.sh "$output"

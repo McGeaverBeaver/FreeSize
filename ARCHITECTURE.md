@@ -243,8 +243,13 @@ it, locally and in CI:
   theme (matching background, readable status bar icons) and an adaptive
   launcher icon with a monochrome layer for themed icons.
   `android/make_icons.py` regenerates the icons.
-- **Signing**: `apksigner` adds v2/v3 signatures with the keystore from
-  `CARGO_APK_RELEASE_KEYSTORE`, or a throwaway key if none is set.
+- **Signing**: `apksigner` adds v2/v3 signatures. The key is
+  `~/.android/disktree-release.keystore`, created on the first build and
+  reused after that so updates install over each other, unless
+  `CARGO_APK_RELEASE_KEYSTORE` names another one.
+- **Setup**: `scripts/android/setup-linux.sh` installs the SDK, NDK, Rust
+  targets and `cargo-apk` with pinned versions. `scripts/android/env.sh` finds
+  the SDK and NDK for the other scripts.
 
 `scripts/android/check-apk.sh` checks the result and fails the build if any of
 these doesn't hold:
@@ -263,8 +268,9 @@ these doesn't hold:
 - `cargo test --workspace` runs the core tests (sizes, contiguity, hard links,
   symlinks, permissions, cancellation, deletion, squarify geometry) and the
   app's helper tests.
-- CI runs them on Windows, macOS and Linux, and builds and checks the Android
-  APK with `scripts/android/build-apk.sh`.
+- The CI workflow runs them on Windows, macOS and Linux, and builds and
+  checks the Android APK with `scripts/android/build-apk.sh`. It only runs
+  when started by hand; normally all of this runs locally.
 
 ## Possible next steps
 

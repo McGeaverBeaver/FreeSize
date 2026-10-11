@@ -1,8 +1,9 @@
 name: CI
 
+# Builds run locally (see "Building" in the README). This workflow only runs
+# when started by hand: Actions → CI → Run workflow.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always

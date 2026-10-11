@@ -8,8 +8,8 @@
 set -euo pipefail
 
 apk="${1:?usage: check-apk.sh APP.apk}"
-: "${ANDROID_HOME:?set ANDROID_HOME to the Android SDK}"
-: "${ANDROID_NDK_ROOT:?set ANDROID_NDK_ROOT to the Android NDK}"
+# shellcheck source=scripts/android/env.sh
+source "$(dirname "$0")/env.sh"
 
 build_tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
 readelf="$(ls "$ANDROID_NDK_ROOT"/toolchains/llvm/prebuilt/*/bin/llvm-readelf | head -n 1)"

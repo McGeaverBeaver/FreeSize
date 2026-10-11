@@ -1,10 +1,10 @@
 name: Release
 
+# Builds run locally (see "Building" in the README). This workflow only runs
+# when started by hand from the Actions tab: it builds the selected branch or
+# tag and publishes it as the release named in `tag`, creating the tag if
+# needed. Pushing a tag doesn't start it.
 on:
-  push:
-    tags: ["v*", "V*"]
-  # Run by hand from the Actions tab: builds the selected branch or tag and
-  # publishes it as the release named in `tag`, creating the tag if needed.
   workflow_dispatch:
     inputs:
       tag:
