@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks that an APK will install and run on current Android devices:
-# required ABIs, SDK levels, exported launcher activity, a valid v2+
-# signature, and native libraries aligned for 16 KB pages.
+# required ABIs, SDK levels, exported launcher activity, the permissions the
+# storage features need, a valid v2+ signature, and native libraries aligned
+# for 16 KB pages.
 #
 # Usage: scripts/android/check-apk.sh APP.apk
 set -euo pipefail
@@ -45,6 +46,16 @@ if [ "${min_sdk:-0}" -ge 26 ]; then pass "minSdk $min_sdk"; else fail "minSdk is
 if [ "${target_sdk:-0}" -ge 35 ]; then pass "targetSdk $target_sdk"; else fail "targetSdk ${target_sdk:-missing} is too old"; fi
 
 if grep -q "^launchable-activity:" <<<"$badging"; then pass "has a launcher activity"; else fail "no launcher activity"; fi
+
+# Without these the storage features silently stop working: Android doesn't
+# offer the All files access or Usage access switches for apps that don't ask.
+for permission in MANAGE_EXTERNAL_STORAGE PACKAGE_USAGE_STATS QUERY_ALL_PACKAGES; do
+    if grep -q "^uses-permission: name='android.permission.$permission'" <<<"$badging"; then
+        pass "declares $permission"
+    else
+        fail "missing permission $permission"
+    fi
+done
 if grep -q "^application-debuggable" <<<"$badging"; then fail "release APK is debuggable"; else pass "not debuggable"; fi
 
 # Android 12+ refuses to install apps whose launcher activity doesn't say exported.

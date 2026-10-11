@@ -245,6 +245,8 @@ these doesn't hold:
 - both ABIs are present;
 - minSdk is at least 26 and targetSdk at least 35;
 - the launcher activity is exported and the APK isn't debuggable;
+- the storage permissions are declared (All files access, Usage access, the
+  installed-apps list);
 - there is a v2/v3 signature;
 - every LOAD segment of every `.so` is aligned to 16 KB, and the zip passes
   `zipalign -c -P 16`.
