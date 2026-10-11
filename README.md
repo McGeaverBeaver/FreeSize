@@ -289,6 +289,33 @@ gh auth login                    # GitHub.com, HTTPS, log in with a web browser
 `gh auth login` shows a code and a link; open the link on any computer, enter
 the code, and the machine can publish releases to your repositories.
 
+### Disk space
+
+Give the build machine at least 40 GB of disk and 8 GB of RAM. A release needs
+about 15 GB for build files: Rust builds for Linux, Windows and two Android
+targets, plus the Android SDK and NDK. When the disk fills up during a build,
+the linker fails with "Bus error" or "No space left on device".
+
+Ubuntu Server's installer gives the system only part of the disk by default.
+Check with `df -h ~`, and claim the rest of the disk with:
+
+```sh
+sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+```
+
+If the virtual disk itself is too small, enlarge it in your hypervisor first,
+then grow the partition and the volume (`lsblk` shows the names; here the disk
+is `sda` and the LVM partition is number 3):
+
+```sh
+sudo growpart /dev/sda 3
+sudo pvresize /dev/sda3
+sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+```
+
+`cargo clean` deletes all build files when space runs low; the next build
+then takes longer.
+
 ### Publishing a release
 
 1. Bump `version` in the root `Cargo.toml` (for example to `0.2.1`) and push.

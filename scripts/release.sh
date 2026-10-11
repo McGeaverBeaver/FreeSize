@@ -66,13 +66,23 @@ if $publish; then
     fi
 fi
 
+# Builds for four targets plus the Android NDK need room. A full disk
+# shows up as a "Bus error" or "No space left on device" while linking.
+free_gb="$(df -P -BG . | awk 'NR == 2 { sub("G", "", $4); print $4 }')"
+if [ "${free_gb:-0}" -lt 15 ]; then
+    echo "warning: only ${free_gb} GB free here; a release build needs about 15 GB." >&2
+    echo "         If it fails with \"Bus error\" or \"No space left\", see \"Disk space\" in the README." >&2
+fi
+
 dist="dist/$tag"
 rm -rf "$dist"
 mkdir -p "$dist"
 echo "==> Building DiskTree $version ($(git rev-parse --short HEAD)) into $dist"
 
 echo "==> Tests"
-cargo test --workspace --quiet
+# In release mode, so the tests reuse the release build below instead of
+# compiling everything a second time (a debug build takes several GB).
+cargo test --workspace --release --quiet
 
 echo "==> Android"
 scripts/android/build-apk.sh "$dist/disktree-android.apk"
