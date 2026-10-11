@@ -320,6 +320,22 @@ the linker fails with "Bus error" or "No space left on device".
 `cargo clean` deletes all build files when space runs low; the next build
 then takes longer.
 
+**Building on a shared folder instead.** A VM can also keep the project on a
+folder shared by its host, such as an Unraid 9p share with mount tag
+`ssdbobbybuilds`. Mount it with `cache=loose`: without caching, 9p doesn't
+fully support the memory-mapped writes the linker uses, and builds are much
+slower. That's safe as long as only the VM uses that folder.
+
+```sh
+sudo mkdir -p /mnt/ssdbuilds
+echo 'ssdbobbybuilds /mnt/ssdbuilds 9p trans=virtio,version=9p2000.L,msize=262144,cache=loose,nofail 0 0' | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount /mnt/ssdbuilds
+git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git /mnt/ssdbuilds/TreeSizeCloneAndroid
+ln -sfn /mnt/ssdbuilds/TreeSizeCloneAndroid ~/TreeSizeCloneAndroid
+```
+
+Rust, the Android SDK and the signing key stay on the VM's own disk.
+
 ### Publishing a release
 
 1. Bump `version` in the root `Cargo.toml` (for example to `0.2.1`) and push.
