@@ -4,6 +4,7 @@
 //! on "All files access" for it in system settings. On Android 10 and older
 //! the classic READ_EXTERNAL_STORAGE runtime permission is enough.
 
+use std::ffi::{CString, c_char, c_int};
 use std::sync::OnceLock;
 
 use jni::objects::{JObject, JValue};
@@ -16,6 +17,36 @@ static APP: OnceLock<AndroidApp> = OnceLock::new();
 
 pub fn init(app: AndroidApp) {
     let _ = APP.set(app);
+}
+
+#[link(name = "log")]
+unsafe extern "C" {
+    fn __android_log_write(priority: c_int, tag: *const c_char, text: *const c_char) -> c_int;
+}
+
+const LOG_WARN: c_int = 5;
+const LOG_ERROR: c_int = 6;
+
+fn write_log(priority: c_int, message: &str) {
+    let text = CString::new(message.replace('\0', " ")).unwrap_or_default();
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe {
+        __android_log_write(priority, c"DiskTree".as_ptr(), text.as_ptr());
+    }
+}
+
+/// Logs a warning to logcat (`adb logcat -s DiskTree`); stderr goes nowhere on Android.
+pub fn log(message: &str) {
+    write_log(LOG_WARN, message);
+}
+
+/// Sends panic messages to logcat so a crash leaves a readable reason behind.
+pub fn install_panic_hook() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        write_log(LOG_ERROR, &format!("panic: {info}"));
+        default(info);
+    }));
 }
 
 fn with_activity<T>(f: impl FnOnce(&mut Env, &JObject) -> JniResult<T>) -> JniResult<T> {
@@ -78,7 +109,7 @@ pub fn request_storage_access() {
         }
     });
     if let Err(err) = result {
-        eprintln!("DiskTree: could not request storage access: {err}");
+        log(&format!("could not request storage access: {err}"));
     }
 }
 

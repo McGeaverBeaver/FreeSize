@@ -39,24 +39,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
-      - name: Build APK
+      - name: Install SDK platform and cargo-apk
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" > /dev/null
+          cargo install cargo-apk --locked
+      - name: Build and check APK
         run: |
           export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
-          # Throwaway signing key; see README for using your own.
-          keytool -genkeypair -keystore "$RUNNER_TEMP/ci.keystore" -alias ci -keyalg RSA -keysize 2048 \
-            -validity 10000 -storepass android -keypass android -dname "CN=DiskTree CI"
-          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/ci.keystore"
-          export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
-          cargo apk build -p disktree-app --lib --release --target aarch64-linux-android
+          scripts/android/build-apk.sh dist/disktree-android.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: disktree-android-arm64
-          path: target/release/apk/*.apk
+          name: disktree-android
+          path: dist/disktree-android.apk

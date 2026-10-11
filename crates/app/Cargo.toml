@@ -30,18 +30,30 @@ jni = "0.22.4"
 [build-dependencies]
 slint-build = "1.18.1"
 
-# Read by `cargo apk build`.
+# Read by `cargo apk build`; build with scripts/android/build-apk.sh, which
+# also applies the 16 KB page alignment flag and verifies the result.
 [package.metadata.android]
 package = "dev.disktree.app"
 apk_name = "DiskTree"
+# One universal APK: arm64-v8a for phones, x86_64 for emulators and Chromebooks.
 build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+resources = "android/res"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26
-target_sdk_version = 35
+# Android 16. Google Play requires API 36 for new apps and updates.
+target_sdk_version = 36
 
 [package.metadata.android.application]
 label = "DiskTree"
+icon = "@mipmap/ic_launcher"
+theme = "@style/AppTheme"
+
+[package.metadata.android.application.activity]
+# Handle these changes in place: Slint relayouts on its own, and recreating a
+# NativeActivity would restart the Rust side.
+config_changes = "orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|fontScale|keyboard|keyboardHidden|navigation|locale|layoutDirection|colorMode|touchscreen"
+launch_mode = "singleTask"
 
 # Android 10 and older: classic storage permissions.
 [[package.metadata.android.uses_permission]]

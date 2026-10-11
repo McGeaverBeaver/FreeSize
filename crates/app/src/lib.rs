@@ -22,9 +22,16 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
+    android::install_panic_hook();
     android::init(app.clone());
-    slint::android::init(app).expect("failed to initialize the Slint Android backend");
+    // Fails if Android restarted the activity inside a process that already
+    // set up Slint; the manifest's configChanges and singleTask launch mode
+    // make that rare, and returning lets the activity close cleanly.
+    if let Err(err) = slint::android::init(app) {
+        android::log(&format!("could not start the Slint Android backend: {err}"));
+        return;
+    }
     if let Err(err) = run(None) {
-        eprintln!("DiskTree: {err}");
+        android::log(&format!("app exited with an error: {err}"));
     }
 }

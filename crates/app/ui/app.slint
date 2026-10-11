@@ -521,197 +521,162 @@ export component AppWindow inherits Window {
     callback delete-cancelled();
     callback grant-permission();
 
-    VerticalLayout {
-        // Toolbar
-        Rectangle {
-            background: Palette.alternate-background;
-            HorizontalLayout {
-                padding: 8px;
-                spacing: 6px;
-                if root.has-tree && !root.scanning: Button {
-                    text: "Drives";
-                    clicked => {
-                        root.show-locations();
-                    }
-                }
-                LineEdit {
-                    text <=> root.path;
-                    placeholder-text: "Folder to scan";
-                    horizontal-stretch: 1;
-                    enabled: !root.scanning;
-                    accepted(text) => {
-                        root.start-scan(text);
-                    }
-                }
+    forward-focus: keys;
 
-                if root.can-browse: Button {
-                    text: "Browse…";
-                    enabled: !root.scanning;
-                    clicked => {
-                        root.browse();
+    // Android's Back gesture (and Escape on desktop) steps back through the
+    // app before leaving it: close the dialog, stop the scan, zoom out, then
+    // return to the drive list. Unhandled, Back closes the app.
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text != Key.Back && event.text != Key.Escape) {
+                return reject;
+            }
+            if (root.confirm-open) {
+                root.delete-cancelled();
+                return accept;
+            }
+            if (root.scanning) {
+                root.cancel-scan();
+                return accept;
+            }
+            if (root.has-tree && root.can-go-up) {
+                root.go-up();
+                return accept;
+            }
+            if (root.has-tree && event.text == Key.Back) {
+                root.show-locations();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            width: parent.width;
+            height: parent.height;
+            padding-left: root.safe-area-insets.left;
+            padding-right: root.safe-area-insets.right;
+            // Toolbar
+            Rectangle {
+                background: Palette.alternate-background;
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-top: 8px + root.safe-area-insets.top;
+                    spacing: 6px;
+                    if root.has-tree && !root.scanning: Button {
+                        text: "Drives";
+                        clicked => {
+                            root.show-locations();
+                        }
                     }
-                }
-                Button {
-                    text: root.scanning ? "Cancel" : "Scan";
-                    primary: !root.scanning;
-                    clicked => {
-                        if (root.scanning) {
-                            root.cancel-scan();
-                        } else {
-                            root.start-scan(root.path);
+                    LineEdit {
+                        text <=> root.path;
+                        placeholder-text: "Folder to scan";
+                        horizontal-stretch: 1;
+                        enabled: !root.scanning;
+                        accepted(text) => {
+                            root.start-scan(text);
+                        }
+                    }
+
+                    if root.can-browse: Button {
+                        text: "Browse…";
+                        enabled: !root.scanning;
+                        clicked => {
+                            root.browse();
+                        }
+                    }
+                    Button {
+                        text: root.scanning ? "Cancel" : "Scan";
+                        primary: !root.scanning;
+                        clicked => {
+                            if (root.scanning) {
+                                root.cancel-scan();
+                            } else {
+                                root.start-scan(root.path);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Android storage permission
-        if root.needs-permission: Rectangle {
-            background: #f0b42933;
-            HorizontalLayout {
-                padding: 10px;
-                spacing: 10px;
-                Text {
-                    text: "DiskTree needs “All files access” to see everything on your storage.";
-                    wrap: word-wrap;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
+            // Android storage permission
+            if root.needs-permission: Rectangle {
+                background: #f0b42933;
+                HorizontalLayout {
+                    padding: 10px;
+                    spacing: 10px;
+                    Text {
+                        text: "DiskTree needs “All files access” to see everything on your storage.";
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
 
-                Button {
-                    text: "Grant access";
-                    primary: true;
-                    clicked => {
-                        root.grant-permission();
+                    Button {
+                        text: "Grant access";
+                        primary: true;
+                        clicked => {
+                            root.grant-permission();
+                        }
                     }
                 }
             }
-        }
 
-        // Status line
-        HorizontalLayout {
-            padding-left: 10px;
-            padding-right: 8px;
-            padding-top: 4px;
-            padding-bottom: 4px;
-            spacing: 8px;
-            Text {
-                text: root.status;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-                overflow: elide;
-                color: Theme.dim;
-                font-size: 12px;
-            }
-
-            if root.has-tree: ComboBox {
-                width: 150px;
-                model: ["Size on disk", "File size"];
-                current-index: 0;
-                selected => {
-                    root.size-on-disk = self.current-index == 0;
-                    root.size-mode-changed();
+            // Status line
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 8px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                spacing: 8px;
+                Text {
+                    text: root.status;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    color: Theme.dim;
+                    font-size: 12px;
                 }
-            }
-        }
 
-        Rectangle {
-            height: 1px;
-            background: Palette.border;
-        }
-
-        // Content
-        if root.scanning: ScanningPane {
-            vertical-stretch: 1;
-            title: root.scan-title;
-            counts: root.scan-counts;
-            current: root.scan-current;
-            cancel => {
-                root.cancel-scan();
-            }
-        }
-        if !root.scanning && !root.has-tree: LocationsPane {
-            vertical-stretch: 1;
-            locations: root.locations;
-            card-height: root.compact ? 86px : 78px;
-            choose(path) => {
-                root.path = path;
-                root.start-scan(path);
-            }
-        }
-        if !root.scanning && root.has-tree && !root.compact: HorizontalLayout {
-            vertical-stretch: 1;
-            TreePane {
-                horizontal-stretch: 45;
-                rows: root.tree-rows;
-                selected-id: root.selected-id;
-                row-height: root.tree-row-height;
-                compact: root.compact;
-                scroll-y <=> root.tree-scroll;
-                toggle(index) => {
-                    root.toggle-row(index);
-                }
-                select(id) => {
-                    root.select-node(id, false);
+                if root.has-tree: ComboBox {
+                    width: 150px;
+                    model: ["Size on disk", "File size"];
+                    current-index: 0;
+                    selected => {
+                        root.size-on-disk = self.current-index == 0;
+                        root.size-mode-changed();
+                    }
                 }
             }
 
             Rectangle {
-                width: 1px;
+                height: 1px;
                 background: Palette.border;
             }
 
-            VerticalLayout {
-                horizontal-stretch: 55;
-                Text {
-                    text: root.focus-label;
-                    overflow: elide;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                    height: 28px;
-                    horizontal-alignment: center;
-                }
-
-                TabWidget {
-                    Tab {
-                        title: "Treemap";
-                        TreemapPane {
-                            rects: root.map-rects;
-                            selected-id: root.selected-id;
-                            select(id) => {
-                                root.select-node(id, true);
-                            }
-                            resized(w, h) => {
-                                root.map-resized(w, h);
-                            }
-                        }
-                    }
-
-                    Tab {
-                        title: "Largest files";
-                        LargestPane {
-                            files: root.largest-files;
-                            selected-id: root.selected-id;
-                            select(id) => {
-                                root.select-node(id, true);
-                            }
-                        }
-                    }
-
-                    Tab {
-                        title: "File types";
-                        TypesPane {
-                            types: root.file-types;
-                        }
-                    }
+            // Content
+            if root.scanning: ScanningPane {
+                vertical-stretch: 1;
+                title: root.scan-title;
+                counts: root.scan-counts;
+                current: root.scan-current;
+                cancel => {
+                    root.cancel-scan();
                 }
             }
-        }
-        if !root.scanning && root.has-tree && root.compact: TabWidget {
-            vertical-stretch: 1;
-            Tab {
-                title: "Folders";
+            if !root.scanning && !root.has-tree: LocationsPane {
+                vertical-stretch: 1;
+                locations: root.locations;
+                card-height: root.compact ? 86px : 78px;
+                choose(path) => {
+                    root.path = path;
+                    root.start-scan(path);
+                }
+            }
+            if !root.scanning && root.has-tree && !root.compact: HorizontalLayout {
+                vertical-stretch: 1;
                 TreePane {
+                    horizontal-stretch: 45;
                     rows: root.tree-rows;
                     selected-id: root.selected-id;
                     row-height: root.tree-row-height;
@@ -724,96 +689,172 @@ export component AppWindow inherits Window {
                         root.select-node(id, false);
                     }
                 }
-            }
 
-            Tab {
-                title: "Map";
+                Rectangle {
+                    width: 1px;
+                    background: Palette.border;
+                }
+
                 VerticalLayout {
+                    horizontal-stretch: 55;
                     Text {
                         text: root.focus-label;
                         overflow: elide;
                         font-weight: 600;
-                        height: 28px;
                         vertical-alignment: center;
+                        height: 28px;
                         horizontal-alignment: center;
                     }
 
-                    TreemapPane {
-                        rects: root.map-rects;
+                    TabWidget {
+                        Tab {
+                            title: "Treemap";
+                            TreemapPane {
+                                rects: root.map-rects;
+                                selected-id: root.selected-id;
+                                select(id) => {
+                                    root.select-node(id, true);
+                                }
+                                resized(w, h) => {
+                                    root.map-resized(w, h);
+                                }
+                            }
+                        }
+
+                        Tab {
+                            title: "Largest files";
+                            LargestPane {
+                                files: root.largest-files;
+                                selected-id: root.selected-id;
+                                select(id) => {
+                                    root.select-node(id, true);
+                                }
+                            }
+                        }
+
+                        Tab {
+                            title: "File types";
+                            TypesPane {
+                                types: root.file-types;
+                            }
+                        }
+                    }
+                }
+            }
+            if !root.scanning && root.has-tree && root.compact: TabWidget {
+                vertical-stretch: 1;
+                Tab {
+                    title: "Folders";
+                    TreePane {
+                        rows: root.tree-rows;
                         selected-id: root.selected-id;
+                        row-height: root.tree-row-height;
+                        compact: root.compact;
+                        scroll-y <=> root.tree-scroll;
+                        toggle(index) => {
+                            root.toggle-row(index);
+                        }
                         select(id) => {
                             root.select-node(id, false);
                         }
-                        resized(w, h) => {
-                            root.map-resized(w, h);
+                    }
+                }
+
+                Tab {
+                    title: "Map";
+                    VerticalLayout {
+                        Text {
+                            text: root.focus-label;
+                            overflow: elide;
+                            font-weight: 600;
+                            height: 28px;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                        }
+
+                        TreemapPane {
+                            rects: root.map-rects;
+                            selected-id: root.selected-id;
+                            select(id) => {
+                                root.select-node(id, false);
+                            }
+                            resized(w, h) => {
+                                root.map-resized(w, h);
+                            }
+                        }
+                    }
+                }
+
+                Tab {
+                    title: "Files";
+                    LargestPane {
+                        files: root.largest-files;
+                        selected-id: root.selected-id;
+                        select(id) => {
+                            root.select-node(id, true);
+                        }
+                    }
+                }
+
+                Tab {
+                    title: "Types";
+                    TypesPane {
+                        types: root.file-types;
+                    }
+                }
+            }
+
+            // Selection bar
+            if !root.scanning && root.has-tree: Rectangle {
+                background: Palette.alternate-background;
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-bottom: 8px + root.safe-area-insets.bottom;
+                    spacing: 6px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text {
+                            text: root.selected-title;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+
+                        Text {
+                            text: root.selected-detail;
+                            font-size: 11px;
+                            color: Theme.dim;
+                            overflow: elide;
+                        }
+                    }
+
+                    Button {
+                        text: "Up";
+                        enabled: root.can-go-up;
+                        clicked => {
+                            root.go-up();
+                        }
+                    }
+
+                    if root.can-reveal: Button {
+                        text: root.compact ? "Open" : "Show in folder";
+                        clicked => {
+                            root.reveal-selected();
+                        }
+                    }
+                    Button {
+                        text: "Delete";
+                        enabled: root.can-delete;
+                        clicked => {
+                            root.delete-requested();
                         }
                     }
                 }
             }
 
-            Tab {
-                title: "Files";
-                LargestPane {
-                    files: root.largest-files;
-                    selected-id: root.selected-id;
-                    select(id) => {
-                        root.select-node(id, true);
-                    }
-                }
-            }
-
-            Tab {
-                title: "Types";
-                TypesPane {
-                    types: root.file-types;
-                }
-            }
-        }
-
-        // Selection bar
-        if !root.scanning && root.has-tree: Rectangle {
-            background: Palette.alternate-background;
-            HorizontalLayout {
-                padding: 8px;
-                spacing: 6px;
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    alignment: center;
-                    Text {
-                        text: root.selected-title;
-                        font-weight: 600;
-                        overflow: elide;
-                    }
-
-                    Text {
-                        text: root.selected-detail;
-                        font-size: 11px;
-                        color: Theme.dim;
-                        overflow: elide;
-                    }
-                }
-
-                Button {
-                    text: "Up";
-                    enabled: root.can-go-up;
-                    clicked => {
-                        root.go-up();
-                    }
-                }
-
-                if root.can-reveal: Button {
-                    text: root.compact ? "Open" : "Show in folder";
-                    clicked => {
-                        root.reveal-selected();
-                    }
-                }
-                Button {
-                    text: "Delete";
-                    enabled: root.can-delete;
-                    clicked => {
-                        root.delete-requested();
-                    }
-                }
+            // Keep content above the gesture bar when there is no selection bar.
+            if root.scanning || !root.has-tree: Rectangle {
+                height: root.safe-area-insets.bottom;
             }
         }
     }

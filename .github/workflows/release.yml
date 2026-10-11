@@ -60,9 +60,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
-      - name: Build APKs
+      - name: Install SDK platform and cargo-apk
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" > /dev/null
+          cargo install cargo-apk --locked
+      - name: Build and check APK
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -70,23 +72,16 @@ jobs:
           export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
             export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
           else
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret; signing with a throwaway key."
-            keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -alias release -keyalg RSA \
-              -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=DiskTree"
-            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signed with a throwaway key, so this APK can't update an earlier install."
           fi
-          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
-          mkdir dist
-          for target in aarch64-linux-android x86_64-linux-android; do
-            cargo apk build -p disktree-app --lib --release --target "$target"
-            cp target/release/apk/DiskTree.apk "dist/disktree-android-${target%%-*}.apk"
-          done
+          scripts/android/build-apk.sh dist/disktree-android.apk
       - uses: actions/upload-artifact@v4
         with:
           name: disktree-android
-          path: dist/*.apk
+          path: dist/disktree-android.apk
 
   publish:
     name: Publish release
