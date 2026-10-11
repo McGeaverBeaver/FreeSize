@@ -171,9 +171,13 @@ zooms the treemap out, then returns to the drive list before leaving the app.
 - **CI** (`.github/workflows/ci.yml`) runs formatting, clippy and tests on
   Windows, macOS and Linux. It also builds and checks the Android APK, which
   you can download from the run's artifacts.
-- **Release** (`.github/workflows/release.yml`) runs when you push a tag like
-  `v0.1.1`. It builds Windows, macOS and Linux archives plus
-  `disktree-android.apk`, and attaches them to a GitHub release.
+- **Release** (`.github/workflows/release.yml`) builds Windows, macOS and
+  Linux archives plus `disktree-android.apk`, and attaches them to a GitHub
+  release. It runs when a tag starting with `v` or `V` is pushed, which
+  includes creating a release with a new tag on GitHub. You can also run it
+  without a tag: Actions → Release → Run workflow, pick the branch, and enter
+  a tag such as `v0.1.3`. It builds that branch and publishes the release,
+  creating the tag.
 
 Before tagging, bump `version` in the root `Cargo.toml`. The Android version
 code is derived from it, and Android only installs an update with a higher one.
