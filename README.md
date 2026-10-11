@@ -129,6 +129,12 @@ F-Droid don't have that step.
    files*, and go back. Then pick *Internal storage* or an SD card.
 5. To see what apps and the system use, tap **Allow usage access** under
    *Apps & system*, turn DiskTree on in the list, and go back.
+6. If the switch is greyed out or Android says *App was denied access* /
+   *Controlled by Restricted Setting*, Android is blocking it because the app
+   was installed from a downloaded file. Tap **Open DiskTree's app info** in
+   DiskTree (or go to Settings → Apps → DiskTree), tap **⋮** in the top
+   corner, choose **Allow restricted settings** and confirm with your PIN or
+   fingerprint. Then repeat step 5. You only need to do this once per install.
 
 ### Why a file scan finds less than the phone uses
 
@@ -160,6 +166,7 @@ zooms the treemap out, then returns to the drive list before leaving the app.
 | Problem | Cause | Fix |
 |---|---|---|
 | *Apps & system* stays at "Allow usage access" | DiskTree isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
+| Usage access switch is greyed out, says "Controlled by Restricted Setting", or shows "App was denied access" | Android 13+ blocks Usage access for apps installed from a downloaded file (restricted settings). | Settings → Apps → DiskTree → ⋮ → *Allow restricted settings*, then turn Usage access on. If ⋮ isn't there, try to turn the switch on once first; the menu only appears after Android has blocked it. |
 | "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `disktree-android.apk` from v0.1.1 or later. |
 | "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key. | Uninstall DiskTree, then install the new APK. Set up a release key (below) so future updates install over each other. |
 | Installing apps from outside the Play Store is blocked entirely | Advanced Protection is on (Settings → Security & privacy), or a work profile forbids it. | Install with `adb install`, or turn that setting off. |

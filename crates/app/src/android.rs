@@ -306,6 +306,25 @@ pub fn open_app_settings(package: &str) {
     }
 }
 
+/// Opens DiskTree's own page in system settings. Its ⋮ menu holds "Allow
+/// restricted settings", which Android requires before granting Usage
+/// access to an app installed from a downloaded APK.
+pub fn open_own_app_settings() {
+    let result = with_activity(|env, activity| {
+        let package = own_package(env, activity)?;
+        let uri = package_uri(env, &package)?;
+        start_activity(
+            env,
+            activity,
+            "android.settings.APPLICATION_DETAILS_SETTINGS",
+            &uri,
+        )
+    });
+    if let Err(err) = result {
+        log(&format!("could not open DiskTree's app settings: {err}"));
+    }
+}
+
 /// Storage used by every installed app, plus Android's own totals. Slow
 /// (one system call per app), so call it off the UI thread.
 pub fn collect_app_report() -> Result<AppReport, String> {

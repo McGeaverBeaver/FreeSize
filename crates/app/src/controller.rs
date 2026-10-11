@@ -12,12 +12,12 @@ use disktree_core::{
     NO_NODE, NodeId, ScanOptions, ScanProgress, ScanResult, SizeMode, Tree, extension_stats,
     format_count, format_size, largest_files, scan,
 };
-use slint::{Color, ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::apps::{self, AppReport};
 use crate::home::{self, AppsState};
 use crate::rows::{self, TreeRows};
-use crate::{AppWindow, FileRow, MapRect, TypeRow, actions, locations};
+use crate::{AppWindow, FileRow, HomeRow, MapRect, TypeRow, actions, locations};
 
 /// Result handed from a worker thread to the UI thread.
 type Slot<T> = Arc<Mutex<Option<T>>>;
@@ -54,6 +54,7 @@ pub struct Controller {
     ui: slint::Weak<AppWindow>,
     tree: Option<Tree>,
     rows: Rc<TreeRows>,
+    home_rows: Rc<VecModel<HomeRow>>,
     mode: SizeMode,
     selected: NodeId,
     /// The folder shown in the treemap and the file lists.
@@ -93,6 +94,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             ui: ui.as_weak(),
             tree: None,
             rows: Rc::new(TreeRows::default()),
+            home_rows: Rc::new(VecModel::default()),
             mode: SizeMode::Allocated,
             selected: 0,
             focus: 0,
@@ -110,6 +112,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     });
 
     ui.set_tree_rows(ModelRc::from(ctl.borrow().rows.clone()));
+    ui.set_home_rows(ModelRc::from(ctl.borrow().home_rows.clone()));
     let start = initial.clone().unwrap_or_else(locations::default_path);
     ui.set_path(start.to_string_lossy().as_ref().into());
     ui.set_can_browse(actions::CAN_BROWSE);
@@ -166,7 +169,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             if apps::has_access() {
                 c.start_apps_job();
             } else {
-                c.apps = AppsState::NeedsAccess;
+                c.apps = AppsState::NeedsAccess { asked: false };
             }
         }
         c.refresh_home();
@@ -403,9 +406,21 @@ impl Controller {
         self.refresh_home();
     }
 
+    /// Updates the home screen in place: only rows that differ change, so
+    /// the list keeps its scroll position and the measured heights of rows
+    /// that stay the same.
     fn refresh_home(&self) {
-        if let Some(ui) = self.ui() {
-            ui.set_home_rows(ModelRc::new(VecModel::from(home::rows(&self.apps))));
+        let rows = home::rows(&self.apps);
+        let model = &self.home_rows;
+        for (i, row) in rows.iter().enumerate() {
+            if i >= model.row_count() {
+                model.push(row.clone());
+            } else if model.row_data(i).as_ref() != Some(row) {
+                model.set_row_data(i, row.clone());
+            }
+        }
+        while model.row_count() > rows.len() {
+            model.remove(model.row_count() - 1);
         }
     }
 
@@ -436,6 +451,17 @@ impl Controller {
         match id {
             home::GRANT_USAGE_ACCESS => {
                 apps::request_access();
+                self.awaiting_usage_access = true;
+                self.ensure_ticking();
+                // Explain Android's "restricted settings" block in case the
+                // switch turns out to be greyed out.
+                if matches!(self.apps, AppsState::NeedsAccess { .. }) {
+                    self.apps = AppsState::NeedsAccess { asked: true };
+                    self.refresh_home();
+                }
+            }
+            home::OPEN_APP_INFO => {
+                apps::open_own_settings();
                 self.awaiting_usage_access = true;
                 self.ensure_ticking();
             }

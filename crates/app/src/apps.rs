@@ -125,11 +125,16 @@ pub fn open(package: &str) {
     platform::open(package);
 }
 
+/// Opens this app's own system settings page.
+pub fn open_own_settings() {
+    platform::open_own_settings();
+}
+
 #[cfg(target_os = "android")]
 mod platform {
     pub use crate::android::{
         collect_app_report as collect, has_usage_access as has_access, open_app_settings as open,
-        request_usage_access as request_access,
+        open_own_app_settings as open_own_settings, request_usage_access as request_access,
     };
 }
 
@@ -148,6 +153,8 @@ mod platform {
     }
 
     pub fn open(_package: &str) {}
+
+    pub fn open_own_settings() {}
 }
 
 /// Sample data for working on the UI without a phone: debug builds started

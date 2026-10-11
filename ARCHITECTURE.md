@@ -188,6 +188,13 @@ code can't be read by any app. Android does report their sizes through
 Each app gets its own JNI local frame, and an app that disappears mid-way is
 skipped.
 
+Android 13+ treats Usage access as a *restricted setting*: for an app
+installed from a downloaded APK the switch stays greyed out until the user
+picks *Allow restricted settings* from the ⋮ menu of the app's info page.
+Apps can't detect that state, so once the user has been sent to the Usage
+access screen, the home screen adds a card explaining it, with a button that
+opens DiskTree's own app info page.
+
 `AppReport::breakdown` divides the data partition (`statvfs`) the way Android
 Settings does:
 
@@ -264,8 +271,6 @@ these doesn't hold:
 - **Windows MFT reader**: reading the NTFS Master File Table directly is how
   WizTree scans a whole drive in seconds. It needs admin rights, so it would be
   an optional fast path next to the current scanner.
-- **Android app sizes** via `StorageStatsManager`. It needs the usage-access
-  permission and fills the "apps" gap that the filesystem can't show.
 - **Scan history and compare** ("what grew since last week").
 - **Duplicate finder** (group by size, then hash).
 - **Export** to CSV or JSON.

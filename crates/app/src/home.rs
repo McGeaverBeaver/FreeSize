@@ -10,6 +10,7 @@ use crate::{HomeRow, locations};
 /// Action ids sent back by the home screen's buttons.
 pub const GRANT_USAGE_ACCESS: &str = "grant-usage-access";
 pub const REFRESH_APPS: &str = "refresh-apps";
+pub const OPEN_APP_INFO: &str = "open-app-info";
 
 const DRIVE: i32 = 0;
 const HEADING: i32 = 1;
@@ -21,8 +22,11 @@ const NOTICE: i32 = 4;
 pub enum AppsState {
     /// The platform can't report it.
     Unsupported,
-    /// The user hasn't allowed Usage access yet.
-    NeedsAccess,
+    /// The user hasn't allowed Usage access yet; `asked` once they have
+    /// been sent to the settings screen at least once.
+    NeedsAccess {
+        asked: bool,
+    },
     Loading,
     Ready(AppReport),
     Failed(String),
@@ -34,7 +38,7 @@ pub fn rows(apps: &AppsState) -> Vec<HomeRow> {
     let title = "Apps & system";
     match apps {
         AppsState::Unsupported => {}
-        AppsState::NeedsAccess => {
+        AppsState::NeedsAccess { asked } => {
             rows.push(heading(title, "", None));
             rows.push(notice(
                 "See what apps and Android are using",
@@ -43,6 +47,16 @@ pub fn rows(apps: &AppsState) -> Vec<HomeRow> {
                  each app takes.",
                 Some(("Allow usage access", GRANT_USAGE_ACCESS)),
             ));
+            if *asked {
+                rows.push(notice(
+                    "Switch greyed out, or “App was denied access”?",
+                    "Android blocks Usage access for apps installed from a downloaded file \
+                     until you allow it. Open DiskTree's app info, tap ⋮ in the top corner, \
+                     choose “Allow restricted settings” and confirm. Then tap Allow usage \
+                     access again.",
+                    Some(("Open DiskTree's app info", OPEN_APP_INFO)),
+                ));
+            }
         }
         AppsState::Loading => {
             rows.push(heading(title, "", None));
@@ -237,9 +251,21 @@ mod tests {
 
     #[test]
     fn missing_access_offers_the_permission() {
-        let rows = rows(&AppsState::NeedsAccess);
-        let notice = rows.iter().find(|r| r.kind == NOTICE).unwrap();
-        assert_eq!(notice.key, GRANT_USAGE_ACCESS);
+        let rows = rows(&AppsState::NeedsAccess { asked: false });
+        let notices: Vec<_> = rows.iter().filter(|r| r.kind == NOTICE).collect();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].key, GRANT_USAGE_ACCESS);
+    }
+
+    #[test]
+    fn after_asking_explains_restricted_settings() {
+        let rows = rows(&AppsState::NeedsAccess { asked: true });
+        let keys: Vec<_> = rows
+            .iter()
+            .filter(|r| r.kind == NOTICE)
+            .map(|r| r.key.as_str())
+            .collect();
+        assert_eq!(keys, [GRANT_USAGE_ACCESS, OPEN_APP_INFO]);
     }
 
     #[test]
