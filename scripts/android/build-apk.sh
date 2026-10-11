@@ -25,7 +25,7 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Clink-arg=-Wl,-z,max-page-size=16384
 
 if [ -z "${CARGO_APK_RELEASE_KEYSTORE:-}" ]; then
     echo "warning: no release keystore set; signing with a throwaway key" >&2
-    keystore="target/throwaway-release.keystore"
+    keystore="$PWD/target/throwaway-release.keystore"
     if [ ! -f "$keystore" ]; then
         mkdir -p target
         keytool -genkeypair -keystore "$keystore" -alias release -keyalg RSA -keysize 2048 \
@@ -35,6 +35,10 @@ if [ -z "${CARGO_APK_RELEASE_KEYSTORE:-}" ]; then
     export CARGO_APK_RELEASE_KEYSTORE="$keystore"
     export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
 fi
+
+# cargo-apk runs apksigner from the APK's folder, so the path must be absolute.
+keystore_dir="$(cd "$(dirname "$CARGO_APK_RELEASE_KEYSTORE")" && pwd)"
+export CARGO_APK_RELEASE_KEYSTORE="$keystore_dir/$(basename "$CARGO_APK_RELEASE_KEYSTORE")"
 
 # No --target: cargo-apk builds every entry of build_targets into one APK.
 cargo apk build -p disktree-app --lib --release
