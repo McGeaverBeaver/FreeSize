@@ -130,8 +130,8 @@ scripts/android/build-apk.sh      # -> target/release/apk/DiskTree.apk
 The first build takes several minutes; later ones only rebuild what changed.
 It also creates the signing key that every later build reuses (see
 [Android signing key](#android-signing-key)), so new builds install over the
-old one and keep DiskTree's permissions. A copy from a GitHub release was
-signed with a different key, so uninstall that once first.
+old one and keep DiskTree's permissions. Releases up to 0.1.3 were signed
+with a different key, so uninstall such a copy once first.
 
 To get the APK onto the phone, either:
 
@@ -259,32 +259,61 @@ than the day you removed it.
 | *Apps & system* stays at "Allow usage access" | DiskTree isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
 | Usage access switch is greyed out, says "Controlled by Restricted Setting", or shows "App was denied access" | Android 13+ blocks Usage access for apps installed from a downloaded file (restricted settings). | Settings → Apps → DiskTree → ⋮ → *Allow restricted settings*, then turn Usage access on. If ⋮ isn't there, try to turn the switch on once first; the menu only appears after Android has blocked it. |
 | "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `disktree-android.apk` from v0.1.1 or later. |
-| "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key. | Uninstall DiskTree, then install the new APK. Build every version with the same signing key (below) so future updates install over each other. |
+| "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key: releases up to 0.1.3 were built on GitHub with a throwaway key. | Uninstall DiskTree once, then install the new APK. Releases from 0.2.0 on share one key and install over each other. |
 | Installing apps from outside the Play Store is blocked entirely | Advanced Protection is on (Settings → Security & privacy), or a work profile forbids it. | Install with `adb install`, or turn that setting off. |
 | "App blocked" because the developer isn't verified | Google is rolling out developer verification region by region. | `adb install` still works. Registering the developer and package `dev.disktree.app` with Google removes the block for everyone. |
 | A folder shows "no access" | `Android/data`, `Android/obb` and other apps' private files are off limits to every app on Android 11+. | Nothing to fix; that's an Android rule. |
 
 ## Releases
 
-Builds happen locally (see [Building](#building)). The GitHub Actions
-workflows don't run on pushes or tags; they only run when started by hand from
-the Actions tab:
+Releases are built on your own Linux machine (an Ubuntu VM works well) and
+published as GitHub releases, with the APK signed by your own key so every
+release installs over the previous one.
 
-- **CI** (`.github/workflows/ci.yml`) runs formatting, clippy and tests on
-  Windows, macOS and Linux, and builds and checks the Android APK.
-- **Release** (`.github/workflows/release.yml`) builds Windows, macOS and
-  Linux archives plus `disktree-android.apk` and publishes them as a GitHub
-  release: Actions → Release → Run workflow, pick the branch, and enter a tag
-  such as `v0.1.4`.
+### Setting up a build machine (once)
 
-To publish files you built yourself instead, use Releases → *Draft a new
-release* on GitHub, create the tag there and attach the files.
+On a fresh Ubuntu Server (24.04 or newer):
 
-Before a release, bump `version` in the root `Cargo.toml`. The Android version
-code is derived from it, and Android won't install a lower version over a
-higher one.
+```sh
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y build-essential pkg-config git curl unzip zip gh mingw-w64 \
+    openjdk-21-jdk-headless libfontconfig1-dev
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git
+cd TreeSizeCloneAndroid
+scripts/android/setup-linux.sh   # Android SDK, NDK, cargo-apk
+gh auth login                    # GitHub.com, HTTPS, log in with a web browser
+```
 
-Before pushing, run the same checks CI does:
+`gh auth login` shows a code and a link; open the link on any computer, enter
+the code, and the machine can publish releases to your repositories.
+
+### Publishing a release
+
+1. Bump `version` in the root `Cargo.toml` (for example to `0.2.1`) and push.
+   The Android version code is derived from it, and Android won't install a
+   lower version over a higher one.
+2. On the build machine:
+
+   ```sh
+   cd ~/TreeSizeCloneAndroid
+   git pull
+   scripts/release.sh
+   ```
+
+`scripts/release.sh` runs the tests, builds `disktree-android.apk`,
+`disktree-linux-x86_64.tar.gz` and `disktree-windows-x86_64.zip` (the Windows
+build is cross-compiled with MinGW), writes `SHA256SUMS.txt`, and creates the
+GitHub release `v<version>` for the checked-out commit with those files and
+notes listing the changes. It refuses to publish uncommitted or unpushed code,
+or a version that's already released. `--draft` publishes a draft to check
+first; `--build-only` just builds into `dist/`. macOS builds need a Mac, so
+releases have none.
+
+The GitHub Actions CI workflow (`.github/workflows/ci.yml`) no longer runs on
+its own. It runs formatting, clippy and tests on Windows, macOS and Linux when
+started by hand from the Actions tab. The same checks locally:
 
 ```sh
 cargo fmt --all --check
@@ -298,21 +327,19 @@ Android only installs an update if it's signed with the same key as the
 installed app. On the first build, `build-apk.sh` creates
 `~/.android/disktree-release.keystore` and a random password in
 `~/.android/disktree-release.keystore.password`, and signs every later build
-with them.
+and release with them.
 
 **Back up both files** (a password manager, a USB stick). If you lose them,
-the next build can't update the installed app: you'd have to uninstall it and
-set up its permissions again. To build on another machine, copy both files
-into its `~/.android/`.
+nobody can publish an update that installs over the app: everyone would have
+to uninstall it and set up its permissions again. To build on another
+machine, copy both files into its `~/.android/`. From Windows:
+
+```powershell
+scp you@build-machine:~/.android/disktree-release.keystore* .
+```
 
 To sign with a different key, set `CARGO_APK_RELEASE_KEYSTORE` and
-`CARGO_APK_RELEASE_KEYSTORE_PASSWORD`. The Release workflow on GitHub signs
-with a throwaway key unless the repository has these two secrets (Settings →
-Secrets and variables → Actions):
-
-- `ANDROID_KEYSTORE_BASE64`: the output of
-  `base64 -w0 ~/.android/disktree-release.keystore`
-- `ANDROID_KEYSTORE_PASSWORD`: the contents of the password file.
+`CARGO_APK_RELEASE_KEYSTORE_PASSWORD`.
 
 ## Project layout
 

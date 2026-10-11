@@ -305,9 +305,19 @@ these doesn't hold:
 - `cargo test --workspace` runs the core tests (sizes, contiguity, hard links,
   symlinks, permissions, cancellation, deletion, squarify geometry) and the
   app's helper tests.
-- The CI workflow runs them on Windows, macOS and Linux, and builds and
-  checks the Android APK with `scripts/android/build-apk.sh`. It only runs
-  when started by hand; normally all of this runs locally.
+- `scripts/release.sh` runs them before building a release on the build
+  machine. The CI workflow runs them on Windows, macOS and Linux and builds
+  the APK, but only when started by hand.
+
+## Releases
+
+`scripts/release.sh` builds a release on a Linux machine and publishes it
+with the GitHub CLI: the APK through `build-apk.sh` (so it is checked and
+signed with the machine's key), the Linux app natively, and the Windows app
+cross-compiled for `x86_64-pc-windows-gnu` with MinGW. The Windows
+executables only import system DLLs, so they need no MinGW runtime. The
+script only publishes a clean checkout that matches GitHub, and lets
+`gh release create --target` create the tag for that commit.
 
 ## Possible next steps
 
@@ -323,4 +333,5 @@ these doesn't hold:
 - **Scan history and compare** ("what grew since last week").
 - **Duplicate finder** (group by size, then hash).
 - **Export** to CSV or JSON.
-- **macOS `.app` bundle and Windows installer** in the release workflow.
+- **Windows installer and macOS `.app` bundle** (the latter needs a Mac to
+  build).

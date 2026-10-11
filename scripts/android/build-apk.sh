@@ -18,7 +18,8 @@ cd "$(dirname "$0")/../.."
 # shellcheck source=scripts/android/env.sh
 source scripts/android/env.sh
 
-output="${1:-target/release/apk/DiskTree.apk}"
+target="${CARGO_TARGET_DIR:-target}"
+output="${1:-$target/release/apk/DiskTree.apk}"
 
 # Android 15+ devices may use 16 KB memory pages, and Google Play requires
 # native libraries built for them. cargo-apk ignores .cargo/config.toml
@@ -58,7 +59,7 @@ export CARGO_APK_RELEASE_KEYSTORE
 # No --target: cargo-apk builds every entry of build_targets into one APK.
 cargo apk build -p disktree-app --lib --release
 
-built="target/release/apk/DiskTree.apk"
+built="$target/release/apk/DiskTree.apk"
 if [ "$built" != "$output" ]; then
     mkdir -p "$(dirname "$output")"
     cp "$built" "$output"

@@ -3,3 +3,4 @@
 *.apk
 *.keystore
 .DS_Store
+/dist
