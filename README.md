@@ -30,6 +30,10 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   iCloud) and hard links. Hard links are counted once.
 - **Phone layout** with tabs below 760 px width, so it also works on small
   desktop windows.
+- **Apps & system breakdown (Android)**: how the whole phone's storage
+  divides up between apps, your files, the system and free space. Every app is
+  listed with its code, data and cache sizes; tap one to clear its cache or
+  data in Android's settings.
 - **Command-line tool** (`disktree`) sharing the same core.
 
 ## Platform notes
@@ -39,7 +43,7 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 | Windows | Any drive or folder | Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
 | macOS | Everything, once Full Disk Access is granted | Grant it in System Settings → Privacy & Security for the full picture. Detects iCloud "dataless" files. |
 | Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. |
-| Android 8.0+ | All shared storage and SD cards | Needs **All files access** (Android 11+). `Android/data` and other apps' private data stay hidden; that's an Android rule. |
+| Android 8.0+ | All shared storage and SD cards, plus sizes for every app and the system | Files need **All files access** (Android 11+). Apps' private data can't be opened as files on Android, so it's measured through Android's storage statistics instead, which need **Usage access**. |
 | iOS | — | Not planned: the iOS sandbox doesn't allow scanning the device. |
 
 ## Building
@@ -108,9 +112,10 @@ runs `scripts/android/check-apk.sh`, which fails the build if the APK would be
 rejected by a phone or by Google Play. To see the app's log, run
 `adb logcat -s DiskTree`.
 
-Publishing to Google Play requires declaring why the app needs All files access.
-Disk analyzers and file managers are an accepted use, but it goes through
-review. Sideloading and F-Droid don't have that step.
+Publishing to Google Play requires declaring why the app needs All files access
+and why it lists all installed apps (`QUERY_ALL_PACKAGES`). Disk analyzers and
+file managers are an accepted use, but it goes through review. Sideloading and
+F-Droid don't have that step.
 
 ## Installing on an Android phone
 
@@ -122,12 +127,39 @@ review. Sideloading and F-Droid don't have that step.
    Tap *More details → Install anyway*.
 4. Start DiskTree, tap **Grant access**, turn on *Allow access to manage all
    files*, and go back. Then pick *Internal storage* or an SD card.
+5. To see what apps and the system use, tap **Allow usage access** under
+   *Apps & system*, turn DiskTree on in the list, and go back.
+
+### Why a file scan finds less than the phone uses
+
+Android only lets an app read shared storage: photos, downloads, music and the
+like. Most of a phone's space is somewhere no app can open as files:
+
+- each app's private data (offline music and videos, chats, game data, caches)
+  and its folders under `Android/data` and `Android/obb`;
+- installed app code;
+- system data, other user profiles and temporary files.
+
+On top of that, the Android OS has partitions of its own outside user
+storage. That's why a 128 GB phone shows about 109 GB.
+
+The *Apps & system* section covers all of this with the same storage
+statistics Android's Settings app uses:
+
+- Apps: each app's code plus data. Preinstalled apps' code sits on the system
+  partition, so only their data counts.
+- Your files: shared storage that belongs to no app.
+- System & other: the rest of the used space.
+
+Tapping an app opens its settings page, where you can clear its cache, clear
+its storage or uninstall it.
 
 The Back gesture steps back through the app: it closes a dialog, stops a scan,
 zooms the treemap out, then returns to the drive list before leaving the app.
 
 | Problem | Cause | Fix |
 |---|---|---|
+| *Apps & system* stays at "Allow usage access" | DiskTree isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
 | "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `disktree-android.apk` from v0.1.1 or later. |
 | "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key. | Uninstall DiskTree, then install the new APK. Set up a release key (below) so future updates install over each other. |
 | Installing apps from outside the Play Store is blocked entirely | Advanced Protection is on (Settings → Security & privacy), or a work profile forbids it. | Install with `adb install`, or turn that setting off. |

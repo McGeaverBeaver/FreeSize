@@ -14,6 +14,8 @@ use disktree_core::{
 };
 use slint::{Color, ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
+use crate::apps::{self, AppReport};
+use crate::home::{self, AppsState};
 use crate::rows::{self, TreeRows};
 use crate::{AppWindow, FileRow, MapRect, TypeRow, actions, locations};
 
@@ -62,6 +64,10 @@ pub struct Controller {
     deletion: Option<RunningDelete>,
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     awaiting_permission: Option<String>,
+    apps: AppsState,
+    apps_job: Option<Slot<Result<AppReport, String>>>,
+    /// Waiting for the user to come back from the Usage access screen.
+    awaiting_usage_access: bool,
     timer: Timer,
     ticks: u64,
 }
@@ -95,13 +101,15 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             scan: None,
             deletion: None,
             awaiting_permission: None,
+            apps: AppsState::Unsupported,
+            apps_job: None,
+            awaiting_usage_access: false,
             timer: Timer::default(),
             ticks: 0,
         })
     });
 
     ui.set_tree_rows(ModelRc::from(ctl.borrow().rows.clone()));
-    ui.set_locations(ModelRc::new(VecModel::from(locations::rows())));
     let start = initial.clone().unwrap_or_else(locations::default_path);
     ui.set_path(start.to_string_lossy().as_ref().into());
     ui.set_can_browse(actions::CAN_BROWSE);
@@ -125,6 +133,9 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_delete_confirmed, weak, |c| c.confirm_delete());
     on!(ui, on_delete_cancelled, weak, |c| c.cancel_delete());
     on!(ui, on_grant_permission, weak, |c| c.grant_permission());
+    on!(ui, on_open_app, weak, |c, package| c
+        .open_app(package.as_str()));
+    on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
 
     // The folder picker is modal, so run it without holding the controller.
     let ui_weak = ui.as_weak();
@@ -147,6 +158,18 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
         let mut c = ctl.borrow_mut();
         c.awaiting_permission = Some(String::new());
         c.ensure_ticking();
+    }
+
+    {
+        let mut c = ctl.borrow_mut();
+        if apps::supported() {
+            if apps::has_access() {
+                c.start_apps_job();
+            } else {
+                c.apps = AppsState::NeedsAccess;
+            }
+        }
+        c.refresh_home();
     }
 
     if let Some(path) = initial {
@@ -232,8 +255,27 @@ impl Controller {
             }
         }
 
-        let busy =
-            self.scan.is_some() || self.deletion.is_some() || self.awaiting_permission.is_some();
+        if let Some(job) = &self.apps_job
+            && let Some(result) = take(job)
+        {
+            self.apps_job = None;
+            self.apps = match result {
+                Ok(report) => AppsState::Ready(report),
+                Err(err) => AppsState::Failed(err),
+            };
+            self.refresh_home();
+        }
+
+        if self.awaiting_usage_access && self.ticks.is_multiple_of(10) && apps::has_access() {
+            self.awaiting_usage_access = false;
+            self.start_apps_job();
+        }
+
+        let busy = self.scan.is_some()
+            || self.deletion.is_some()
+            || self.awaiting_permission.is_some()
+            || self.apps_job.is_some()
+            || self.awaiting_usage_access;
         if !busy {
             self.timer.stop();
         }
@@ -352,9 +394,58 @@ impl Controller {
         ui.set_map_rects(ModelRc::default());
         ui.set_largest_files(ModelRc::default());
         ui.set_file_types(ModelRc::default());
-        ui.set_locations(ModelRc::new(VecModel::from(locations::rows())));
         ui.set_has_tree(false);
         ui.set_status("Pick a drive or folder, or type a path and press Scan.".into());
+        // Free space and app sizes may have changed since the last visit.
+        if matches!(self.apps, AppsState::Ready(_) | AppsState::Failed(_)) {
+            self.start_apps_job();
+        }
+        self.refresh_home();
+    }
+
+    fn refresh_home(&self) {
+        if let Some(ui) = self.ui() {
+            ui.set_home_rows(ModelRc::new(VecModel::from(home::rows(&self.apps))));
+        }
+    }
+
+    // ----- Apps -----------------------------------------------------------
+
+    /// Measures every app's storage on a worker thread.
+    fn start_apps_job(&mut self) {
+        if self.apps_job.is_some() {
+            return;
+        }
+        let result: Slot<Result<AppReport, String>> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("disktree-apps".into())
+            .spawn(move || put(&worker_result, apps::collect()));
+        self.apps = match spawned {
+            Ok(_) => {
+                self.apps_job = Some(result);
+                self.ensure_ticking();
+                AppsState::Loading
+            }
+            Err(err) => AppsState::Failed(err.to_string()),
+        };
+        self.refresh_home();
+    }
+
+    fn home_action(&mut self, id: &str) {
+        match id {
+            home::GRANT_USAGE_ACCESS => {
+                apps::request_access();
+                self.awaiting_usage_access = true;
+                self.ensure_ticking();
+            }
+            home::REFRESH_APPS => self.start_apps_job(),
+            _ => {}
+        }
+    }
+
+    fn open_app(&mut self, package: &str) {
+        apps::open(package);
     }
 
     fn refresh_status(&self) {

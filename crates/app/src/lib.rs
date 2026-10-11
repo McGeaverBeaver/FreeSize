@@ -5,7 +5,9 @@ slint::include_modules!();
 mod actions;
 #[cfg(target_os = "android")]
 mod android;
+mod apps;
 mod controller;
+mod home;
 mod locations;
 mod rows;
 

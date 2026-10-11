@@ -42,15 +42,33 @@ export struct TypeRow {
     color: color,
 }
 
-export struct LocationRow {
-    label: string,
-    path: string,
+/// One row of the home screen.
+export struct HomeRow {
+    /// 0 drive or folder, 1 section heading, 2 storage breakdown, 3 app, 4 notice.
+    kind: int,
+    title: string,
+    subtitle: string,
     detail: string,
     fraction: float,
+    /// Path for drives, package name for apps, action id for headings and notices.
+    key: string,
+    /// Button text for headings and notices; empty for none.
+    action: string,
+    /// Storage breakdown: each part's share of the bar and its legend text.
+    apps: float,
+    files: float,
+    system: float,
+    apps-label: string,
+    files-label: string,
+    system-label: string,
+    free-label: string,
 }
 
 global Theme {
     out property <color> dim: Palette.foreground.transparentize(45%);
+    out property <color> apps: #4f8ff7;
+    out property <color> files: #34a853;
+    out property <color> system: #f4b400;
     out property <color> danger: #d64545;
     out property <color> track: Palette.color-scheme == ColorScheme.dark ? #ffffff1f : #0000001a;
 }
@@ -339,65 +357,271 @@ component TypesPane inherits Rectangle {
     }
 }
 
-component LocationsPane inherits Rectangle {
-    in property <[LocationRow]> locations;
+component Legend inherits HorizontalLayout {
+    in property <color> swatch;
+    in property <string> text;
+    spacing: 6px;
+    Rectangle {
+        width: 10px;
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+            background: root.swatch;
+        }
+    }
+
+    Text {
+        text: root.text;
+        font-size: 12px;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+}
+
+component Card inherits Rectangle {
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Palette.border;
+    background: Palette.control-background;
+}
+
+/// Drives to scan, and on Android how the whole device's storage divides up
+/// between apps, files and the system, with every app by size.
+component HomePane inherits Rectangle {
+    in property <[HomeRow]> rows;
     in property <length> card-height;
     callback choose(string);
+    callback open-app(string);
+    callback action(string);
 
     VerticalLayout {
         padding: 16px;
-        spacing: 12px;
-        Text {
-            text: "Choose a drive or folder to analyze";
-            font-size: 18px;
-            font-weight: 600;
-        }
-
+        padding-bottom: 0;
         ListView {
-            for loc in root.locations: Rectangle {
-                height: root.card-height + 10px;
-                Rectangle {
-                    y: 0;
-                    height: root.card-height;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: Palette.border;
-                    background: touch.has-hover ? Palette.alternate-background : Palette.control-background;
-                    touch := TouchArea {
-                        clicked => {
-                            root.choose(loc.path);
+            for row in root.rows: Rectangle {
+                VerticalLayout {
+                    padding-bottom: row.kind == 3 ? 2px : 10px;
+
+                    if row.kind == 0: Card {
+                        height: root.card-height;
+                        background: drive-touch.has-hover ? Palette.alternate-background : Palette.control-background;
+                        drive-touch := TouchArea {
+                            clicked => {
+                                root.choose(row.key);
+                            }
+                        }
+
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 6px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: row.title;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: row.detail;
+                                    horizontal-stretch: 1;
+                                    horizontal-alignment: right;
+                                    color: Theme.dim;
+                                    font-size: 12px;
+                                }
+                            }
+
+                            SizeBar {
+                                fraction: row.fraction;
+                            }
+
+                            Text {
+                                text: row.subtitle;
+                                font-size: 11px;
+                                color: Theme.dim;
+                                overflow: elide;
+                            }
                         }
                     }
 
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 6px;
+                    if row.kind == 1: VerticalLayout {
+                        padding-top: 8px;
+                        spacing: 2px;
                         HorizontalLayout {
                             spacing: 8px;
                             Text {
-                                text: loc.label;
+                                text: row.title;
+                                font-size: 18px;
                                 font-weight: 600;
-                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                            }
+
+                            if row.action != "": Button {
+                                text: row.action;
+                                clicked => {
+                                    root.action(row.key);
+                                }
+                            }
+                        }
+
+                        if row.subtitle != "": Text {
+                            text: row.subtitle;
+                            font-size: 12px;
+                            color: Theme.dim;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if row.kind == 2: Card {
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 10px;
+                            Text {
+                                text: row.title;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                            }
+
+                            Rectangle {
+                                height: 14px;
+                                border-radius: 4px;
+                                background: Theme.track;
+                                clip: true;
+                                Rectangle {
+                                    x: 0;
+                                    width: parent.width * row.apps;
+                                    background: Theme.apps;
+                                }
+
+                                Rectangle {
+                                    x: parent.width * row.apps;
+                                    width: parent.width * row.files;
+                                    background: Theme.files;
+                                }
+
+                                Rectangle {
+                                    x: parent.width * (row.apps + row.files);
+                                    width: parent.width * row.system;
+                                    background: Theme.system;
+                                }
+                            }
+
+                            GridLayout {
+                                spacing: 8px;
+                                Row {
+                                    Legend {
+                                        swatch: Theme.apps;
+                                        text: row.apps-label;
+                                    }
+
+                                    Legend {
+                                        swatch: Theme.files;
+                                        text: row.files-label;
+                                    }
+                                }
+
+                                Row {
+                                    Legend {
+                                        swatch: Theme.system;
+                                        text: row.system-label;
+                                    }
+
+                                    Legend {
+                                        swatch: Theme.track;
+                                        text: row.free-label;
+                                    }
+                                }
+                            }
+
+                            if row.subtitle != "": Text {
+                                text: row.subtitle;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    if row.kind == 3: Rectangle {
+                        height: 56px;
+                        border-radius: 6px;
+                        background: app-touch.has-hover ? Palette.alternate-background : transparent;
+                        app-touch := TouchArea {
+                            clicked => {
+                                root.open-app(row.key);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: row.title;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: row.subtitle;
+                                    font-size: 11px;
+                                    color: Theme.dim;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Rectangle {
+                                width: 56px;
+                                SizeBar {
+                                    width: 100%;
+                                    fraction: row.fraction;
+                                    fill: Theme.apps;
+                                }
                             }
 
                             Text {
-                                text: loc.detail;
-                                horizontal-stretch: 1;
+                                text: row.detail;
+                                width: 72px;
                                 horizontal-alignment: right;
-                                color: Theme.dim;
-                                font-size: 12px;
+                                vertical-alignment: center;
                             }
                         }
+                    }
 
-                        SizeBar {
-                            fraction: loc.fraction;
-                        }
+                    if row.kind == 4: Card {
+                        background: Palette.alternate-background;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            Text {
+                                text: row.title;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                            }
 
-                        Text {
-                            text: loc.path;
-                            font-size: 11px;
-                            color: Theme.dim;
-                            overflow: elide;
+                            if row.subtitle != "": Text {
+                                text: row.subtitle;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+                            if row.action != "": HorizontalLayout {
+                                alignment: start;
+                                Button {
+                                    text: row.action;
+                                    primary: true;
+                                    clicked => {
+                                        root.action(row.key);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -474,7 +698,7 @@ export component AppWindow inherits Window {
     in property <string> scan-title;
     in property <string> scan-counts;
     in property <string> scan-current;
-    in property <[LocationRow]> locations;
+    in property <[HomeRow]> home-rows;
     in property <[TreeRow]> tree-rows;
     in property <[MapRect]> map-rects;
     in property <[FileRow]> largest-files;
@@ -510,6 +734,8 @@ export component AppWindow inherits Window {
     callback cancel-scan();
     callback browse();
     callback show-locations();
+    callback open-app(string);
+    callback home-action(string);
     callback toggle-row(int);
     callback select-node(int, bool);
     callback map-resized(length, length);
@@ -664,13 +890,19 @@ export component AppWindow inherits Window {
                     root.cancel-scan();
                 }
             }
-            if !root.scanning && !root.has-tree: LocationsPane {
+            if !root.scanning && !root.has-tree: HomePane {
                 vertical-stretch: 1;
-                locations: root.locations;
+                rows: root.home-rows;
                 card-height: root.compact ? 86px : 78px;
                 choose(path) => {
                     root.path = path;
                     root.start-scan(path);
+                }
+                open-app(package) => {
+                    root.open-app(package);
+                }
+                action(id) => {
+                    root.home-action(id);
                 }
             }
             if !root.scanning && root.has-tree && !root.compact: HorizontalLayout {

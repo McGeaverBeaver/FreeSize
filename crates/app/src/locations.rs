@@ -2,10 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use disktree_core::{disk_space, format_size};
-
-use crate::LocationRow;
-
 pub struct Location {
     pub label: String,
     pub path: PathBuf,
@@ -20,30 +16,8 @@ pub fn default_path() -> PathBuf {
     }
 }
 
-pub fn rows() -> Vec<LocationRow> {
-    list()
-        .into_iter()
-        .map(|loc| {
-            let space = disk_space(&loc.path);
-            let (detail, fraction) = match space {
-                Some(s) if s.total > 0 => (
-                    format!("{} free of {}", format_size(s.free), format_size(s.total)),
-                    (s.used() as f64 / s.total as f64) as f32,
-                ),
-                _ => (String::new(), 0.0),
-            };
-            LocationRow {
-                label: loc.label.into(),
-                path: loc.path.to_string_lossy().as_ref().into(),
-                detail: detail.into(),
-                fraction,
-            }
-        })
-        .collect()
-}
-
 #[cfg(target_os = "android")]
-fn list() -> Vec<Location> {
+pub fn list() -> Vec<Location> {
     let mut out = vec![Location {
         label: "Internal storage".into(),
         path: PathBuf::from("/storage/emulated/0"),
@@ -65,7 +39,7 @@ fn list() -> Vec<Location> {
 }
 
 #[cfg(windows)]
-fn list() -> Vec<Location> {
+pub fn list() -> Vec<Location> {
     let mut out: Vec<Location> = ('C'..='Z')
         .map(|letter| PathBuf::from(format!("{letter}:\\")))
         .filter(|path| std::fs::metadata(path).is_ok())
@@ -84,7 +58,7 @@ fn list() -> Vec<Location> {
 }
 
 #[cfg(target_os = "macos")]
-fn list() -> Vec<Location> {
+pub fn list() -> Vec<Location> {
     let mut out = vec![Location {
         label: "Macintosh HD".into(),
         path: PathBuf::from("/"),
@@ -111,7 +85,7 @@ fn list() -> Vec<Location> {
 }
 
 #[cfg(all(unix, not(target_os = "android"), not(target_os = "macos")))]
-fn list() -> Vec<Location> {
+pub fn list() -> Vec<Location> {
     let mut out = Vec::new();
     if let Some(home) = std::env::home_dir() {
         out.push(Location {

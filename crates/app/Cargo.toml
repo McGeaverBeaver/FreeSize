@@ -67,3 +67,12 @@ max_sdk_version = 29
 # Android 11+: "All files access", needed to see all of shared storage.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.MANAGE_EXTERNAL_STORAGE"
+
+# Lets StorageStatsManager report other apps' storage; the user turns it on
+# under "Usage access".
+[[package.metadata.android.uses_permission]]
+name = "android.permission.PACKAGE_USAGE_STATS"
+
+# Android 11+ only lists every installed app with this.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.QUERY_ALL_PACKAGES"
