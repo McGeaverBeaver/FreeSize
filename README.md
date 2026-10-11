@@ -296,22 +296,26 @@ about 15 GB for build files: Rust builds for Linux, Windows and two Android
 targets, plus the Android SDK and NDK. When the disk fills up during a build,
 the linker fails with "Bus error" or "No space left on device".
 
-Ubuntu Server's installer gives the system only part of the disk by default.
-Check with `df -h ~`, and claim the rest of the disk with:
+`df -h ~` shows how much is free. To make room:
 
-```sh
-sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
-```
+- **The virtual disk is too small** (the filesystem is a partition such as
+  `/dev/vda2` or `/dev/sda2` and fills the whole disk): enlarge the disk in
+  your VM software, then grow the partition and filesystem into the new
+  space. `lsblk` shows the names; the system partition must be the last one
+  on the disk.
 
-If the virtual disk itself is too small, enlarge it in your hypervisor first,
-then grow the partition and the volume (`lsblk` shows the names; here the disk
-is `sda` and the LVM partition is number 3):
+  ```sh
+  sudo growpart /dev/vda 2      # disk, then partition number
+  sudo resize2fs /dev/vda2      # ext4; for XFS: sudo xfs_growfs /
+  ```
 
-```sh
-sudo growpart /dev/sda 3
-sudo pvresize /dev/sda3
-sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
-```
+- **Ubuntu Server left part of the disk unused** (the filesystem is
+  `/dev/mapper/ubuntu--vg-ubuntu--lv`, which the installer sizes to part of
+  the disk by default):
+
+  ```sh
+  sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+  ```
 
 `cargo clean` deletes all build files when space runs low; the next build
 then takes longer.
