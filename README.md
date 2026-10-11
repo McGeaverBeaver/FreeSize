@@ -320,21 +320,34 @@ the linker fails with "Bus error" or "No space left on device".
 `cargo clean` deletes all build files when space runs low; the next build
 then takes longer.
 
-**Building on a shared folder instead.** A VM can also keep the project on a
-folder shared by its host, such as an Unraid 9p share with mount tag
-`ssdbobbybuilds`. Mount it with `cache=loose`: without caching, 9p doesn't
-fully support the memory-mapped writes the linker uses, and builds are much
-slower. That's safe as long as only the VM uses that folder.
+**More space from a host disk.** To use a disk of the VM's host (an Unraid
+SSD, say), give the VM a second virtual disk stored on it rather than
+building in a shared folder. Shared folders (9p, virtiofs) are slow for the
+tens of thousands of small files a build writes, and a 9p share with caching
+has been seen to return corrupted file contents. On Unraid, create the disk
+file in the Unraid terminal and add it to the VM as a second VirtIO vDisk
+(Manual location):
 
 ```sh
-sudo mkdir -p /mnt/ssdbuilds
-echo 'ssdbobbybuilds /mnt/ssdbuilds 9p trans=virtio,version=9p2000.L,msize=262144,cache=loose,nofail 0 0' | sudo tee -a /etc/fstab
-sudo systemctl daemon-reload && sudo mount /mnt/ssdbuilds
-git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git /mnt/ssdbuilds/TreeSizeCloneAndroid
-ln -sfn /mnt/ssdbuilds/TreeSizeCloneAndroid ~/TreeSizeCloneAndroid
+mkdir -p /mnt/disks/SSD_CACHE/vdisks
+qemu-img create -f raw /mnt/disks/SSD_CACHE/vdisks/bobby-builds.img 100G
 ```
 
-Rust, the Android SDK and the signing key stay on the VM's own disk.
+Then, in the VM (check with `lsblk` that the new, empty disk is `vdb`, since
+formatting erases it):
+
+```sh
+sudo mkfs.ext4 -L builds /dev/vdb
+sudo mkdir -p /mnt/builds
+echo 'LABEL=builds /mnt/builds ext4 defaults,noatime,nofail 0 2' | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload
+sudo mount /mnt/builds && sudo chown "$USER": /mnt/builds
+git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git /mnt/builds/TreeSizeCloneAndroid
+ln -s /mnt/builds/TreeSizeCloneAndroid ~/TreeSizeCloneAndroid
+```
+
+Rust, the Android SDK and the signing key stay on the VM's own disk. A shared
+folder is still handy for copying files and keeping a backup of the key.
 
 ### Publishing a release
 
