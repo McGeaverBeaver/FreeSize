@@ -48,8 +48,9 @@ if [ "${target_sdk:-0}" -ge 35 ]; then pass "targetSdk $target_sdk"; else fail "
 if grep -q "^launchable-activity:" <<<"$badging"; then pass "has a launcher activity"; else fail "no launcher activity"; fi
 
 # Without these the storage features silently stop working: Android doesn't
-# offer the All files access or Usage access switches for apps that don't ask.
-for permission in MANAGE_EXTERNAL_STORAGE PACKAGE_USAGE_STATS QUERY_ALL_PACKAGES; do
+# offer the All files access or Usage access switches for apps that don't ask,
+# and ignores uninstall requests from apps without REQUEST_DELETE_PACKAGES.
+for permission in MANAGE_EXTERNAL_STORAGE PACKAGE_USAGE_STATS QUERY_ALL_PACKAGES REQUEST_DELETE_PACKAGES; do
     if grep -q "^uses-permission: name='android.permission.$permission'" <<<"$badging"; then
         pass "declares $permission"
     else

@@ -32,8 +32,12 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   desktop windows.
 - **Apps & system breakdown (Android)**: how the whole phone's storage
   divides up between apps, your files, the system and free space. Every app is
-  listed with its code, data and cache sizes; tap one to clear its cache or
-  data in Android's settings.
+  listed with its code, data and cache sizes.
+- **App cleanup (Android)**: apps you haven't opened in 3 months or never
+  opened, apps no store can give back, and a history of removed apps. Tap an
+  app to see when you last used it and where it came from, then uninstall,
+  archive, save its APK or clear its cache. See
+  [Cleaning up apps](#cleaning-up-apps).
 - **Command-line tool** (`disktree`) sharing the same core.
 
 ## Platform notes
@@ -202,8 +206,56 @@ its storage or uninstall it.
 The Back gesture steps back through the app: it closes a dialog, stops a scan,
 zooms the treemap out, then returns to the drive list before leaving the app.
 
+### Cleaning up apps
+
+Under the storage breakdown, the apps are grouped so the space you can win
+back is easy to find:
+
+| Group | What's in it |
+|---|---|
+| All apps | Every app, biggest first. |
+| Not opened in 3 months | Apps you haven't had on screen for 3 months. |
+| Never opened | Apps with no use recorded since they were installed (Android keeps about 2 years of usage history). |
+| Not from an app store | Apps installed from a downloaded file or a computer. No store can give them back, so save the APK first. |
+| Removed apps | Apps DiskTree has seen before that are gone, so you can find one again by name. |
+
+Apps that work without being opened are never suggested for removal:
+preinstalled apps, apps without an icon, your default home screen, browser,
+messaging and phone apps, keyboards, accessibility services, apps that read
+notifications (such as watch apps), device admin apps, and archived apps.
+
+Tapping an app shows its size, when it was installed and last opened, its time
+on screen over the last 30 days, where it came from, and tips for a few
+well-known apps (for example that clearing Signal's storage deletes your
+messages). Its buttons:
+
+- **Uninstall**: Android asks you to confirm.
+- **Archive** (Android 15+, Play Store apps): opens the app's info page, where
+  *Archive* removes the app but keeps its data and login. Tapping its icon
+  later reinstalls it from the Play Store.
+- **Save APK to Downloads** (apps not from a store): copies the app's install
+  file to `Download/DiskTree`, so you can install it again later. The app's
+  data isn't included.
+- **Open in Play Store** (or the store it came from).
+- **App info**: Android's page for clearing the app's cache or data.
+
+**Clear every app's cache** (Android 11+) opens Android's own dialog that
+clears all apps' cache at once. It needs All files access. Apps rebuild some of
+their cache as they run.
+
+After you come back from uninstalling an app or from its info page, DiskTree
+measures the apps again.
+
+The app history is a small file, `Documents/DiskTree/app-history.json`, with a
+second copy in DiskTree's private storage. The first survives uninstalling
+DiskTree. Other apps with All files access can read it, so delete it if you
+don't want the list of your apps there. DiskTree only notices an app was
+removed the next time it measures the apps, so the removal date can be later
+than the day you removed it.
+
 | Problem | Cause | Fix |
 |---|---|---|
+| Uninstall does nothing | The APK was built without the `REQUEST_DELETE_PACKAGES` permission (versions before 0.2.0). | Install 0.2.0 or later. |
 | *Apps & system* stays at "Allow usage access" | DiskTree isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
 | Usage access switch is greyed out, says "Controlled by Restricted Setting", or shows "App was denied access" | Android 13+ blocks Usage access for apps installed from a downloaded file (restricted settings). | Settings → Apps → DiskTree → ⋮ → *Allow restricted settings*, then turn Usage access on. If ⋮ isn't there, try to turn the switch on once first; the menu only appears after Android has blocked it. |
 | "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `disktree-android.apk` from v0.1.1 or later. |

@@ -7,7 +7,9 @@ mod actions;
 mod android;
 mod apps;
 mod controller;
+mod history;
 mod home;
+mod insights;
 mod locations;
 mod rows;
 

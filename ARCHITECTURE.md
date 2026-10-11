@@ -106,7 +106,7 @@ space on the start screen.
 ### UI (`ui/app.slint`)
 
 The whole interface is one Slint file. Rust feeds it plain structs
-(`TreeRow`, `MapRect`, `FileRow`, `TypeRow`, `LocationRow`) and receives
+(`TreeRow`, `MapRect`, `FileRow`, `TypeRow`, `HomeRow`, `SheetAction`) and receives
 callbacks.
 
 - **Wide layout** (≥ 760 px): folder tree on the left; treemap, largest files
@@ -186,7 +186,20 @@ code can't be read by any app. Android does report their sizes through
 | `getTotalBytes` | the advertised capacity |
 
 Each app gets its own JNI local frame, and an app that disappears mid-way is
-skipped.
+skipped. For each app it also asks:
+
+| Call | Result |
+|---|---|
+| `UsageStatsManager.queryAndAggregateUsageStats` | when the app was last on screen (two years back) and its screen time over 30 days |
+| `getPackageInfo` | install date and version |
+| `getInstallSourceInfo` | the installer: Play Store, another store, a downloaded file |
+| `getLaunchIntentForPackage` | whether it has an icon |
+| `ApplicationInfo.isArchived` (Android 15+) | archived apps, listed with `MATCH_ARCHIVED_PACKAGES` |
+
+Once per report it collects the apps that work without being opened: the
+default home screen and browser (`resolveActivity`), SMS and phone apps,
+keyboards, accessibility services and notification listeners
+(`Settings.Secure`), and device admins.
 
 Android 13+ treats Usage access as a *restricted setting*: for an app
 installed from a downloaded APK the switch stays greyed out until the user
@@ -206,10 +219,34 @@ Settings does:
 - Separately, the advertised capacity minus the partition size is reported as
   Android's own share outside user storage.
 
-`home.rs` turns this into the home screen's rows: drives, the breakdown bar,
-then every app largest first. Tapping an app opens
-`Settings.ACTION_APPLICATION_DETAILS_SETTINGS` for it. No app can clear
-another app's cache on modern Android, so the user does that there.
+`insights.rs` turns these facts into advice, as pure functions with tests:
+where an app came from and whether a store can reinstall it, which apps are
+safe to suggest, the groups (not opened in 3 months, never opened, not from a
+store), and tips for well-known apps.
+
+`history.rs` keeps a record of every app seen, so removed apps can be found
+again. `apps::collect` loads it, records the new report and saves it. It is
+JSON in `Documents/DiskTree/` (survives uninstalling DiskTree) and in the
+app's private storage (works without All files access); both copies are read
+and merged.
+
+`home.rs` turns all of this into the home screen's rows (drives, the breakdown
+bar, the clear-cache card, the groups, then the selected group's apps) and
+into the app sheet: the facts and buttons shown when an app is tapped.
+
+The actions go through intents: `ACTION_DELETE` to uninstall (needs
+`REQUEST_DELETE_PACKAGES`), `market://` links for the store, the app's info
+page for archiving and clearing its cache, and
+`StorageManager.ACTION_CLEAR_APP_CACHE` for every app's cache. No app can clear
+another app's cache directly. "Save APK" copies `ApplicationInfo.sourceDir`
+and any split APKs to `Download/DiskTree`. While a system screen is open,
+DiskTree's window loses focus; the controller polls `hasWindowFocus` and
+measures the apps again when the user comes back.
+
+The home screen is a `ScrollView` with a plain layout rather than a
+`ListView`. The list view keeps a reused row's old height when its wrapped
+text changes, so switching groups made rows overlap. The home screen has at
+most a few hundred rows, which a plain layout handles easily.
 
 Debug builds started with `DISKTREE_FAKE_APPS=1` (or `=no-access`) show sample
 app data on the desktop, for working on the UI without a phone.
@@ -277,6 +314,12 @@ these doesn't hold:
 - **Windows MFT reader**: reading the NTFS Master File Table directly is how
   WizTree scans a whole drive in seconds. It needs admin rights, so it would be
   an optional fast path next to the current scanner.
+- **Apps' media in shared storage**: attribute photos and videos to the app
+  that saved them (MediaStore's owner package, `Android/media/<app>`).
+- **Growth tracking**: record app sizes over time ("Signal grew 1.2 GB this
+  month"), using the app history file.
+- **Leftovers and trash**: folders left by uninstalled apps, and trashed
+  media that still takes space for 30 days.
 - **Scan history and compare** ("what grew since last week").
 - **Duplicate finder** (group by size, then hash).
 - **Export** to CSV or JSON.

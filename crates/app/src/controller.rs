@@ -15,9 +15,10 @@ use disktree_core::{
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::apps::{self, AppReport};
-use crate::home::{self, AppsState};
+use crate::home::{self, AppsState, sheet};
+use crate::insights::View;
 use crate::rows::{self, TreeRows};
-use crate::{AppWindow, FileRow, HomeRow, MapRect, TypeRow, actions, locations};
+use crate::{AppWindow, FileRow, HomeRow, MapRect, SheetAction, TypeRow, actions, locations};
 
 /// Result handed from a worker thread to the UI thread.
 type Slot<T> = Arc<Mutex<Option<T>>>;
@@ -41,6 +42,19 @@ struct RunningDelete {
     name: String,
     size: u64,
     result: Slot<Result<(), String>>,
+}
+
+/// What the app sheet is showing.
+enum SheetTarget {
+    App(String),
+    Removed(String),
+}
+
+/// Waits for the user to come back from a system screen (uninstall dialog,
+/// app info, clear cache) so the app sizes can be measured again.
+struct ReturnWatch {
+    left: bool,
+    ticks: u64,
 }
 
 struct ScanSummary {
@@ -69,6 +83,11 @@ pub struct Controller {
     apps_job: Option<Slot<Result<AppReport, String>>>,
     /// Waiting for the user to come back from the Usage access screen.
     awaiting_usage_access: bool,
+    /// Which group of apps the home screen lists.
+    view: View,
+    sheet: Option<SheetTarget>,
+    return_watch: Option<ReturnWatch>,
+    apk_job: Option<Slot<Result<String, String>>>,
     timer: Timer,
     ticks: u64,
 }
@@ -106,6 +125,10 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             apps: AppsState::Unsupported,
             apps_job: None,
             awaiting_usage_access: false,
+            view: View::All,
+            sheet: None,
+            return_watch: None,
+            apk_job: None,
             timer: Timer::default(),
             ticks: 0,
         })
@@ -139,6 +162,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_open_app, weak, |c, package| c
         .open_app(package.as_str()));
     on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
+    on!(ui, on_sheet_action, weak, |c, id| c
+        .sheet_action(id.as_str()));
 
     // The folder picker is modal, so run it without holding the controller.
     let ui_weak = ui.as_weak();
@@ -253,6 +278,8 @@ impl Controller {
             if let Some(ui) = self.ui() {
                 ui.set_needs_permission(false);
             }
+            // The clear-cache card changes once access is granted.
+            self.refresh_home();
             if !pending.is_empty() {
                 self.start_scan(pending);
             }
@@ -274,11 +301,39 @@ impl Controller {
             self.start_apps_job();
         }
 
+        if let Some(watch) = &mut self.return_watch {
+            watch.ticks += 1;
+            if watch.ticks.is_multiple_of(5) {
+                let focused = apps::window_has_focus();
+                let back = watch.left && focused;
+                watch.left |= !focused;
+                // Give up if the screen never opened, or after 10 minutes.
+                let expired = (!watch.left && watch.ticks > 300) || watch.ticks > 6000;
+                if back || expired {
+                    self.return_watch = None;
+                }
+                if back {
+                    self.start_apps_job();
+                }
+            }
+        }
+
+        if let Some(job) = &self.apk_job
+            && let Some(result) = take(job)
+        {
+            self.apk_job = None;
+            if let Some(ui) = self.ui() {
+                ui.set_status(result.unwrap_or_else(|err| err).into());
+            }
+        }
+
         let busy = self.scan.is_some()
             || self.deletion.is_some()
             || self.awaiting_permission.is_some()
             || self.apps_job.is_some()
-            || self.awaiting_usage_access;
+            || self.awaiting_usage_access
+            || self.return_watch.is_some()
+            || self.apk_job.is_some();
         if !busy {
             self.timer.stop();
         }
@@ -410,7 +465,13 @@ impl Controller {
     /// the list keeps its scroll position and the measured heights of rows
     /// that stay the same.
     fn refresh_home(&self) {
-        let rows = home::rows(&self.apps);
+        let options = home::Options {
+            view: self.view,
+            refreshing: self.apps_job.is_some() && matches!(self.apps, AppsState::Ready(_)),
+            storage_access: storage_access(),
+            abilities: apps::abilities(),
+        };
+        let rows = home::rows(&self.apps, options);
         let model = &self.home_rows;
         for (i, row) in rows.iter().enumerate() {
             if i >= model.row_count() {
@@ -426,7 +487,8 @@ impl Controller {
 
     // ----- Apps -----------------------------------------------------------
 
-    /// Measures every app's storage on a worker thread.
+    /// Measures every app's storage on a worker thread. A previous result
+    /// stays on screen until the new one is in.
     fn start_apps_job(&mut self) {
         if self.apps_job.is_some() {
             return;
@@ -436,14 +498,16 @@ impl Controller {
         let spawned = std::thread::Builder::new()
             .name("disktree-apps".into())
             .spawn(move || put(&worker_result, apps::collect()));
-        self.apps = match spawned {
+        match spawned {
             Ok(_) => {
                 self.apps_job = Some(result);
                 self.ensure_ticking();
-                AppsState::Loading
+                if !matches!(self.apps, AppsState::Ready(_)) {
+                    self.apps = AppsState::Loading;
+                }
             }
-            Err(err) => AppsState::Failed(err.to_string()),
-        };
+            Err(err) => self.apps = AppsState::Failed(err.to_string()),
+        }
         self.refresh_home();
     }
 
@@ -466,12 +530,198 @@ impl Controller {
                 self.ensure_ticking();
             }
             home::REFRESH_APPS => self.start_apps_job(),
+            home::CLEAR_CACHE => {
+                if apps::clear_all_cache() {
+                    self.watch_return();
+                } else {
+                    self.set_status(
+                        "This phone has no clear-all option, so Storage settings opened instead.",
+                    );
+                }
+            }
+            home::GRANT_STORAGE => self.grant_permission(),
+            _ => {
+                if let Some(view) = id.strip_prefix(home::VIEW_PREFIX).and_then(View::from_id) {
+                    self.view = view;
+                    self.refresh_home();
+                }
+            }
+        }
+    }
+
+    fn report(&self) -> Option<&AppReport> {
+        match &self.apps {
+            AppsState::Ready(report) => Some(report),
+            _ => None,
+        }
+    }
+
+    /// Shows the details sheet for an app, or for a removed app.
+    fn open_app(&mut self, key: &str) {
+        let Some(report) = self.report() else {
+            return;
+        };
+        let (target, content) = if let Some(package) = key.strip_prefix(home::REMOVED_PREFIX) {
+            let Some(entry) = report.removed.iter().find(|e| e.package == package) else {
+                return;
+            };
+            (
+                SheetTarget::Removed(package.into()),
+                home::removed_sheet(entry, report.now),
+            )
+        } else {
+            let Some(app) = report.apps.iter().find(|a| a.package == key) else {
+                return;
+            };
+            (
+                SheetTarget::App(key.into()),
+                home::app_sheet(app, report, apps::abilities()),
+            )
+        };
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        ui.set_sheet_title(content.title.into());
+        ui.set_sheet_subtitle(content.subtitle.into());
+        let facts: Vec<SharedString> = content.facts.into_iter().map(Into::into).collect();
+        ui.set_sheet_facts(ModelRc::new(VecModel::from(facts)));
+        ui.set_sheet_note(content.note.into());
+        let buttons: Vec<SheetAction> = content
+            .actions
+            .into_iter()
+            .map(|(id, label, primary)| SheetAction {
+                id: id.into(),
+                label: label.into(),
+                primary,
+            })
+            .collect();
+        ui.set_sheet_actions(ModelRc::new(VecModel::from(buttons)));
+        ui.set_sheet_open(true);
+        self.sheet = Some(target);
+    }
+
+    fn close_sheet(&mut self) {
+        self.sheet = None;
+        if let Some(ui) = self.ui() {
+            ui.set_sheet_open(false);
+        }
+    }
+
+    fn sheet_action(&mut self, id: &str) {
+        let target = self.sheet.take();
+        self.close_sheet();
+        let Some(target) = target else {
+            return;
+        };
+        let demo = !cfg!(target_os = "android");
+        match (id, &target) {
+            (sheet::CLOSE, _) => {}
+            (sheet::UNINSTALL, SheetTarget::App(package)) => {
+                apps::uninstall(package);
+                self.watch_return();
+                if demo {
+                    self.set_status(&format!("Uninstall {package}: only on Android."));
+                }
+            }
+            (sheet::ARCHIVE, SheetTarget::App(package)) => {
+                apps::open(package);
+                self.watch_return();
+                self.set_status("On the app's info page, tap Archive.");
+            }
+            (sheet::APP_INFO, SheetTarget::App(package)) => {
+                apps::open(package);
+                self.watch_return();
+            }
+            (sheet::STORE, SheetTarget::App(package) | SheetTarget::Removed(package)) => {
+                let installer = self.installer_of(&target);
+                apps::open_in_store(package, installer.as_deref());
+            }
+            (sheet::SEARCH_STORE, SheetTarget::Removed(package)) => {
+                let label = self
+                    .report()
+                    .and_then(|r| r.removed.iter().find(|e| &e.package == package))
+                    .map_or_else(|| package.clone(), |e| e.label.clone());
+                apps::search_store(&label);
+            }
+            (sheet::SAVE_APK, SheetTarget::App(package)) => self.save_apk(package),
+            (sheet::FORGET, SheetTarget::Removed(package)) => {
+                if let Err(err) = apps::forget(package) {
+                    self.set_status(&format!("Couldn't update the app history: {err}"));
+                }
+                if let AppsState::Ready(report) = &mut self.apps {
+                    report.removed.retain(|e| &e.package != package);
+                }
+                self.refresh_home();
+            }
             _ => {}
         }
     }
 
-    fn open_app(&mut self, package: &str) {
-        apps::open(package);
+    fn installer_of(&self, target: &SheetTarget) -> Option<String> {
+        let report = self.report()?;
+        match target {
+            SheetTarget::App(package) => report
+                .apps
+                .iter()
+                .find(|a| &a.package == package)?
+                .installer
+                .clone(),
+            SheetTarget::Removed(package) => report
+                .removed
+                .iter()
+                .find(|e| &e.package == package)?
+                .installer
+                .clone(),
+        }
+    }
+
+    /// Copies an app's APK to Download/DiskTree on a worker thread.
+    fn save_apk(&mut self, package: &str) {
+        if self.apk_job.is_some() {
+            self.set_status("Still saving the previous APK…");
+            return;
+        }
+        if !storage_access() {
+            self.grant_permission();
+            self.set_status("Saving an APK needs All files access. Allow it, then try again.");
+            return;
+        }
+        let Some(app) = self
+            .report()
+            .and_then(|r| r.apps.iter().find(|a| a.package == package))
+        else {
+            return;
+        };
+        let (package, label, version) =
+            (app.package.clone(), app.label.clone(), app.version.clone());
+        let saving = format!("Saving the APK of {label}…");
+        let result: Slot<Result<String, String>> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("disktree-apk".into())
+            .spawn(move || put(&worker_result, apps::save_apk(&package, &label, &version)));
+        match spawned {
+            Ok(_) => {
+                self.apk_job = Some(result);
+                self.ensure_ticking();
+                self.set_status(&saving);
+            }
+            Err(err) => self.set_status(&format!("Couldn't save the APK: {err}")),
+        }
+    }
+
+    fn watch_return(&mut self) {
+        self.return_watch = Some(ReturnWatch {
+            left: false,
+            ticks: 0,
+        });
+        self.ensure_ticking();
+    }
+
+    fn set_status(&self, text: &str) {
+        if let Some(ui) = self.ui() {
+            ui.set_status(text.into());
+        }
     }
 
     fn refresh_status(&self) {
@@ -868,6 +1118,14 @@ impl Controller {
             self.ensure_ticking();
         }
     }
+}
+
+/// Whether DiskTree can read and write all of shared storage.
+fn storage_access() -> bool {
+    #[cfg(target_os = "android")]
+    return crate::android::has_storage_access();
+    #[cfg(not(target_os = "android"))]
+    true
 }
 
 /// `"1 file"`, `"1,234 files"`.

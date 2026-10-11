@@ -5,15 +5,19 @@
 //!   older the classic READ_EXTERNAL_STORAGE runtime permission is enough.
 //! - App storage: other apps' private data can't be read as files, but
 //!   StorageStatsManager reports its size once the user grants "Usage access".
+//!   The same permission lets UsageStatsManager say when each app was last
+//!   used.
 
+use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_int};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use jni::objects::{JObject, JString, JValue};
+use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::{Env, JavaVM, jni_sig, jni_str};
 use slint::android::AndroidApp;
 
-use crate::apps::{AppReport, AppUsage};
+use crate::apps::{self, Abilities, AppReport, AppUsage};
 
 type JniResult<T> = jni::errors::Result<T>;
 
@@ -62,8 +66,56 @@ fn with_activity<T>(f: impl FnOnce(&mut Env, &JObject) -> JniResult<T>) -> JniRe
         // SAFETY: android-activity holds a global reference to the activity
         // for the lifetime of the app; JObject never deletes it.
         let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
-        f(env, &activity)
+        let result = f(env, &activity);
+        // A failed call leaves its Java exception pending, which would make
+        // the next JNI call on this thread fail too.
+        if result.is_err() {
+            env.exception_clear();
+        }
+        result
     })
+}
+
+/// Runs a lookup that is allowed to fail, clearing any exception it leaves.
+fn optional<'local, T>(
+    env: &mut Env<'local>,
+    f: impl FnOnce(&mut Env<'local>) -> JniResult<T>,
+) -> Option<T> {
+    match f(env) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            env.exception_clear();
+            None
+        }
+    }
+}
+
+fn java_string(env: &mut Env, obj: JObject) -> JniResult<String> {
+    env.cast_local::<JString>(obj)?.try_to_string(env)
+}
+
+/// A Java string that may be null.
+fn java_string_opt(env: &mut Env, obj: JObject) -> JniResult<Option<String>> {
+    if obj.is_null() {
+        Ok(None)
+    } else {
+        java_string(env, obj).map(Some)
+    }
+}
+
+/// Milliseconds since 1970 to seconds; Java uses 0 for "never".
+fn secs(ms: i64) -> Option<u64> {
+    u64::try_from(ms)
+        .ok()
+        .filter(|&ms| ms > 0)
+        .map(|ms| ms / 1000)
+}
+
+static SDK: OnceLock<i32> = OnceLock::new();
+
+/// The Android version's API level, e.g. 35 for Android 15.
+fn sdk() -> i32 {
+    *SDK.get_or_init(|| with_activity(|env, _| sdk_int(env)).unwrap_or(0))
 }
 
 fn sdk_int(env: &mut Env) -> JniResult<i32> {
@@ -325,19 +377,522 @@ pub fn open_own_app_settings() {
     }
 }
 
-/// Storage used by every installed app, plus Android's own totals. Slow
-/// (one system call per app), so call it off the UI thread.
-pub fn collect_app_report() -> Result<AppReport, String> {
+/// What DiskTree can do with apps on this device.
+pub fn abilities() -> Abilities {
+    let sdk = sdk();
+    Abilities {
+        uninstall: true,
+        // The Archive button on an app's info page.
+        archive: sdk >= 35,
+        // StorageManager.ACTION_CLEAR_APP_CACHE.
+        clear_cache: sdk >= 30,
+        save_apk: true,
+    }
+}
+
+/// DiskTree's private storage, which needs no permission.
+pub fn private_dir() -> Option<PathBuf> {
+    APP.get()?.internal_data_path()
+}
+
+/// Whether DiskTree's window has focus. It loses it while a system screen
+/// or dialog is in front.
+pub fn window_has_focus() -> bool {
+    with_activity(|env, activity| {
+        env.call_method(activity, jni_str!("hasWindowFocus"), jni_sig!("()Z"), &[])?
+            .z()
+    })
+    .unwrap_or(true)
+}
+
+/// Asks Android to uninstall an app. Android shows its own confirmation.
+/// Needs the REQUEST_DELETE_PACKAGES permission.
+pub fn uninstall(package: &str) {
     let result = with_activity(|env, activity| {
-        let stats = system_service(env, activity, "storagestats")?;
-        let packages = env
-            .call_method(
+        let package = env.new_string(package)?;
+        let uri = package_uri(env, &package)?;
+        start_activity(env, activity, "android.intent.action.DELETE", &uri)
+    });
+    if let Err(err) = result {
+        log(&format!("could not start uninstalling: {err}"));
+    }
+}
+
+/// Opens a URL with `ACTION_VIEW`, in the app `package` if given.
+fn view_url(env: &mut Env, activity: &JObject, url: &str, package: Option<&str>) -> JniResult<()> {
+    let url = env.new_string(url)?;
+    let uri = env
+        .call_static_method(
+            jni_str!("android/net/Uri"),
+            jni_str!("parse"),
+            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+            &[JValue::Object(&url)],
+        )?
+        .l()?;
+    let action = env.new_string("android.intent.action.VIEW")?;
+    let intent = env.new_object(
+        jni_str!("android/content/Intent"),
+        jni_sig!("(Ljava/lang/String;Landroid/net/Uri;)V"),
+        &[JValue::Object(&action), JValue::Object(&uri)],
+    )?;
+    if let Some(package) = package {
+        let package = env.new_string(package)?;
+        env.call_method(
+            &intent,
+            jni_str!("setPackage"),
+            jni_sig!("(Ljava/lang/String;)Landroid/content/Intent;"),
+            &[JValue::Object(&package)],
+        )?;
+    }
+    env.call_method(
+        activity,
+        jni_str!("startActivity"),
+        jni_sig!("(Landroid/content/Intent;)V"),
+        &[JValue::Object(&intent)],
+    )?;
+    Ok(())
+}
+
+/// Opens a `market://` link, preferring `store`, then any app that handles
+/// such links, then the Play Store website.
+fn open_market(market: &str, web: &str, store: Option<&str>) {
+    let result = with_activity(|env, activity| {
+        if let Some(store) = store
+            && optional(env, |env| view_url(env, activity, market, Some(store))).is_some()
+        {
+            return Ok(());
+        }
+        if optional(env, |env| view_url(env, activity, market, None)).is_some() {
+            return Ok(());
+        }
+        view_url(env, activity, web, None)
+    });
+    if let Err(err) = result {
+        log(&format!("could not open the store: {err}"));
+    }
+}
+
+/// Opens an app's page in the store that installed it.
+pub fn open_in_store(package: &str, installer: Option<&str>) {
+    open_market(
+        &format!("market://details?id={package}"),
+        &format!("https://play.google.com/store/apps/details?id={package}"),
+        installer,
+    );
+}
+
+/// Searches the Play Store for apps.
+pub fn search_store(query: &str) {
+    let query = apps::url_encode(query);
+    open_market(
+        &format!("market://search?q={query}&c=apps"),
+        &format!("https://play.google.com/store/search?q={query}&c=apps"),
+        Some("com.android.vending"),
+    );
+}
+
+/// Shows Android's dialog that clears every app's cache (Android 11+, for
+/// apps with All files access). Falls back to the Storage settings screen
+/// and returns false.
+pub fn clear_all_cache() -> bool {
+    let result = with_activity(|env, activity| {
+        let action = env.new_string("android.os.storage.action.CLEAR_APP_CACHE")?;
+        let intent = env.new_object(
+            jni_str!("android/content/Intent"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[JValue::Object(&action)],
+        )?;
+        // The dialog checks the caller's permission, which it can only see
+        // when started for a result.
+        env.call_method(
+            activity,
+            jni_str!("startActivityForResult"),
+            jni_sig!("(Landroid/content/Intent;I)V"),
+            &[JValue::Object(&intent), JValue::Int(7)],
+        )?;
+        Ok(())
+    });
+    if let Err(err) = result {
+        log(&format!("no clear-cache dialog: {err}"));
+        let fallback = with_activity(|env, activity| {
+            start_activity(
+                env,
                 activity,
-                jni_str!("getPackageManager"),
-                jni_sig!("()Landroid/content/pm/PackageManager;"),
+                "android.settings.INTERNAL_STORAGE_SETTINGS",
+                &JObject::null(),
+            )
+        });
+        if let Err(err) = fallback {
+            log(&format!("could not open storage settings: {err}"));
+        }
+        return false;
+    }
+    true
+}
+
+fn package_manager<'local>(
+    env: &mut Env<'local>,
+    activity: &JObject,
+) -> JniResult<JObject<'local>> {
+    env.call_method(
+        activity,
+        jni_str!("getPackageManager"),
+        jni_sig!("()Landroid/content/pm/PackageManager;"),
+        &[],
+    )?
+    .l()
+}
+
+fn application_info<'local>(
+    env: &mut Env<'local>,
+    packages: &JObject,
+    package: &str,
+) -> JniResult<JObject<'local>> {
+    let name = env.new_string(package)?;
+    env.call_method(
+        packages,
+        jni_str!("getApplicationInfo"),
+        jni_sig!("(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;"),
+        &[JValue::Object(&name), JValue::Int(0)],
+    )?
+    .l()
+}
+
+/// The paths of an app's APK and its split APKs, base first.
+pub fn apk_files(package: &str) -> Result<Vec<PathBuf>, String> {
+    let result = with_activity(|env, activity| {
+        let packages = package_manager(env, activity)?;
+        let info = application_info(env, &packages, package)?;
+        let base = env
+            .get_field(&info, jni_str!("sourceDir"), jni_sig!("Ljava/lang/String;"))?
+            .l()?;
+        let mut files = vec![PathBuf::from(java_string(env, base)?)];
+        let splits = env
+            .get_field(
+                &info,
+                jni_str!("splitSourceDirs"),
+                jni_sig!("[Ljava/lang/String;"),
+            )?
+            .l()?;
+        if !splits.is_null() {
+            let splits = env.cast_local::<JObjectArray>(splits)?;
+            for i in 0..splits.len(env)? {
+                let split = splits.get_element(env, i)?;
+                files.push(PathBuf::from(java_string(env, split)?));
+            }
+        }
+        Ok(files)
+    });
+    result.map_err(|err| format!("Couldn't find the app's install files: {err}"))
+}
+
+fn label_of(env: &mut Env, packages: &JObject, info: &JObject) -> JniResult<String> {
+    let label = env
+        .call_method(
+            packages,
+            jni_str!("getApplicationLabel"),
+            jni_sig!("(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;"),
+            &[JValue::Object(info)],
+        )?
+        .l()?;
+    let label = env
+        .call_method(
+            &label,
+            jni_str!("toString"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
+        .l()?;
+    java_string(env, label)
+}
+
+/// Usage maps (package name to UsageStats): over the last two years, about
+/// as far back as Android keeps, and over the last 30 days.
+fn usage_maps<'local>(
+    env: &mut Env<'local>,
+    activity: &JObject,
+    now_ms: i64,
+) -> JniResult<(JObject<'local>, JObject<'local>)> {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    let manager = system_service(env, activity, "usagestats")?;
+    let query = |env: &mut Env<'local>, days: i64| {
+        env.call_method(
+            &manager,
+            jni_str!("queryAndAggregateUsageStats"),
+            jni_sig!("(JJ)Ljava/util/Map;"),
+            &[JValue::Long(now_ms - days * DAY_MS), JValue::Long(now_ms)],
+        )?
+        .l()
+    };
+    let years = query(env, 2 * 365)?;
+    let month = query(env, 30)?;
+    Ok((years, month))
+}
+
+/// The package of the app that handles an intent by default, if one is set.
+fn default_handler(
+    env: &mut Env,
+    packages: &JObject,
+    action: &str,
+    category: &str,
+    url: Option<&str>,
+) -> JniResult<Option<String>> {
+    const MATCH_DEFAULT_ONLY: i32 = 0x0001_0000;
+    let action = env.new_string(action)?;
+    let intent = match url {
+        Some(url) => {
+            let url = env.new_string(url)?;
+            let uri = env
+                .call_static_method(
+                    jni_str!("android/net/Uri"),
+                    jni_str!("parse"),
+                    jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+                    &[JValue::Object(&url)],
+                )?
+                .l()?;
+            env.new_object(
+                jni_str!("android/content/Intent"),
+                jni_sig!("(Ljava/lang/String;Landroid/net/Uri;)V"),
+                &[JValue::Object(&action), JValue::Object(&uri)],
+            )?
+        }
+        None => env.new_object(
+            jni_str!("android/content/Intent"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[JValue::Object(&action)],
+        )?,
+    };
+    let category = env.new_string(category)?;
+    env.call_method(
+        &intent,
+        jni_str!("addCategory"),
+        jni_sig!("(Ljava/lang/String;)Landroid/content/Intent;"),
+        &[JValue::Object(&category)],
+    )?;
+    let resolved = env
+        .call_method(
+            packages,
+            jni_str!("resolveActivity"),
+            jni_sig!("(Landroid/content/Intent;I)Landroid/content/pm/ResolveInfo;"),
+            &[JValue::Object(&intent), JValue::Int(MATCH_DEFAULT_ONLY)],
+        )?
+        .l()?;
+    if resolved.is_null() {
+        return Ok(None);
+    }
+    let activity_info = env
+        .get_field(
+            &resolved,
+            jni_str!("activityInfo"),
+            jni_sig!("Landroid/content/pm/ActivityInfo;"),
+        )?
+        .l()?;
+    if activity_info.is_null() {
+        return Ok(None);
+    }
+    let package = env
+        .get_field(
+            &activity_info,
+            jni_str!("packageName"),
+            jni_sig!("Ljava/lang/String;"),
+        )?
+        .l()?;
+    let package = java_string(env, package)?;
+    // "android" is the chooser, shown when there is no default.
+    Ok((package != "android").then_some(package))
+}
+
+fn secure_setting(env: &mut Env, activity: &JObject, name: &str) -> JniResult<Option<String>> {
+    let resolver = env
+        .call_method(
+            activity,
+            jni_str!("getContentResolver"),
+            jni_sig!("()Landroid/content/ContentResolver;"),
+            &[],
+        )?
+        .l()?;
+    let name = env.new_string(name)?;
+    let value = env
+        .call_static_method(
+            jni_str!("android/provider/Settings$Secure"),
+            jni_str!("getString"),
+            jni_sig!("(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;"),
+            &[JValue::Object(&resolver), JValue::Object(&name)],
+        )?
+        .l()?;
+    java_string_opt(env, value)
+}
+
+fn device_admins(env: &mut Env, activity: &JObject) -> JniResult<Vec<String>> {
+    let manager = system_service(env, activity, "device_policy")?;
+    let admins = env
+        .call_method(
+            &manager,
+            jni_str!("getActiveAdmins"),
+            jni_sig!("()Ljava/util/List;"),
+            &[],
+        )?
+        .l()?;
+    let mut packages = Vec::new();
+    if admins.is_null() {
+        return Ok(packages);
+    }
+    let count = env
+        .call_method(&admins, jni_str!("size"), jni_sig!("()I"), &[])?
+        .i()?;
+    for i in 0..count {
+        let component = env
+            .call_method(
+                &admins,
+                jni_str!("get"),
+                jni_sig!("(I)Ljava/lang/Object;"),
+                &[JValue::Int(i)],
+            )?
+            .l()?;
+        let package = env
+            .call_method(
+                &component,
+                jni_str!("getPackageName"),
+                jni_sig!("()Ljava/lang/String;"),
                 &[],
             )?
             .l()?;
+        packages.push(java_string(env, package)?);
+    }
+    Ok(packages)
+}
+
+/// Apps that do their job without being opened, and why: default apps,
+/// keyboards, accessibility services, notification readers (watch apps)
+/// and device admins. Each lookup may fail on its own.
+fn protected_packages(
+    env: &mut Env,
+    activity: &JObject,
+    packages: &JObject,
+) -> HashMap<String, &'static str> {
+    let mut found = HashMap::new();
+    let defaults = [
+        (
+            "android.intent.action.MAIN",
+            "android.intent.category.HOME",
+            None,
+            "your home screen app",
+        ),
+        (
+            "android.intent.action.VIEW",
+            "android.intent.category.BROWSABLE",
+            Some("https://example.com"),
+            "your browser",
+        ),
+    ];
+    for (action, category, url, reason) in defaults {
+        if let Some(Some(package)) = optional(env, |env| {
+            default_handler(env, packages, action, category, url)
+        }) {
+            found.insert(package, reason);
+        }
+    }
+    let sms = optional(env, |env| {
+        let package = env
+            .call_static_method(
+                jni_str!("android/provider/Telephony$Sms"),
+                jni_str!("getDefaultSmsPackage"),
+                jni_sig!("(Landroid/content/Context;)Ljava/lang/String;"),
+                &[JValue::Object(activity)],
+            )?
+            .l()?;
+        java_string_opt(env, package)
+    });
+    if let Some(Some(package)) = sms {
+        found.insert(package, "your messaging app");
+    }
+    let dialer = optional(env, |env| {
+        let telecom = system_service(env, activity, "telecom")?;
+        let package = env
+            .call_method(
+                &telecom,
+                jni_str!("getDefaultDialerPackage"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        java_string_opt(env, package)
+    });
+    if let Some(Some(package)) = dialer {
+        found.insert(package, "your phone app");
+    }
+    let settings = [
+        ("enabled_input_methods", "a keyboard"),
+        ("enabled_accessibility_services", "an accessibility service"),
+        (
+            "enabled_notification_listeners",
+            "reading your notifications, as watch apps do",
+        ),
+    ];
+    for (name, reason) in settings {
+        if let Some(Some(list)) = optional(env, |env| secure_setting(env, activity, name)) {
+            for package in apps::component_packages(&list) {
+                found.entry(package).or_insert(reason);
+            }
+        }
+    }
+    if let Some(admins) = optional(env, |env| device_admins(env, activity)) {
+        for package in admins {
+            found.entry(package).or_insert("a device admin app");
+        }
+    }
+    found
+}
+
+/// Every installed app. On Android 15+ archived apps are included: their
+/// data still takes space.
+fn installed_applications<'local>(
+    env: &mut Env<'local>,
+    packages: &JObject,
+    sdk: i32,
+) -> JniResult<JObject<'local>> {
+    if sdk >= 35 {
+        const MATCH_ARCHIVED_PACKAGES: i64 = 1 << 32;
+        let with_archived = optional(env, |env| {
+            let flags = env
+                .call_static_method(
+                    jni_str!("android/content/pm/PackageManager$ApplicationInfoFlags"),
+                    jni_str!("of"),
+                    jni_sig!("(J)Landroid/content/pm/PackageManager$ApplicationInfoFlags;"),
+                    &[JValue::Long(MATCH_ARCHIVED_PACKAGES)],
+                )?
+                .l()?;
+            env.call_method(
+                packages,
+                jni_str!("getInstalledApplications"),
+                jni_sig!(
+                    "(Landroid/content/pm/PackageManager$ApplicationInfoFlags;)Ljava/util/List;"
+                ),
+                &[JValue::Object(&flags)],
+            )?
+            .l()
+        });
+        if let Some(list) = with_archived {
+            return Ok(list);
+        }
+    }
+    env.call_method(
+        packages,
+        jni_str!("getInstalledApplications"),
+        jni_sig!("(I)Ljava/util/List;"),
+        &[JValue::Int(0)],
+    )?
+    .l()
+}
+
+/// Storage used by every installed app, plus Android's own totals, when
+/// each app was installed and last used, and where it came from. Slow (a
+/// few system calls per app), so call it off the UI thread.
+pub fn collect_app_report() -> Result<AppReport, String> {
+    let result = with_activity(|env, activity| {
+        let sdk = sdk_int(env)?;
+        let stats = system_service(env, activity, "storagestats")?;
+        let packages = package_manager(env, activity)?;
         let user = env
             .call_static_method(
                 jni_str!("android/os/Process"),
@@ -355,87 +910,217 @@ pub fn collect_app_report() -> Result<AppReport, String> {
             .l()?;
 
         // The capacity printed on the box, e.g. 128 GB.
-        let advertised_total = env
-            .call_method(
+        let advertised_total = optional(env, |env| {
+            env.call_method(
                 &stats,
                 jni_str!("getTotalBytes"),
                 jni_sig!("(Ljava/util/UUID;)J"),
                 &[JValue::Object(&internal)],
-            )
-            .and_then(|v| v.j());
-        let advertised_total = match advertised_total {
-            Ok(bytes) => u64::try_from(bytes).ok(),
-            Err(_) => {
-                env.exception_clear();
-                None
-            }
-        };
+            )?
+            .j()
+        })
+        .and_then(|bytes| u64::try_from(bytes).ok());
 
         // Shared storage minus what belongs to apps (Android/data, obb, media).
-        let shared = env
-            .call_method(
-                &stats,
-                jni_str!("queryExternalStatsForUser"),
-                jni_sig!("(Ljava/util/UUID;Landroid/os/UserHandle;)Landroid/app/usage/ExternalStorageStats;"),
-                &[JValue::Object(&internal), JValue::Object(&user)],
-            )
-            .and_then(|v| v.l());
-        let shared_files = match shared {
-            Ok(shared) => {
-                let total = long_method(env, &shared, jni_str!("getTotalBytes"))?;
-                let apps = long_method(env, &shared, jni_str!("getAppBytes"))?;
-                Some(total.saturating_sub(apps))
-            }
-            Err(_) => {
-                env.exception_clear();
-                None
-            }
-        };
+        let shared_files = optional(env, |env| {
+            let shared = env
+                .call_method(
+                    &stats,
+                    jni_str!("queryExternalStatsForUser"),
+                    jni_sig!("(Ljava/util/UUID;Landroid/os/UserHandle;)Landroid/app/usage/ExternalStorageStats;"),
+                    &[JValue::Object(&internal), JValue::Object(&user)],
+                )?
+                .l()?;
+            let total = long_method(env, &shared, jni_str!("getTotalBytes"))?;
+            let apps = long_method(env, &shared, jni_str!("getAppBytes"))?;
+            Ok(total.saturating_sub(apps))
+        });
 
-        let installed = env
-            .call_method(
-                &packages,
-                jni_str!("getInstalledApplications"),
-                jni_sig!("(I)Ljava/util/List;"),
-                &[JValue::Int(0)],
-            )?
-            .l()?;
+        let now_ms = i64::try_from(apps::now() * 1000).unwrap_or(i64::MAX);
+        let usage = optional(env, |env| usage_maps(env, activity, now_ms));
+        let usage_known = usage.as_ref().is_some_and(|(years, _)| {
+            optional(env, |env| {
+                env.call_method(years, jni_str!("size"), jni_sig!("()I"), &[])?
+                    .i()
+            })
+            .is_some_and(|size| size > 0)
+        });
+        let protected = env
+            .with_local_frame(64, |env| -> JniResult<_> {
+                Ok(protected_packages(env, activity, &packages))
+            })
+            .unwrap_or_default();
+        let own = own_package(env, activity)?;
+        let own = java_string(env, own)?;
+
+        let installed = installed_applications(env, &packages, sdk)?;
         let count = env
             .call_method(&installed, jni_str!("size"), jni_sig!("()I"), &[])?
             .i()?;
-
+        let lookup = Lookup {
+            stats: &stats,
+            packages: &packages,
+            user: &user,
+            usage: usage.as_ref().map(|(years, month)| (years, month)),
+            sdk,
+        };
+        let mut names = Vec::new();
         let mut apps = Vec::new();
         for index in 0..count {
             // A frame per app keeps the number of live local references small.
-            let app = env.with_local_frame(16, |env| -> JniResult<Option<AppUsage>> {
-                app_usage(env, &installed, index, &stats, &packages, &user)
-            });
+            let app = env.with_local_frame(32, |env| app_usage(env, &installed, index, &lookup));
             match app {
-                Ok(Some(app)) => apps.push(app),
-                Ok(None) => {}
+                Ok((name, app)) => {
+                    names.push(name);
+                    apps.extend(app);
+                }
                 Err(err) => {
                     env.exception_clear();
                     log(&format!("skipping app {index}: {err}"));
                 }
             }
         }
+
+        let mut installer_labels: HashMap<String, Option<String>> = HashMap::new();
+        for app in &mut apps {
+            app.own = app.package == own;
+            app.protected = if app.own {
+                Some("DiskTree itself".into())
+            } else {
+                protected.get(&app.package).map(|reason| reason.to_string())
+            };
+            if let Some(installer) = app.installer.clone() {
+                let label = installer_labels
+                    .entry(installer)
+                    .or_insert_with_key(|installer| {
+                        optional(env, |env| {
+                            env.with_local_frame(8, |env| {
+                                let info = application_info(env, &packages, installer)?;
+                                label_of(env, &packages, &info)
+                            })
+                        })
+                    });
+                app.installer_label = label.clone();
+            }
+        }
         Ok(AppReport {
             apps,
+            installed: names,
             shared_files,
             advertised_total,
+            usage_known,
+            ..AppReport::default()
         })
     });
     result.map_err(|err: jni::errors::Error| err.to_string())
 }
 
+/// What `app_usage` needs besides the app itself.
+struct Lookup<'a, 'local> {
+    stats: &'a JObject<'local>,
+    packages: &'a JObject<'local>,
+    user: &'a JObject<'local>,
+    /// Usage over two years and over 30 days, if Android reported it.
+    usage: Option<(&'a JObject<'local>, &'a JObject<'local>)>,
+    sdk: i32,
+}
+
+fn installer_of(
+    env: &mut Env,
+    packages: &JObject,
+    package: &JObject,
+    sdk: i32,
+) -> JniResult<Option<String>> {
+    let name = if sdk >= 30 {
+        let source = env
+            .call_method(
+                packages,
+                jni_str!("getInstallSourceInfo"),
+                jni_sig!("(Ljava/lang/String;)Landroid/content/pm/InstallSourceInfo;"),
+                &[JValue::Object(package)],
+            )?
+            .l()?;
+        env.call_method(
+            &source,
+            jni_str!("getInstallingPackageName"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )?
+        .l()?
+    } else {
+        env.call_method(
+            packages,
+            jni_str!("getInstallerPackageName"),
+            jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+            &[JValue::Object(package)],
+        )?
+        .l()?
+    };
+    java_string_opt(env, name)
+}
+
+/// `map.get(key)` for a `java.util.Map`.
+fn map_get<'local>(
+    env: &mut Env<'local>,
+    map: &JObject,
+    key: &JObject,
+) -> JniResult<JObject<'local>> {
+    env.call_method(
+        map,
+        jni_str!("get"),
+        jni_sig!("(Ljava/lang/Object;)Ljava/lang/Object;"),
+        &[JValue::Object(key)],
+    )?
+    .l()
+}
+
+/// When the app was last on screen, and for how long over the last 30 days.
+fn usage_of(
+    env: &mut Env,
+    years: &JObject,
+    month: &JObject,
+    package: &JObject,
+    sdk: i32,
+) -> JniResult<(Option<u64>, Option<u64>)> {
+    let last = map_get(env, years, package)?;
+    let last_opened = if last.is_null() {
+        None
+    } else {
+        // "Visible" (Android 10+) means on screen; "used" also counts
+        // background work.
+        let method = if sdk >= 29 {
+            jni_str!("getLastTimeVisible")
+        } else {
+            jni_str!("getLastTimeUsed")
+        };
+        secs(env.call_method(&last, method, jni_sig!("()J"), &[])?.j()?)
+    };
+    let recent = map_get(env, month, package)?;
+    let screen_time = if recent.is_null() {
+        0
+    } else {
+        let method = if sdk >= 29 {
+            jni_str!("getTotalTimeVisible")
+        } else {
+            jni_str!("getTotalTimeInForeground")
+        };
+        secs(
+            env.call_method(&recent, method, jni_sig!("()J"), &[])?
+                .j()?,
+        )
+        .unwrap_or(0)
+    };
+    Ok((last_opened, Some(screen_time)))
+}
+
+/// One app's facts. Returns its package name, and `None` instead of the
+/// facts if its storage couldn't be read (it was uninstalled meanwhile).
 fn app_usage(
     env: &mut Env,
     installed: &JObject,
     index: i32,
-    stats: &JObject,
-    packages: &JObject,
-    user: &JObject,
-) -> JniResult<Option<AppUsage>> {
+    lookup: &Lookup,
+) -> JniResult<(String, Option<AppUsage>)> {
     const FLAG_SYSTEM: i32 = 1;
     const FLAG_UPDATED_SYSTEM_APP: i32 = 0x80;
 
@@ -455,6 +1140,7 @@ fn app_usage(
         )?
         .l()?;
     let package = env.cast_local::<JString>(package)?;
+    let name = package.try_to_string(env)?;
     let flags = env
         .get_field(&info, jni_str!("flags"), jni_sig!("I"))?
         .i()?;
@@ -462,48 +1148,98 @@ fn app_usage(
         .get_field(&info, jni_str!("storageUuid"), jni_sig!("Ljava/util/UUID;"))?
         .l()?;
 
-    // Fails for apps uninstalled since the list was made; skip those.
-    let usage = env.call_method(
-        stats,
-        jni_str!("queryStatsForPackage"),
-        jni_sig!("(Ljava/util/UUID;Ljava/lang/String;Landroid/os/UserHandle;)Landroid/app/usage/StorageStats;"),
-        &[JValue::Object(&volume), JValue::Object(&package), JValue::Object(user)],
-    );
-    let usage = match usage.and_then(|v| v.l()) {
-        Ok(usage) => usage,
-        Err(_) => {
-            env.exception_clear();
-            return Ok(None);
-        }
+    let Some(usage) = optional(env, |env| {
+        env.call_method(
+            lookup.stats,
+            jni_str!("queryStatsForPackage"),
+            jni_sig!("(Ljava/util/UUID;Ljava/lang/String;Landroid/os/UserHandle;)Landroid/app/usage/StorageStats;"),
+            &[JValue::Object(&volume), JValue::Object(&package), JValue::Object(lookup.user)],
+        )?
+        .l()
+    }) else {
+        return Ok((name, None));
     };
     let code_bytes = long_method(env, &usage, jni_str!("getAppBytes"))?;
     let data_bytes = long_method(env, &usage, jni_str!("getDataBytes"))?;
     let cache_bytes = long_method(env, &usage, jni_str!("getCacheBytes"))?;
+    let label = label_of(env, lookup.packages, &info)?;
 
-    let label = env
+    let sdk = lookup.sdk;
+    let category = if sdk >= 26 {
+        env.get_field(&info, jni_str!("category"), jni_sig!("I"))?
+            .i()?
+    } else {
+        -1
+    };
+    let archived = sdk >= 35
+        && optional(env, |env| {
+            env.get_field(&info, jni_str!("isArchived"), jni_sig!("Z"))?
+                .z()
+        })
+        .unwrap_or(false);
+    let has_launcher = !env
         .call_method(
-            packages,
-            jni_str!("getApplicationLabel"),
-            jni_sig!("(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;"),
-            &[JValue::Object(&info)],
+            lookup.packages,
+            jni_str!("getLaunchIntentForPackage"),
+            jni_sig!("(Ljava/lang/String;)Landroid/content/Intent;"),
+            &[JValue::Object(&package)],
         )?
-        .l()?;
-    let label = env
-        .call_method(
-            &label,
-            jni_str!("toString"),
-            jni_sig!("()Ljava/lang/String;"),
-            &[],
-        )?
-        .l()?;
-    let label = env.cast_local::<JString>(label)?.try_to_string(env)?;
+        .l()?
+        .is_null();
+    let (installed_at, version) = optional(env, |env| {
+        let info = env
+            .call_method(
+                lookup.packages,
+                jni_str!("getPackageInfo"),
+                jni_sig!("(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;"),
+                &[JValue::Object(&package), JValue::Int(0)],
+            )?
+            .l()?;
+        let installed = env
+            .get_field(&info, jni_str!("firstInstallTime"), jni_sig!("J"))?
+            .j()?;
+        let version = env
+            .get_field(
+                &info,
+                jni_str!("versionName"),
+                jni_sig!("Ljava/lang/String;"),
+            )?
+            .l()?;
+        Ok((
+            secs(installed),
+            java_string_opt(env, version)?.unwrap_or_default(),
+        ))
+    })
+    .unwrap_or_default();
+    let installer =
+        optional(env, |env| installer_of(env, lookup.packages, &package, sdk)).flatten();
+    let (last_opened, screen_time) = match lookup.usage {
+        Some((years, month)) => {
+            optional(env, |env| usage_of(env, years, month, &package, sdk)).unwrap_or_default()
+        }
+        None => (None, None),
+    };
 
-    Ok(Some(AppUsage {
-        package: package.try_to_string(env)?,
-        label,
-        code_bytes,
-        data_bytes,
-        cache_bytes,
-        system_image: flags & FLAG_SYSTEM != 0 && flags & FLAG_UPDATED_SYSTEM_APP == 0,
-    }))
+    let system = flags & FLAG_SYSTEM != 0;
+    Ok((
+        name.clone(),
+        Some(AppUsage {
+            package: name,
+            label,
+            code_bytes,
+            data_bytes,
+            cache_bytes,
+            system_image: system && flags & FLAG_UPDATED_SYSTEM_APP == 0,
+            system,
+            installer,
+            installed_at,
+            version,
+            last_opened,
+            screen_time,
+            has_launcher,
+            archived,
+            category,
+            ..AppUsage::default()
+        }),
+    ))
 }

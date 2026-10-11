@@ -1,4 +1,4 @@
-import { Button, LineEdit, ComboBox, TabWidget, ListView, Palette, Spinner } from "std-widgets.slint";
+import { Button, LineEdit, ComboBox, TabWidget, ListView, Palette, ScrollView, Spinner } from "std-widgets.slint";
 
 export struct TreeRow {
     id: int,
@@ -34,6 +34,13 @@ export struct FileRow {
     fraction: float,
 }
 
+/// A button of the app sheet.
+export struct SheetAction {
+    id: string,
+    label: string,
+    primary: bool,
+}
+
 export struct TypeRow {
     label: string,
     size: string,
@@ -44,16 +51,24 @@ export struct TypeRow {
 
 /// One row of the home screen.
 export struct HomeRow {
-    /// 0 drive or folder, 1 section heading, 2 storage breakdown, 3 app, 4 notice.
+    /// 0 drive or folder, 1 section heading, 2 storage breakdown, 3 app,
+    /// 4 notice, 5 app group.
     kind: int,
     title: string,
     subtitle: string,
     detail: string,
     fraction: float,
-    /// Path for drives, package name for apps, action id for headings and notices.
+    /// Path for drives, package name for apps, action id for headings,
+    /// notices and groups.
     key: string,
     /// Button text for headings and notices; empty for none.
     action: string,
+    /// Apps: where it came from and when it was last used.
+    tags: string,
+    /// Apps: shown in the warning color (no store can reinstall it).
+    warn: bool,
+    /// Groups: the one the list shows.
+    selected: bool,
     /// Storage breakdown: each part's share of the bar and its legend text.
     apps: float,
     files: float,
@@ -70,6 +85,7 @@ global Theme {
     out property <color> files: #34a853;
     out property <color> system: #f4b400;
     out property <color> danger: #d64545;
+    out property <color> warn: Palette.color-scheme == ColorScheme.dark ? #f6a35c : #b85c00;
     out property <color> track: Palette.color-scheme == ColorScheme.dark ? #ffffff1f : #0000001a;
 }
 
@@ -396,16 +412,19 @@ component HomePane inherits Rectangle {
     callback open-app(string);
     callback action(string);
 
-    VerticalLayout {
-        padding: 16px;
-        padding-bottom: 0;
-        ListView {
+    // A plain scrolling layout rather than a ListView: the list view keeps
+    // a reused row's old height when its wrapped text changes, so rows would
+    // overlap. The home screen has at most a few hundred rows.
+    scroll := ScrollView {
+        content-width: self.visible-width;
+        content-height: column.preferred-height;
+        column := VerticalLayout {
+            width: scroll.visible-width;
+            padding: 16px;
+            padding-bottom: 0;
             for row in root.rows: Rectangle {
-                // Bound explicitly so the row follows its content when
-                // wrapped text reflows after the model changes.
-                height: content.preferred-height;
                 content := VerticalLayout {
-                    padding-bottom: row.kind == 3 ? 2px : 10px;
+                    padding-bottom: row.kind == 3 || row.kind == 5 ? 2px : 10px;
 
                     if row.kind == 0: Card {
                         height: root.card-height;
@@ -550,7 +569,7 @@ component HomePane inherits Rectangle {
                     }
 
                     if row.kind == 3: Rectangle {
-                        height: 56px;
+                        height: row.tags != "" ? 68px : 56px;
                         border-radius: 6px;
                         background: app-touch.has-hover ? Palette.alternate-background : transparent;
                         app-touch := TouchArea {
@@ -578,9 +597,17 @@ component HomePane inherits Rectangle {
                                     color: Theme.dim;
                                     overflow: elide;
                                 }
+
+                                if row.tags != "": Text {
+                                    text: row.tags;
+                                    font-size: 11px;
+                                    color: row.warn ? Theme.warn : Theme.dim;
+                                    overflow: elide;
+                                }
                             }
 
-                            Rectangle {
+                            // Removed apps have no size now.
+                            if row.detail != "": Rectangle {
                                 width: 56px;
                                 SizeBar {
                                     width: 100%;
@@ -589,10 +616,49 @@ component HomePane inherits Rectangle {
                                 }
                             }
 
-                            Text {
+                            if row.detail != "": Text {
                                 text: row.detail;
                                 width: 72px;
                                 horizontal-alignment: right;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    if row.kind == 5: Rectangle {
+                        height: 44px;
+                        border-radius: 6px;
+                        border-width: row.selected ? 1px : 0px;
+                        border-color: Palette.accent-background;
+                        background: row.selected ? Palette.accent-background.transparentize(85%) : group-touch.has-hover ? Palette.alternate-background : transparent;
+                        group-touch := TouchArea {
+                            clicked => {
+                                root.action(row.key);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            Text {
+                                text: row.title;
+                                font-weight: row.selected ? 700 : 400;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: row.detail;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "›";
+                                color: Theme.dim;
                                 vertical-alignment: center;
                             }
                         }
@@ -718,6 +784,12 @@ export component AppWindow inherits Window {
     in property <bool> needs-permission;
     in property <bool> confirm-open;
     in property <string> confirm-text;
+    in property <bool> sheet-open;
+    in property <string> sheet-title;
+    in property <string> sheet-subtitle;
+    in property <[string]> sheet-facts;
+    in property <string> sheet-note;
+    in property <[SheetAction]> sheet-actions;
     in-out property <bool> size-on-disk: true;
     in-out property <length> tree-scroll;
 
@@ -749,6 +821,7 @@ export component AppWindow inherits Window {
     callback delete-confirmed();
     callback delete-cancelled();
     callback grant-permission();
+    callback sheet-action(string);
 
     forward-focus: keys;
 
@@ -759,6 +832,10 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if (event.text != Key.Back && event.text != Key.Escape) {
                 return reject;
+            }
+            if (root.sheet-open) {
+                root.sheet-action("close");
+                return accept;
             }
             if (root.confirm-open) {
                 root.delete-cancelled();
@@ -1129,6 +1206,90 @@ export component AppWindow inherits Window {
                         primary: true;
                         clicked => {
                             root.delete-confirmed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // App details: facts and actions for one app. A bottom sheet on phones,
+    // a centered dialog on wide windows.
+    if root.sheet-open: Rectangle {
+        background: #00000088;
+        TouchArea {
+            clicked => {
+                root.sheet-action("close");
+            }
+        }
+
+        Rectangle {
+            width: root.compact ? parent.width : min(480px, parent.width - 32px);
+            height: min(sheet-layout.preferred-height, parent.height - root.safe-area-insets.top - 24px);
+            y: root.compact ? parent.height - self.height : (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            clip: true;
+            // Keeps taps on the sheet from closing it.
+            TouchArea { }
+
+            Flickable {
+                content-width: self.width;
+                content-height: sheet-layout.preferred-height;
+                sheet-layout := VerticalLayout {
+                    width: parent.width;
+                    padding: 18px;
+                    padding-bottom: 18px + (root.compact ? root.safe-area-insets.bottom : 0px);
+                    spacing: 6px;
+                    Text {
+                        text: root.sheet-title;
+                        font-size: 18px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: root.sheet-subtitle;
+                        font-size: 12px;
+                        color: Theme.dim;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle {
+                        height: 4px;
+                    }
+
+                    for fact in root.sheet-facts: Text {
+                        text: fact;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+
+                    if root.sheet-note != "": Rectangle {
+                        border-radius: 6px;
+                        background: Theme.system.transparentize(80%);
+                        height: note.preferred-height;
+                        note := VerticalLayout {
+                            padding: 10px;
+                            Text {
+                                text: root.sheet-note;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 6px;
+                    }
+
+                    for action in root.sheet-actions: Button {
+                        text: action.label;
+                        primary: action.primary;
+                        clicked => {
+                            root.sheet-action(action.id);
                         }
                     }
                 }
