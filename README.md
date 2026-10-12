@@ -34,13 +34,27 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   and AppData by the program inside; on macOS, `.app` bundles and their
   folders in `~/Library`.
 - **Largest files** and **file types** (size by extension) for the selected folder.
-  Tap a file type to list just those files, biggest first, then select one
-  to open or delete it.
-- **Clean up** tab for the scanned folder: folders that tools rebuild
-  (`node_modules`, Rust `target`, `.gradle`, Python virtual environments,
-  package manager caches, …) with how to get each back, large files nobody has
-  changed in over a year, and a duplicate file finder. Select one and use
-  Delete; nothing is deleted without asking. See [Clean up tab](#clean-up-tab).
+  The Types tab also breaks the folder down by the year files were last
+  changed and by size band. Tap any row to list just those files, biggest
+  first, then select one to open or delete it.
+- **Clean up** tab for the scanned folder: where the system and apps keep
+  caches they can do without (`Windows.old`, update and browser caches,
+  shader caches, …), folders that tools rebuild (`node_modules`, Rust
+  `target`, `.gradle`, Python virtual environments, package manager caches,
+  …) with how to get each back, large files nobody has changed in over a
+  year, a duplicate file finder and a finder for photos that look alike.
+  Select one and use Delete; nothing is deleted without asking. See
+  [Clean up tab](#clean-up-tab).
+- **Changes** since an earlier scan of the same folder: what grew, what's
+  new, what shrank or went away. Bubbles show how much a folder grew. See
+  [Changes](#changes).
+- **Basket**: collect files and folders from any view, look them over in one
+  list, then delete them all or move them all to another drive, keeping
+  their folders. The last move can be put back. See [The basket](#the-basket).
+- **Export** a report (HTML), a spreadsheet (CSV) or the whole scan (ncdu's
+  JSON format), and open saved scans again, including ones made with
+  `ncdu -o` on a machine without DiskTree. See
+  [Export and saved scans](#export-and-saved-scans).
 - **Drive trends** on the start screen: how much each drive grew over the last
   30 days and, at that rate, when it will be full. DiskTree records each
   drive's used space once a day it's opened, so trends appear after a few
@@ -70,6 +84,9 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 - **Apps as bubbles (Android)**: any app group can be shown as bubbles of
   app icons, sized the way the group ranks them. Tap an app to see what its
   space is made of: the app, its data, its cache and the files it saved.
+- **Old screenshots and chat media (Android)**: cards that open screenshots
+  older than a month, and the photos and videos chat apps saved, to look
+  through before deciding what goes.
 - **Command-line tool** (`disktree`) sharing the same core.
 
 ## Platform notes
@@ -133,6 +150,15 @@ folders and files not changed in a year, and `--duplicates` finds duplicate
 files of 1 MB or more (it reads them, so it takes a while). Both only list;
 the command line tool never deletes anything.
 
+For scripts, spreadsheets and Home Assistant:
+
+```sh
+disktree ~/Videos --json                 # everything above as JSON
+disktree / --export root-scan.json       # save the scan (ncdu's format)
+disktree --import root-scan.json         # look at a saved scan again
+ssh server ncdu -o- -x /srv > srv.json && disktree --import srv.json
+```
+
 ### Clean up tab
 
 After a scan, the **Clean up** tab (**Clean** on phones) lists:
@@ -150,8 +176,81 @@ After a scan, the **Clean up** tab (**Clean** on phones) lists:
   completely. Hard links to the same file aren't duplicates. Cloud-only
   files are skipped so nothing is downloaded.
 
-Tap an entry to select it in the tree, then use Delete. On desktops that
-moves it to the Recycle Bin or Trash.
+- **System and app caches**: known places where the system and apps keep
+  files they can do without. On Windows: `Windows.old`, the upgrade and
+  update download folders, Delivery Optimization, temp folders, crash dumps,
+  `hiberfil.sys`, browser caches (Chrome, Edge, Brave, Firefox) and GPU
+  shader caches (Steam's too). On macOS: the Trash, app logs, old iPhone
+  backups, Xcode archives, device support files and simulators, downloaded
+  macOS updates. On Linux: the thumbnail cache, the Trash, Flatpak app
+  caches, downloaded packages and the system journal. Each says how to
+  remove it; some are marked *check first* or *don't delete* and name the
+  system tool to use instead (Settings → System → Storage → Temporary files
+  for `Windows.old` and update files, the power settings for
+  `hiberfil.sys`).
+- **Not in any file**: after scanning a whole drive, how much of the used
+  space no file accounts for, and why: ZFS snapshots, Windows restore points
+  and shadow copies, local Time Machine snapshots, space the file system
+  reserves, and folders DiskTree couldn't read.
+- **Similar photos**: press *Find similar photos* to group photos that look
+  alike, such as bursts, retakes and the same picture saved at another size.
+  Each photo gets a small fingerprint of its brightness pattern; most camera
+  photos carry a small preview in their EXIF data, which is read instead of
+  the whole picture, so even thousands of photos take seconds. Every group
+  shows the photos with a preview, the largest first. Similar isn't
+  identical, so open them before choosing.
+
+Tap an entry to select it in the tree, then use Open to look at it and
+Delete or Collect. On desktops Delete moves it to the Recycle Bin or Trash.
+
+### Changes
+
+DiskTree keeps the sizes of the 10,000 biggest folders of every scan (not
+every file), the last 12 scans of each scanned folder, in DiskTree's data
+folder under `scans/`. When a folder has been scanned before, the
+**Changes** tab compares this scan with an earlier one (pick which): how much
+the whole folder grew, the folders that grew or are new, and the ones that
+shrank or went away. A folder is skipped when one folder inside it explains
+almost all of its change, so the list points at where the change is. Small
+changes (a thousandth of the folder, between 1 MB and 50 MB) aren't listed.
+In the bubble view, folders that grew or shrank noticeably show by how much,
+for example *12.4 GB · +2.1 GB*.
+
+### The basket
+
+Select a file or folder anywhere and press **Collect** to put it in the
+basket; a bar shows how many items and how much space it holds. When a
+files list is filtered (a type, an age, a size, old screenshots), **Collect
+all** adds every listed file. **Review** lists everything collected, each
+item removable, with two ways to act on all of it:
+
+- **Delete all**: asks first, then moves everything to the Recycle Bin or
+  Trash (deletes permanently on Android).
+- **Move all**: pick a folder, for example on another drive or a NAS share.
+  Each item keeps its folders below the scanned one (`Videos/2023/trip.mp4`
+  goes to `<destination>/Videos/2023/trip.mp4`). Within a drive that's a
+  rename; across drives each item is copied, checked and only then removed.
+  Nothing is overwritten. **Put back** returns the last move; its record is
+  `last-move.json` in DiskTree's data folder. On Android, Move offers a
+  `DiskTree moved` folder on internal storage or on each SD card or USB
+  drive.
+
+### Export and saved scans
+
+**Export**, next to the size switch, saves the folder you're looking at as:
+
+- **Report (HTML)**: one page with the biggest folders and files, file
+  types, years, the Clean up suggestions and the changes, to read or share.
+- **Spreadsheet (CSV)**: the 10,000 biggest folders and files of 1 MB or
+  more, with sizes, file counts and dates.
+- **Scan file (JSON)**: the whole scan in the format of ncdu's `-o` option.
+
+On desktops a save dialog asks where; on Android files go to
+`Download/DiskTree`. To open a scan file, type its path (ending in `.json`)
+and press Scan. Saved scans open read-only: nothing in them can be opened,
+deleted or collected, since the files may be on another machine. Scans made
+with `ncdu -o` (1.x or 2.x JSON) open the same way, so a server or router
+without DiskTree can be scanned with ncdu and looked at here.
 
 ### Android
 
@@ -316,6 +415,18 @@ files access:
 
 DiskTree asks before deleting anything, then measures again.
 
+Two more cards are for things that aren't junk, so they never delete
+anything themselves; **Review** opens the files to look through:
+
+- **Look through old screenshots**: screenshots in `Pictures/Screenshots`
+  and `DCIM/Screenshots` not changed for a month. Review scans the folder and
+  lists just those, biggest first; open any, then collect the ones you're
+  done with (or *Collect all*) and delete them together from the basket.
+- **Look through chat media**: photos, videos and voice notes saved by
+  WhatsApp, WhatsApp Business, Telegram, Signal, Messenger, Viber, WeChat and
+  LINE. Review picks a folder (when there are several) and lists its files,
+  biggest first.
+
 **Storage over time** charts apps, your files and the system day by day,
 under the storage breakdown. It says how much used space grew over the last
 30 days and, when it's growing, about when the storage will be full at that
@@ -479,7 +590,8 @@ To sign with a different key, set `CARGO_APK_RELEASE_KEYSTORE` and
 ## Project layout
 
 ```
-crates/core   scanner, tree model, stats, treemap layout (no UI)
+crates/core   scanner, tree model, stats, treemap and bubble layout,
+              snapshots, scan files (no UI)
 crates/cli    `disktree` command-line tool
 crates/app    Slint app; ui/app.slint is the whole UI, src/controller.rs the logic
 ```

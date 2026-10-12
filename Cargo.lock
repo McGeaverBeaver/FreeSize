@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-app"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "disktree-core",
  "icns",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-cli"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "clap",
  "disktree-core",
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "crossbeam-channel",
  "libc",

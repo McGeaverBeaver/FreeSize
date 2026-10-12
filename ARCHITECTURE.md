@@ -3,7 +3,8 @@
 DiskTree is a Cargo workspace with three crates:
 
 ```
-crates/core   disktree-core   scanner, tree model, stats, treemap layout
+crates/core   disktree-core   scanner, tree model, stats, treemap and bubble
+                              layout, snapshots, scan files
 crates/cli    disktree-cli    command-line front end
 crates/app    disktree-app    Slint UI for desktop and Android
 ```
@@ -90,9 +91,14 @@ space on the start screen.
 
 ### Stats and treemap
 
-- `largest_files` keeps a size-`n` min-heap while walking a subtree.
+- `largest_files` keeps a size-`n` min-heap while walking a subtree;
+  `largest_files_where` does the same for files passing a test (one type,
+  one year, one size band).
 - `extension_stats` groups by lower-cased extension. Dotfiles like `.bashrc`
   count as having no extension.
+- `age_bins` sums files by the year they were last changed (this year and
+  nine before it, then "before" and "no date"), and `size_bins` by size band.
+  Each bin keeps its range, so tapping it filters the files list.
 - `treemap::squarify` is the squarified treemap algorithm (Bruls, Huizing &
   van Wijk). It keeps each rectangle's area proportional to its size while
   keeping the rectangles close to square.
@@ -130,6 +136,38 @@ space on the start screen.
   with the same size (xxh3-128), and only files that still match get a full
   hash. Progress and cancellation go through `DuplicateProgress` atomics.
 
+### System and app caches (`reclaim.rs`)
+
+`system_spots` matches the tree against `SpotRule`s: an absolute path in
+which `*` stands for one name (`.../Firefox/Profiles/*/cache2`), what it is,
+how to remove it, and a `Safety`: safe, check first, or use the system's own
+tool. `default_spot_rules` builds the list for the platform it runs on from
+environment variables (`SystemDrive`, `windir`, `LOCALAPPDATA`, the home
+folder), so the rules match only where the scan covers those places.
+Matching ignores case on Windows and macOS.
+
+### Snapshots (`snapshot.rs`)
+
+A `Snapshot` is the folder sizes of one scan: paths relative to the scanned
+folder, logical and allocated size, for the biggest folders (10,000 in the
+app). Keeping folders rather than files keeps a snapshot of a whole drive
+to about 1 MB of JSON, however many files it holds. `compare` lines two snapshots up by path and
+reports folders that grew, shrank, appeared or went away by at least a
+minimum. A folder is skipped when one of its children accounts for 80% of
+its change, so the list names where the change happened rather than every
+folder above it. `find` maps a snapshot path back to a node.
+
+### Scan files (`ncdu.rs`)
+
+`export` writes a tree in ncdu's JSON export format (version 1.2): a
+directory is an array whose first element describes it, a file an object,
+sizes as `asize`/`dsize` with a directory's own size separate from its
+contents. Read errors, other file systems, hard links and non-regular files
+map to ncdu's `read_error`, `excluded`, `hlnkc` and `notreg`. `import`
+reads files from DiskTree, ncdu 1.x and ncdu 2.x's JSON export and builds the
+tree the way the scanner does (breadth first, so children stay contiguous),
+then aggregates the totals.
+
 ## App
 
 ### UI (`ui/app.slint`)
@@ -138,9 +176,9 @@ The whole interface is one Slint file. Rust feeds it plain structs
 (`TreeRow`, `MapRect`, `FileRow`, `TypeRow`, `HomeRow`, `CleanRow`, `SheetAction`)
 and receives callbacks.
 
-- **Wide layout** (≥ 760 px): folder tree on the left; treemap, largest files,
-  file types and Clean up in tabs on the right.
-- **Compact layout** (phones, narrow windows): five tabs, larger touch rows, no
+- **Wide layout** (≥ 760 px): folder tree on the left; the map, largest
+  files, file types, Clean up and Changes in tabs on the right.
+- **Compact layout** (phones, narrow windows): six tabs, larger touch rows, no
   percent column.
 - `compact` is set from a `changed width` handler rather than bound to
   `width`. A binding would make the window's size depend on itself through the
@@ -171,8 +209,8 @@ shared as `Rc<RefCell<Controller>>`. UI callbacks borrow it through
 updating the UI), the job is retried on the next event loop turn instead of
 panicking.
 
-Long-running work (scanning, deleting, measuring apps, the duplicate
-search) runs on a plain thread and writes its
+Long-running work (scanning, deleting, measuring apps, the duplicate and
+similar photo searches, basket jobs) runs on a plain thread and writes its
 result into an `Arc<Mutex<Option<T>>>`. A 100 ms Slint timer polls those
 results and the scan progress, and stops itself when nothing is pending. That
 keeps all UI updates on the UI thread with no `Send` requirements on UI state.
@@ -184,6 +222,46 @@ Interaction rules:
 - Selecting a file keeps the current focus if the file is inside it.
 - Selecting from the treemap or lists expands the tree down to the item and
   scrolls to it.
+
+The scan thread does more than scan: it works out every node's kind, takes
+a snapshot and records it (`scans.rs`, the last 12 per scanned folder in
+`scans/<hash>.json` in the data folder, returning the earlier ones), and,
+when the scan covers a whole drive, asks the system about hidden space. A
+path ending in `.json` is read as a scan file instead (`imported`), which
+turns off Open, Delete and Collect.
+
+### Scan view extras
+
+- `changes.rs` turns `snapshot::compare` into the Changes tab's rows. The
+  bubble view looks up each folder in the compared snapshot and adds the
+  difference to its label when it's at least 5% (and 10 MB).
+- `hidden.rs` explains used space that no file accounts for, only for a
+  scan of a whole drive (`is_drive_root`: a different device than the
+  parent on Unix, `C:\` on Windows). It asks the system's tools and stays
+  quiet when one is missing: `zfs list` for the snapshots of the dataset
+  mounted there, `vssadmin list shadowstorage` for shadow copies, `tmutil
+  listlocalsnapshots` for Time Machine. `filecleanup.rs` shows the gap only
+  when it's at least 1 GB and 2% of the used space.
+- `moves.rs` moves basket items: the target keeps the path below the
+  scanned folder, `rename` within a drive, else copy, compare sizes and
+  only then remove the original. An existing target stops that item. The
+  `(from, to)` pairs go to `last-move.json` so Put back can reverse them.
+- `report.rs` builds the HTML report (self-contained, light and dark) and
+  the CSV; `actions::save_export` asks where on desktops (`rfd`) and writes
+  to `Download/DiskTree` on Android.
+- `similar.rs` finds photos that look alike. A photo's fingerprint is two
+  64-bit difference hashes of a 9×9 grid of brightness averages: whether
+  each cell is darker than its right neighbour, and than the one below,
+  after turning the grid by the EXIF orientation. For a JPEG it first reads
+  160 KB and looks for the EXIF preview (APP1 → TIFF → IFD1's
+  `JPEGInterchangeFormat`), decoding the whole picture only without one.
+  Fingerprints within 12 bits of each other match, and pictures with almost
+  no contrast get none. Grouping is greedy in time order: a photo joins the
+  group whose first photo is closest, which keeps a slow drift through a
+  series from chaining everything together. Previews (112 px) are made on
+  the worker for the first 400 photos in groups. Four threads at most, and
+  decoding is capped at 256 MB, so 50 MP photos without previews don't
+  exhaust a phone's memory.
 
 ### Tree rows (`rows.rs`)
 
@@ -316,6 +394,13 @@ with `QUERY_ARG_MATCH_TRASHED`. The same collection's `owner_package_name`
 column says which app saved each file; `media_by_owner` adds those up per app
 and picks the folder holding most of them for the Browse button. Deleting
 runs on a worker thread after the shared confirmation dialog.
+
+`cleanup::reviews` finds what's worth looking through but isn't junk:
+screenshots in `Pictures/Screenshots` and `DCIM/Screenshots` not changed
+for 30 days, and chat apps' media folders (a table of known folders per
+app, old and new layouts). Their cards only have Review, which scans the
+folder (after a sheet to pick one when there are several) and opens its
+files list, filtered to the old screenshots where that applies.
 
 The history also keeps a daily size sample per app (about four months) and a
 daily snapshot of the storage breakdown (a year). It is written as compact

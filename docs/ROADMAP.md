@@ -40,56 +40,67 @@ else that can delete:
   rebuildable folders, app and game icons for folders on every platform
   (Android packages, Steam, Linux desktop entries, Windows programs, macOS
   bundles), and app groups as bubbles on Android with each app's parts.
+- 0.6 (phase 2e, found by comparing with SpaceObServer, TreeSize
+  Professional, WizTree, WinDirStat, QDirStat, DaisyDisk, SD Maid SE, Files
+  by Google and others):
+  - folder sizes kept per scan and the Changes tab comparing any two scans,
+    with growth shown on the bubbles;
+  - files by year changed and by size band, each tappable;
+  - system and app caches on Windows, macOS and Linux (`Windows.old`,
+    update caches, browser and shader caches, …), and space no file
+    accounts for (ZFS snapshots, Windows shadow copies, Time Machine
+    snapshots);
+  - the basket: collect from any view, review once, delete all or move all
+    (keeping folders, checked copies across drives, never overwriting) with
+    Put back;
+  - export as an HTML report, CSV or an ncdu-compatible scan file, opening
+    saved scans and `ncdu -o` files read-only, and `disktree --json`,
+    `--export`, `--import`;
+  - a similar photos finder (difference hashes, read from EXIF previews);
+  - Android cards to review old screenshots and chat apps' media.
 
 Left over:
 - From 2b/2c: old downloads and screen recordings as their own groups, and
   Docker build cache (part of the Docker work in phases 3 and 4).
 - From 2d: an Apps bubble view on desktops (an app's install folder plus its
   AppData/Library/cache folders, gathered across drives); Epic and GOG game
-  artwork; a "since last scan" mode (bubbles that grew get a ring and a
-  "+2.1 GB" badge), which needs the folder history below.
-
-## Phase 2e: next on every device
-
-Found by comparing with SpaceObServer and TreeSize Professional (JAM
-Software), WizTree, WinDirStat, QDirStat, DaisyDisk, SD Maid SE, Files by
-Google, Scrutiny, Diskover and unBALANCE.
-
-- **Folder history and diffs.** Keep folder totals per scan (not every
-  file) and compare any two scans: what grew, what's new, what's gone. Feeds
-  "since last scan" and the Hub's history.
-- **Export** of every list (CSV, JSON, HTML) and `disktree --json`, for
-  spreadsheets, scripts and Home Assistant. Import and export of scan files
-  (an ncdu-compatible JSON), so a box without DiskTree can be scanned with
-  `ncdu -o` and viewed here.
-- **Move instead of delete.** Move or copy a selection elsewhere, keeping
-  its folders, with a manifest to put it back: phone videos to an Unraid
-  share over WireGuard, old PC data to the array. Optionally compress in
-  place (NTFS) instead.
-- **File age and size histograms** (by year modified, by size band), from
-  the scan data already there.
-- **Hidden space**: say how much is in ZFS/btrfs snapshots, Windows shadow
-  copies and restore points, and APFS purgeable space, which explains why
-  files add up to less than the used space.
-- **Windows junk**: `Windows.old`, update and Delivery Optimization caches,
-  hibernation file, browser and shader caches; leftovers of uninstalled
-  programs in AppData (and Library on macOS).
-- **A collect-then-act basket** across views, so a cleanup can be put
-  together from several places and reviewed once.
-- **Android**: a Shizuku mode (an unrooted phone's helper for batch cache
-  clearing and `Android/data`; sideloaded or F-Droid builds only, Play
-  restricts it), similar and blurry photos, old screenshots, chat-app media,
-  and shrinking photos (SD Maid SE's Squeezer).
-- **Fast Windows scans** from the NTFS Master File Table and change journal
-  (as WizTree and SpaceObServer do), an optional admin mode.
+  artwork.
+- From 2e, each held back for a reason:
+  - **Shizuku mode on Android** (batch cache clearing and `Android/data`
+    through an unrooted phone's helper): needs a Java part in the APK, which
+    the Hub's background agent needs too, so the two come together.
+    Sideloaded or F-Droid builds only; Play restricts it.
+  - **Shrinking photos** (SD Maid SE's Squeezer): rewrites people's photos,
+    so it waits for quarantine with restore (phase 3) to keep the originals
+    until the user is happy.
+  - **Blurry photos**: a sharpness score per photo, on top of the similar
+    photos finder, to pick the best of a group.
+  - **NTFS compression in place** and **fast Windows scans** from the
+    Master File Table and change journal (as WizTree and SpaceObServer do):
+    both need administrator rights and testing on real Windows machines
+    with NTFS drives, which the Linux build machine can't stand in for.
+  - **btrfs snapshots and APFS purgeable space** in the hidden space
+    explanation (ZFS, Windows shadow copies and Time Machine are done).
+  - **Leftovers of uninstalled programs** in AppData and `~/Library`:
+    matching folders to installed programs is reliable for the icons but not
+    yet reliable enough to call a folder abandoned.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 
 One small Rust server with a web UI and SQLite.
 
+Not built yet: this is the next phase.
+
 **Running it**
-- Docker image for amd64 and arm64: runs on Unraid (Community Apps
-  template), any Linux host, Synology, or Docker Desktop.
+- Docker image for amd64 and arm64: runs on Unraid, any Linux host,
+  Synology, or Docker Desktop.
+- An Unraid Community Apps template, `unraid/disktree-hub.xml`, ships with
+  the image, so the Hub installs from the Apps tab like any other container.
+  It fills in the image, an icon, the web UI link, and fields for the web
+  port, the appdata folder (`/mnt/user/appdata/disktree-hub`, mounted as
+  `/data` for the database and keys), the address to listen on, and the
+  Authentik settings (issuer URL, client ID, client secret, and the admin
+  and viewer group names; the secret is a masked field).
 - Windows installer option "Also install the DiskTree Hub": installs it as a
   Windows service and adds a firewall rule for its port, limited to private
   networks (and optionally to the WireGuard subnet). Built with NSIS on the
@@ -281,6 +292,7 @@ Suggestions this enables:
 
 ## Decided
 
-- Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5).
+- Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5) and
+  2e (0.6). The Hub (phase 3) is next.
 - Screenless devices use a designated approver who can only be changed on
   the device (see Approvals).
