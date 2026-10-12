@@ -10,6 +10,7 @@ use disktree_core::{
 
 use crate::CleanRow;
 use crate::insights::date;
+use crate::similar;
 
 const HEADING: i32 = 0;
 const ITEM: i32 = 1;
@@ -30,6 +31,24 @@ pub enum Duplicates<'a> {
     Searching { done: u64, files: u64 },
     Found(&'a [DuplicateGroup]),
 }
+
+/// Where the search for similar photos stands. Found groups come with a
+/// preview for each photo, where one was made.
+pub enum Similar<'a> {
+    NotSearched,
+    Searching {
+        done: u64,
+        files: u64,
+    },
+    Found(
+        &'a [similar::Group],
+        &'a dyn Fn(NodeId) -> Option<slint::Image>,
+    ),
+}
+
+/// Titles of the sections with a search button, which tell the buttons apart.
+pub const DUPLICATES: &str = "Duplicate files";
+pub const SIMILAR: &str = "Similar photos";
 
 /// Space no file accounts for on a scanned drive: the drive's used space
 /// when it was scanned, and what the system said about it.
@@ -197,13 +216,13 @@ pub fn duplicate_rows(tree: &Tree, duplicates: Duplicates) -> Vec<CleanRow> {
     let mut rows = Vec::new();
     match duplicates {
         Duplicates::NotSearched => rows.push(heading(
-            "Duplicate files",
+            DUPLICATES,
             "Finds files of 1 MB or more with identical contents. It reads the files, so it \
              can take a while.",
             "Find duplicates",
         )),
         Duplicates::Searching { done, files } => rows.push(heading(
-            "Duplicate files",
+            DUPLICATES,
             &format!(
                 "Comparing files: {} of {}…",
                 format_count(done),
@@ -231,7 +250,7 @@ pub fn duplicate_rows(tree: &Tree, duplicates: Duplicates) -> Vec<CleanRow> {
                 .map(|(size, nodes)| size * (nodes.len() as u64 - 1))
                 .sum();
             rows.push(heading(
-                "Duplicate files",
+                DUPLICATES,
                 &if groups.is_empty() {
                     "No duplicate files of 1 MB or more.".to_string()
                 } else {
@@ -261,6 +280,99 @@ pub fn duplicate_rows(tree: &Tree, duplicates: Duplicates) -> Vec<CleanRow> {
                 }));
             }
         }
+    }
+    rows
+}
+
+/// The similar photos section.
+pub fn similar_rows(tree: &Tree, similar: Similar) -> Vec<CleanRow> {
+    let root_path = tree.path(tree.root());
+    let mut rows = Vec::new();
+    let (groups, preview) = match similar {
+        Similar::NotSearched => {
+            rows.push(heading(
+                SIMILAR,
+                "Finds photos that look alike, such as bursts, retakes and pictures saved \
+                 twice at different sizes, so you can keep the best of each. It looks at every \
+                 photo, so it can take a while.",
+                "Find similar photos",
+            ));
+            return rows;
+        }
+        Similar::Searching { done, files } => {
+            rows.push(heading(
+                SIMILAR,
+                &format!(
+                    "Looking at photos: {} of {}…",
+                    format_count(done),
+                    format_count(files)
+                ),
+                "Stop",
+            ));
+            return rows;
+        }
+        Similar::Found(groups, preview) => (groups, preview),
+    };
+    // Leave out photos deleted since the search.
+    let groups: Vec<Vec<(NodeId, u64)>> = groups
+        .iter()
+        .map(|g| {
+            g.photos
+                .iter()
+                .copied()
+                .zip(g.sizes.iter().copied())
+                .filter(|&(id, _)| !tree.ancestors(id).any(|a| tree.node(a).has(flags::DELETED)))
+                .collect::<Vec<_>>()
+        })
+        .filter(|left| left.len() > 1)
+        .collect();
+    let extra: u64 = groups
+        .iter()
+        .map(|g| g[1..].iter().map(|&(_, size)| size).sum::<u64>())
+        .sum();
+    rows.push(heading(
+        SIMILAR,
+        &if groups.is_empty() {
+            "No photos that look alike.".to_string()
+        } else {
+            format!(
+                "{} of photos that look alike. Keeping only the largest of each would free \
+                 {}, but similar isn't identical: open them to choose.",
+                match groups.len() {
+                    1 => "1 set".to_string(),
+                    n => format!("{} sets", format_count(n as u64)),
+                },
+                format_size(extra)
+            )
+        },
+        "Search again",
+    ));
+    for photos in groups.iter().take(MAX_GROUPS) {
+        let total: u64 = photos.iter().map(|&(_, size)| size).sum();
+        rows.push(CleanRow {
+            kind: GROUP,
+            title: format!("{} photos · {}", photos.len(), format_size(total)).into(),
+            ..Default::default()
+        });
+        rows.extend(photos.iter().enumerate().map(|(i, &(id, size))| {
+            let image = preview(id);
+            let place = place(tree, &root_path, tree.node(id).parent);
+            CleanRow {
+                kind: ITEM,
+                id: id as i32,
+                title: tree.name(id).as_ref().into(),
+                subtitle: if i == 0 {
+                    format!("{place} · largest")
+                } else {
+                    place
+                }
+                .into(),
+                detail: format_size(size).into(),
+                has_image: image.is_some(),
+                image: image.unwrap_or_default(),
+                ..Default::default()
+            }
+        }));
     }
     rows
 }

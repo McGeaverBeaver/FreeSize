@@ -26,17 +26,18 @@ use slint::{
 use crate::appbubbles;
 use crate::apps::{self, AppReport};
 use crate::changes;
-use crate::cleanup::JunkKind;
-use crate::filecleanup::{self, Duplicates, Hidden};
+use crate::cleanup::{self, JunkKind, Place, ReviewKind};
+use crate::filecleanup::{self, Duplicates, Hidden, Similar};
 use crate::growth::{self, DriveLog};
 use crate::hidden;
 use crate::home::{self, AppsState, sheet};
-use crate::insights::View;
+use crate::insights::{self, View};
 use crate::moves;
 use crate::owners::Owners;
 use crate::report;
 use crate::rows::{self, TreeRows};
 use crate::scans;
+use crate::similar;
 use crate::{
     AppWindow, BasketRow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction,
     TypeRow, actions, locations,
@@ -71,6 +72,8 @@ enum FileFilter {
     Type(String),
     Modified(Bin),
     Size(Bin),
+    /// Files with a date before this, in seconds since 1970.
+    OlderThan(i64),
 }
 
 impl FileFilter {
@@ -83,6 +86,7 @@ impl FileFilter {
                 let size = i64::try_from(node.size_in(mode)).unwrap_or(i64::MAX);
                 bin.from <= size && size < bin.to
             }
+            FileFilter::OlderThan(time) => node.modified > 0 && node.modified < *time,
         }
     }
 }
@@ -128,7 +132,14 @@ struct RunningDelete {
 enum SheetTarget {
     App(String),
     Removed(String),
+    /// The folders of old screenshots or chat media.
+    Review(ReviewKind),
 }
+
+/// Ids of the review sheet's folder buttons.
+const REVIEW_IDS: [&str; 8] = [
+    "review-0", "review-1", "review-2", "review-3", "review-4", "review-5", "review-6", "review-7",
+];
 
 /// Waits for the user to come back from a system screen (uninstall dialog,
 /// app info, clear cache) so the app sizes can be measured again.
@@ -161,6 +172,19 @@ enum DupeSearch {
         result: Slot<Vec<DuplicateGroup>>,
     },
     Done(Vec<DuplicateGroup>),
+}
+
+/// The search for similar photos in the scanned folder.
+enum PhotoSearch {
+    Idle,
+    Running {
+        progress: Arc<similar::Progress>,
+        result: Slot<Vec<similar::Group>>,
+    },
+    Done {
+        groups: Vec<similar::Group>,
+        previews: HashMap<NodeId, Image>,
+    },
 }
 
 struct ScanSummary {
@@ -235,6 +259,9 @@ pub struct Controller {
     apk_job: Option<Slot<Result<String, String>>>,
     /// Junk waiting for the user to confirm deleting it.
     pending_cleanup: Option<JunkKind>,
+    /// Files to show once the scan being run finishes, limited to a filter
+    /// if one is set.
+    pending_files: Option<Option<FileFilter>>,
     /// Bytes freed and failures of a running cleanup.
     cleanup_job: Option<Slot<(u64, Vec<String>)>>,
     /// Total cache when Android's clear-cache dialog was opened, and
@@ -246,6 +273,7 @@ pub struct Controller {
     /// started before something changed.
     remeasure: bool,
     dupes: DupeSearch,
+    photos: PhotoSearch,
     /// Past sizes of the drives on the start screen.
     drive_log: DriveLog,
     /// A file to open once Android has indexed it, and how many times that
@@ -316,11 +344,13 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             return_watch: None,
             apk_job: None,
             pending_cleanup: None,
+            pending_files: None,
             cleanup_job: None,
             cache_check: None,
             cache_freed: None,
             remeasure: false,
             dupes: DupeSearch::Idle,
+            photos: PhotoSearch::Idle,
             drive_log: DriveLog::default(),
             pending_open: None,
             timer: Timer::default(),
@@ -356,6 +386,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_type_picked, weak, |c, key| c
         .pick_group(key.as_str()));
     on!(ui, on_clear_files_filter, weak, |c| c.clear_file_filter());
+    on!(ui, on_collect_listed, weak, |c| c.collect_listed());
     on!(ui, on_types_view_changed, weak, |c| c.update_lists());
     on!(ui, on_compare_scan, weak, |c, index| c.compare_with(index));
     on!(ui, on_collect, weak, |c| c.toggle_collect());
@@ -402,7 +433,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
         Controller::run(&sheet_weak, move |c| c.sheet_action(&id));
     });
     on!(ui, on_export, weak, |c| c.open_export());
-    on!(ui, on_cleanup_action, weak, |c| c.cleanup_action());
+    on!(ui, on_cleanup_action, weak, |c, title| c
+        .cleanup_action(&title));
 
     // Folder pickers are modal, so they run without holding the controller.
     let move_weak = weak.clone();
@@ -621,6 +653,20 @@ impl Controller {
             }
         }
 
+        if let PhotoSearch::Running { result, .. } = &self.photos {
+            if let Some(groups) = take(result) {
+                let previews = groups
+                    .iter()
+                    .flat_map(|g| g.photos.iter().zip(&g.previews))
+                    .filter_map(|(&id, preview)| Some((id, preview.as_ref()?.image())))
+                    .collect();
+                self.photos = PhotoSearch::Done { groups, previews };
+                self.show_cleanup();
+            } else if self.ticks.is_multiple_of(5) {
+                self.show_cleanup();
+            }
+        }
+
         if let Some((path, tries)) = &mut self.pending_open
             && self.ticks.is_multiple_of(5)
         {
@@ -687,6 +733,7 @@ impl Controller {
             || self.apk_job.is_some()
             || self.cleanup_job.is_some()
             || matches!(self.dupes, DupeSearch::Running { .. })
+            || matches!(self.photos, PhotoSearch::Running { .. })
             || self.pending_open.is_some()
             || self.basket_job.is_some()
             || self.put_back_job.is_some();
@@ -782,6 +829,7 @@ impl Controller {
         }
 
         self.stop_duplicates();
+        self.stop_photos();
         self.scan = Some(RunningScan {
             path: root,
             progress,
@@ -837,6 +885,7 @@ impl Controller {
                 scanned.result
             }
             Err(err) => {
+                self.pending_files = None;
                 ui.set_status(format!("Could not scan {}: {err}", path.display()).into());
                 return;
             }
@@ -849,6 +898,12 @@ impl Controller {
         });
         self.owners.clear();
         self.file_filter = None;
+        if let Some(filter) = self.pending_files.take() {
+            self.file_filter = filter;
+            // The "Largest files" tab, or "Files" on phones.
+            ui.set_wide_tab(1);
+            ui.set_compact_tab(2);
+        }
         self.basket.clear();
         let tree = self.tree.insert(result.tree);
         self.rebuildable = rebuildable(tree, tree.root())
@@ -871,6 +926,7 @@ impl Controller {
             return;
         };
         self.stop_duplicates();
+        self.stop_photos();
         self.tree = None;
         self.summary = None;
         self.rows.clear();
@@ -1100,6 +1156,11 @@ impl Controller {
                     .and_then(JunkKind::from_id)
                 {
                     self.request_cleanup(kind);
+                } else if let Some(kind) = id
+                    .strip_prefix(home::REVIEW_PREFIX)
+                    .and_then(ReviewKind::from_id)
+                {
+                    self.review(kind);
                 }
             }
         }
@@ -1314,6 +1375,20 @@ impl Controller {
                     self.start_scan(folder);
                 }
             }
+            (id, SheetTarget::Review(kind)) => {
+                let place = REVIEW_IDS.iter().position(|&r| r == id).and_then(|i| {
+                    self.report()?
+                        .reviews
+                        .iter()
+                        .find(|r| r.kind == *kind)?
+                        .places
+                        .get(i)
+                        .cloned()
+                });
+                if let Some(place) = place {
+                    self.open_place(*kind, &place);
+                }
+            }
             (sheet::FORGET, SheetTarget::Removed(package)) => {
                 if let Err(err) = apps::forget(package) {
                     self.set_status(&format!("Couldn't update the app history: {err}"));
@@ -1342,6 +1417,7 @@ impl Controller {
                 .find(|e| &e.package == package)?
                 .installer
                 .clone(),
+            SheetTarget::Review(_) => None,
         }
     }
 
@@ -1378,6 +1454,41 @@ impl Controller {
             }
             Err(err) => self.set_status(&format!("Couldn't save the APK: {err}")),
         }
+    }
+
+    /// Opens old screenshots or chat media to look through: the folder, or a
+    /// sheet to pick one when there are several.
+    fn review(&mut self, kind: ReviewKind) {
+        let Some(review) = self
+            .report()
+            .and_then(|r| r.reviews.iter().find(|r| r.kind == kind))
+            .cloned()
+        else {
+            return;
+        };
+        match review.places.as_slice() {
+            [] => {}
+            [place] => self.open_place(kind, place),
+            _ => self.show_sheet(
+                home::review_sheet(&review, &REVIEW_IDS),
+                Some(SheetTarget::Review(kind)),
+            ),
+        }
+    }
+
+    /// Scans a folder to review, showing its files right away: only the old
+    /// ones for screenshots.
+    fn open_place(&mut self, kind: ReviewKind, place: &Place) {
+        if self.scan.is_some() {
+            return;
+        }
+        self.pending_files = Some(match kind {
+            ReviewKind::Screenshots => Some(FileFilter::OlderThan(
+                apps::now() as i64 - cleanup::OLD_SCREENSHOT,
+            )),
+            ReviewKind::ChatMedia => None,
+        });
+        self.start_scan(place.folder.to_string_lossy().into_owned());
     }
 
     /// Asks before deleting a kind of junk, with the shared confirmation
@@ -1723,14 +1834,81 @@ impl Controller {
         };
         let mut rows = self.cleanup_found.clone();
         rows.extend(filecleanup::duplicate_rows(tree, duplicates));
+        let lookup;
+        let photos = match &self.photos {
+            PhotoSearch::Idle => Similar::NotSearched,
+            PhotoSearch::Running { progress, .. } => Similar::Searching {
+                done: progress.done.load(Ordering::Relaxed),
+                files: progress.files.load(Ordering::Relaxed),
+            },
+            PhotoSearch::Done { groups, previews } => {
+                lookup = |id: NodeId| previews.get(&id).cloned();
+                Similar::Found(groups, &lookup)
+            }
+        };
+        rows.extend(filecleanup::similar_rows(tree, photos));
         sync_model(&self.cleanup_rows, rows);
+    }
+
+    /// A Clean up heading's button, told apart by the heading's title.
+    fn cleanup_action(&mut self, title: &str) {
+        if title == filecleanup::SIMILAR {
+            self.photo_action();
+        } else {
+            self.duplicate_action();
+        }
+    }
+
+    /// The Similar photos button: starts the search, or stops it while it
+    /// runs.
+    fn photo_action(&mut self) {
+        if matches!(self.photos, PhotoSearch::Running { .. }) {
+            self.stop_photos();
+            self.show_cleanup();
+            return;
+        }
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        let photos = similar::candidates(tree, tree.root());
+        if photos.is_empty() {
+            self.photos = PhotoSearch::Done {
+                groups: Vec::new(),
+                previews: HashMap::new(),
+            };
+            self.show_cleanup();
+            return;
+        }
+        let progress = Arc::new(similar::Progress::new());
+        let result: Slot<Vec<similar::Group>> = Arc::default();
+        let spawned = {
+            let (progress, result) = (progress.clone(), result.clone());
+            std::thread::Builder::new()
+                .name("disktree-photos".into())
+                .spawn(move || put(&result, similar::find(&photos, &progress)))
+        };
+        if let Err(err) = spawned {
+            ui.set_status(format!("Could not start looking at photos: {err}").into());
+            return;
+        }
+        self.photos = PhotoSearch::Running { progress, result };
+        self.show_cleanup();
+        self.ensure_ticking();
+    }
+
+    fn stop_photos(&mut self) {
+        if let PhotoSearch::Running { progress, .. } = &self.photos {
+            progress.cancel();
+        }
+        self.photos = PhotoSearch::Idle;
     }
 
     /// The Duplicate files button: starts the search, or stops it while it
     /// runs.
-    fn cleanup_action(&mut self) {
+    fn duplicate_action(&mut self) {
         if matches!(self.dupes, DupeSearch::Running { .. }) {
             self.stop_duplicates();
+            self.stop_photos();
             self.show_cleanup();
             return;
         }
@@ -2064,6 +2242,21 @@ impl Controller {
                         .find(|b| b.from == bin.from)
                         .map(|b| (b.files, b.size)),
                 ),
+                FileFilter::OlderThan(time) => (
+                    format!(
+                        "Not changed since {}",
+                        insights::date((*time).max(0) as u64)
+                    ),
+                    Some(
+                        tree.descendants(self.focus)
+                            .filter(|&id| {
+                                !tree.node(id).is_dir() && filter.matches(tree, id, self.mode)
+                            })
+                            .fold((0, 0), |(files, bytes), id| {
+                                (files + 1, bytes + tree.node(id).size_in(self.mode))
+                            }),
+                    ),
+                ),
             };
             let (files, bytes) = found.unwrap_or((0, 0));
             (name, files, bytes)
@@ -2222,6 +2415,37 @@ impl Controller {
             self.basket.push(id);
         }
         self.refresh_basket();
+    }
+
+    /// Puts every file the filtered files list shows in the basket, to look
+    /// over there and delete or move together.
+    fn collect_listed(&mut self) {
+        let (Some(tree), Some(filter)) = (&self.tree, &self.file_filter) else {
+            return;
+        };
+        if self.imported {
+            return;
+        }
+        let listed = largest_files_where(tree, self.focus, self.mode, MAX_OF_TYPE, |id| {
+            filter.matches(tree, id, self.mode)
+        });
+        let mut added = 0;
+        let mut bytes = 0;
+        for id in listed {
+            let covered = tree.ancestors(id).any(|a| self.basket.contains(&a));
+            if !covered {
+                self.basket.push(id);
+                added += 1;
+                bytes += tree.node(id).size_in(self.mode);
+            }
+        }
+        self.refresh_basket();
+        let text = format!(
+            "Collected {} ({}). Nothing is deleted until you confirm in the basket.",
+            plural(added, "file", "files"),
+            format_size(bytes)
+        );
+        self.set_status(&text);
     }
 
     fn remove_from_basket(&mut self, id: i32) {

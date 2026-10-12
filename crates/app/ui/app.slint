@@ -90,6 +90,9 @@ export struct CleanRow {
     detail: string,
     /// Button text for headings; empty for none.
     action: string,
+    /// A preview, for photos.
+    has-image: bool,
+    image: image,
 }
 
 /// A button of the app sheet.
@@ -602,6 +605,8 @@ component LargestPane inherits Rectangle {
     in property <string> filter;
     callback select(int);
     callback clear-filter();
+    /// Puts every listed file in the basket.
+    callback collect-all();
 
     VerticalLayout {
         if root.filter != "": Rectangle {
@@ -616,6 +621,13 @@ component LargestPane inherits Rectangle {
                     horizontal-stretch: 1;
                     overflow: elide;
                     font-weight: 600;
+                }
+
+                Button {
+                    text: "Collect all";
+                    clicked => {
+                        root.collect-all();
+                    }
                 }
 
                 Button {
@@ -686,7 +698,8 @@ component CleanupPane inherits Rectangle {
     in property <[CleanRow]> rows;
     in property <int> selected-id;
     callback select(int);
-    callback action();
+    /// A heading's button; gives the heading's title.
+    callback action(string);
 
     // Sized like the home screen's list; see HomePane.
     scroll := ScrollView {
@@ -717,7 +730,7 @@ component CleanupPane inherits Rectangle {
                         if row.action != "": Button {
                             text: row.action;
                             clicked => {
-                                root.action();
+                                root.action(row.title);
                             }
                         }
                     }
@@ -732,7 +745,7 @@ component CleanupPane inherits Rectangle {
 
                 if row.kind == 1: Rectangle {
                     property <bool> selected: row.id == root.selected-id;
-                    height: 46px;
+                    height: row.has-image ? 64px : 46px;
                     border-radius: 6px;
                     background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
                     touch := TouchArea {
@@ -745,6 +758,21 @@ component CleanupPane inherits Rectangle {
                         padding-left: 8px;
                         padding-right: 8px;
                         spacing: 8px;
+                        if row.has-image: Rectangle {
+                            width: 56px;
+                            height: 56px;
+                            y: 4px;
+                            border-radius: 6px;
+                            clip: true;
+                            background: Theme.track;
+                            Image {
+                                width: 100%;
+                                height: 100%;
+                                source: row.image;
+                                image-fit: cover;
+                            }
+                        }
+
                         VerticalLayout {
                             alignment: center;
                             horizontal-stretch: 1;
@@ -1545,6 +1573,7 @@ export component AppWindow inherits Window {
     callback app-bubble(string);
     callback type-picked(string);
     callback clear-files-filter();
+    callback collect-listed();
     callback collect();
     callback export();
     callback basket-review();
@@ -1567,7 +1596,7 @@ export component AppWindow inherits Window {
     callback delete-cancelled();
     callback grant-permission();
     callback sheet-action(string);
-    callback cleanup-action();
+    callback cleanup-action(string);
 
     forward-focus: keys;
 
@@ -1816,6 +1845,9 @@ export component AppWindow inherits Window {
                                 clear-filter => {
                                     root.clear-files-filter();
                                 }
+                                collect-all => {
+                                    root.collect-listed();
+                                }
                             }
                         }
 
@@ -1841,8 +1873,8 @@ export component AppWindow inherits Window {
                                 select(id) => {
                                     root.select-node(id, true);
                                 }
-                                action => {
-                                    root.cleanup-action();
+                                action(title) => {
+                                    root.cleanup-action(title);
                                 }
                             }
                         }
@@ -1929,6 +1961,9 @@ export component AppWindow inherits Window {
                         clear-filter => {
                             root.clear-files-filter();
                         }
+                        collect-all => {
+                            root.collect-listed();
+                        }
                     }
                 }
 
@@ -1954,8 +1989,8 @@ export component AppWindow inherits Window {
                         select(id) => {
                             root.select-node(id, true);
                         }
-                        action => {
-                            root.cleanup-action();
+                        action(title) => {
+                            root.cleanup-action(title);
                         }
                     }
                 }

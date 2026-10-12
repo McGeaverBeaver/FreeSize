@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use disktree_core::{DiskSpace, disk_space};
 
-use crate::cleanup::{self, Junk, MediaUse};
+use crate::cleanup::{self, Junk, MediaUse, Review};
 use crate::growth::{self, Change};
 use crate::history::{self, Entry, StorageSample};
 use crate::locations;
@@ -95,6 +95,8 @@ pub struct AppReport {
     pub media: Vec<MediaUse>,
     /// Trash, old installers and other files that can go.
     pub junk: Vec<Junk>,
+    /// Old screenshots and chat media to look through.
+    pub reviews: Vec<Review>,
     /// Daily samples of how the storage divided up, oldest first.
     pub storage: Vec<StorageSample>,
     /// App icons by package, for the map and bubble views.
@@ -210,6 +212,7 @@ pub fn collect() -> Result<AppReport, String> {
     if demo::enabled() {
         report.media = demo::media();
         report.junk = demo::junk();
+        report.reviews = demo::reviews();
     } else if platform::storage_access() {
         let installed: HashSet<String> = report.installed.iter().cloned().collect();
         let labels: HashMap<String, String> = history
@@ -226,6 +229,7 @@ pub fn collect() -> Result<AppReport, String> {
             ))
             .collect();
         report.media = cleanup::media_by_owner(platform::media_rows());
+        report.reviews = cleanup::reviews(&locations::default_path(), report.now as i64);
     }
     report
         .media
@@ -524,7 +528,7 @@ mod demo {
     use disktree_core::disk_space;
 
     use super::{AppReport, AppUsage};
-    use crate::cleanup::{Junk, JunkKind, MediaUse};
+    use crate::cleanup::{Junk, JunkKind, MediaUse, Place, Review, ReviewKind};
     use crate::history::{Entry, History, StorageSample};
     use crate::locations;
     use crate::owners::Pixels;
@@ -575,6 +579,41 @@ mod demo {
         .into_iter()
         .filter(|j| !cleaned.contains(&j.kind))
         .collect()
+    }
+
+    pub fn reviews() -> Vec<Review> {
+        let root = locations::default_path();
+        let place = |name: &str, folder: &str, mb: u64, files| Place {
+            name: name.into(),
+            folder: root.join(folder),
+            bytes: mb * MB,
+            files,
+        };
+        let review = |kind, places: Vec<Place>| Review {
+            kind,
+            bytes: places.iter().map(|p| p.bytes).sum(),
+            files: places.iter().map(|p| p.files).sum(),
+            places,
+        };
+        vec![
+            review(
+                ReviewKind::Screenshots,
+                vec![place("Screenshots", "Pictures/Screenshots", 1_240, 806)],
+            ),
+            review(
+                ReviewKind::ChatMedia,
+                vec![
+                    place(
+                        "WhatsApp",
+                        "Android/media/com.whatsapp/WhatsApp/Media",
+                        6_900,
+                        3_100,
+                    ),
+                    place("Telegram", "Movies/Telegram", 1_400, 120),
+                    place("Telegram", "Pictures/Telegram", 380, 640),
+                ],
+            ),
+        ]
     }
 
     pub fn media() -> Vec<MediaUse> {

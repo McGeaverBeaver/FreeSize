@@ -240,6 +240,147 @@ pub fn untrashed_name(name: &str) -> &str {
         .map_or(name, |(_, original)| original)
 }
 
+/// Files worth looking through that aren't junk: they're never deleted from
+/// a card, only opened so each file can be seen first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReviewKind {
+    /// Screenshots not changed for a month.
+    Screenshots,
+    /// Photos, videos and voice notes saved by chat apps.
+    ChatMedia,
+}
+
+impl ReviewKind {
+    pub const ALL: [ReviewKind; 2] = [ReviewKind::Screenshots, ReviewKind::ChatMedia];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            ReviewKind::Screenshots => "screenshots",
+            ReviewKind::ChatMedia => "chat-media",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<ReviewKind> {
+        ReviewKind::ALL.into_iter().find(|kind| kind.id() == id)
+    }
+}
+
+/// One folder of files to review.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    /// The app that saved them, or "Screenshots".
+    pub name: String,
+    pub folder: PathBuf,
+    pub bytes: u64,
+    pub files: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Review {
+    pub kind: ReviewKind,
+    pub bytes: u64,
+    pub files: u64,
+    /// Biggest first.
+    pub places: Vec<Place>,
+}
+
+/// Screenshots older than this are suggested for review.
+pub const OLD_SCREENSHOT: i64 = 30 * 24 * 60 * 60;
+
+const SCREENSHOT_FOLDERS: [&str; 2] = ["Pictures/Screenshots", "DCIM/Screenshots"];
+
+/// Where chat apps save what was sent to them, by app. Folders that don't
+/// exist are skipped, so older and newer layouts are both listed.
+const CHAT_FOLDERS: &[(&str, &[&str])] = &[
+    (
+        "WhatsApp",
+        &[
+            "Android/media/com.whatsapp/WhatsApp/Media",
+            "WhatsApp/Media",
+        ],
+    ),
+    (
+        "WhatsApp Business",
+        &[
+            "Android/media/com.whatsapp.w4b/WhatsApp Business/Media",
+            "WhatsApp Business/Media",
+        ],
+    ),
+    (
+        "Telegram",
+        &[
+            "Pictures/Telegram",
+            "Movies/Telegram",
+            "Music/Telegram",
+            "Documents/Telegram",
+            "Download/Telegram",
+            "Telegram",
+        ],
+    ),
+    ("Signal", &["Pictures/Signal", "Movies/Signal"]),
+    ("Messenger", &["Pictures/Messenger", "Movies/Messenger"]),
+    ("Viber", &["Pictures/Viber", "Movies/Viber", "Viber"]),
+    ("WeChat", &["Pictures/WeiXin", "Movies/WeiXin"]),
+    ("LINE", &["Pictures/LINE", "Movies/LINE"]),
+];
+
+/// Places smaller than this aren't listed.
+const MIN_PLACE: u64 = 1024 * 1024;
+
+/// Old screenshots and chat media under `root`, the shared storage root.
+/// `now` is in seconds since 1970.
+pub fn reviews(root: &Path, now: i64) -> Vec<Review> {
+    let screenshots = SCREENSHOT_FOLDERS
+        .iter()
+        .map(|folder| ("Screenshots", root.join(folder)))
+        .filter_map(|(name, folder)| place(name, folder, Some(now - OLD_SCREENSHOT)))
+        .collect();
+    let chats = CHAT_FOLDERS
+        .iter()
+        .flat_map(|(name, folders)| folders.iter().map(move |folder| (*name, folder)))
+        .filter_map(|(name, folder)| place(name, root.join(folder), None))
+        .collect();
+    [
+        (ReviewKind::Screenshots, screenshots),
+        (ReviewKind::ChatMedia, chats),
+    ]
+    .into_iter()
+    .filter_map(|(kind, mut places): (ReviewKind, Vec<Place>)| {
+        places.sort_by_key(|p| std::cmp::Reverse(p.bytes));
+        (!places.is_empty()).then(|| Review {
+            kind,
+            bytes: places.iter().map(|p| p.bytes).sum(),
+            files: places.iter().map(|p| p.files).sum(),
+            places,
+        })
+    })
+    .collect()
+}
+
+/// The files in `folder`, only those last changed before `before` if set.
+fn place(name: &str, folder: PathBuf, before: Option<i64>) -> Option<Place> {
+    let mut place = Place {
+        name: name.into(),
+        ..Place::default()
+    };
+    walk(&folder, &mut |_, meta| {
+        if meta.is_file() {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs() as i64);
+            if before.is_none_or(|before| modified > 0 && modified < before) {
+                place.bytes += meta.len();
+                place.files += 1;
+            }
+        }
+        true
+    });
+    place.folder = folder;
+    (place.bytes >= MIN_PLACE).then_some(place)
+}
+
 /// Media in shared storage saved by one app.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MediaUse {
@@ -450,6 +591,54 @@ mod tests {
         assert_eq!(media[1].package, "com.instagram");
         assert_eq!(media[1].folder, root.join("Pictures/Instagram"));
         assert!(!media[1].in_app_data);
+    }
+
+    #[test]
+    fn finds_old_screenshots_and_chat_media() {
+        const MB: usize = 1024 * 1024;
+        let root = TempRoot::new("reviews");
+        let old = root.file("Pictures/Screenshots/old.png", 2 * MB);
+        root.file("Pictures/Screenshots/new.png", 3 * MB);
+        root.file("DCIM/Screenshots/tiny.png", 10);
+        root.file(
+            "Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Video/v.mp4",
+            5 * MB,
+        );
+        root.file("Pictures/Telegram/a.jpg", 2 * MB);
+        root.file("Movies/Telegram/b.mp4", 3 * MB);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let month_ago = std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs((now - OLD_SCREENSHOT - 3600) as u64);
+        fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(month_ago)
+            .unwrap();
+
+        let reviews = reviews(&root.0, now);
+        assert_eq!(reviews.len(), 2);
+        let shots = &reviews[0];
+        assert_eq!(shots.kind, ReviewKind::Screenshots);
+        assert_eq!((shots.bytes, shots.files), (2 * MB as u64, 1));
+        assert_eq!(shots.places.len(), 1);
+        assert_eq!(shots.places[0].folder, root.0.join("Pictures/Screenshots"));
+
+        let chats = &reviews[1];
+        assert_eq!(chats.kind, ReviewKind::ChatMedia);
+        assert_eq!(chats.bytes, 10 * MB as u64);
+        let places: Vec<(&str, u64)> = chats
+            .places
+            .iter()
+            .map(|p| (p.name.as_str(), p.bytes / MB as u64))
+            .collect();
+        assert_eq!(places, [("WhatsApp", 5), ("Telegram", 3), ("Telegram", 2)]);
+        for kind in ReviewKind::ALL {
+            assert_eq!(ReviewKind::from_id(kind.id()), Some(kind));
+        }
     }
 
     #[test]

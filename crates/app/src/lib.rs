@@ -22,6 +22,7 @@ mod owners;
 mod report;
 mod rows;
 mod scans;
+mod similar;
 #[cfg(windows)]
 mod winicon;
 

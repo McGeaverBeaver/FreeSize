@@ -2,12 +2,12 @@
 //! platform reports it, how the device's storage divides up between apps,
 //! the user's files and the system.
 
-use disktree_core::{DiskSpace, disk_space, format_size};
+use disktree_core::{DiskSpace, disk_space, format_count, format_size};
 
 use std::path::Path;
 
 use crate::apps::{Abilities, AppReport, AppUsage};
-use crate::cleanup::{Junk, JunkKind, MediaUse, SAVED_APKS};
+use crate::cleanup::{Junk, JunkKind, MediaUse, Review, ReviewKind, SAVED_APKS};
 use crate::growth::{self, DriveLog};
 use crate::history::Entry;
 use crate::insights::{self, Source, View, ago, date, duration};
@@ -26,6 +26,8 @@ pub const VIEW_PREFIX: &str = "view:";
 pub const REMOVED_PREFIX: &str = "removed:";
 /// Prefix of the action ids that delete a kind of junk (see `JunkKind::id`).
 pub const CLEAN_PREFIX: &str = "clean:";
+/// Prefix of the action ids that open files to review (see `ReviewKind::id`).
+pub const REVIEW_PREFIX: &str = "review:";
 /// Switches the app group between a list and bubbles.
 pub const TOGGLE_BUBBLES: &str = "toggle-bubbles";
 /// Leaves the app the bubbles zoomed into.
@@ -33,6 +35,8 @@ pub const ZOOM_OUT: &str = "zoom-out";
 
 /// Junk and app media smaller than this isn't worth a row.
 const WORTH_SHOWING: u64 = 1024 * 1024;
+/// Files to review are suggested from this size on.
+const WORTH_REVIEWING: u64 = 50 * 1024 * 1024;
 /// Media from this size on is mentioned in an app's tags.
 const MEDIA_TAG: u64 = 100 * 1024 * 1024;
 
@@ -369,6 +373,15 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
             cards.push(junk_row(junk));
         }
     }
+    for kind in ReviewKind::ALL {
+        if let Some(review) = report
+            .reviews
+            .iter()
+            .find(|r| r.kind == kind && r.bytes >= WORTH_REVIEWING)
+        {
+            cards.push(review_row(review));
+        }
+    }
     if cards.is_empty() {
         return cards;
     }
@@ -393,7 +406,21 @@ fn some_names(names: &[String]) -> String {
 }
 
 fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+    format!(
+        "{} {}",
+        format_count(n as u64),
+        if n == 1 { one } else { many }
+    )
+}
+
+/// "Pictures/Screenshots": a folder and the one it's in.
+fn short_folder(path: &Path) -> String {
+    let parts: Vec<_> = path.iter().collect();
+    parts[parts.len().saturating_sub(2)..]
+        .iter()
+        .collect::<std::path::PathBuf>()
+        .display()
+        .to_string()
 }
 
 fn junk_row(junk: &Junk) -> HomeRow {
@@ -439,6 +466,96 @@ fn junk_row(junk: &Junk) -> HomeRow {
     };
     let key = format!("{CLEAN_PREFIX}{}", junk.kind.id());
     notice(&title, &text, Some((button, &key)))
+}
+
+fn review_row(review: &Review) -> HomeRow {
+    let size = format_size(review.bytes);
+    let (title, text) = match review.kind {
+        ReviewKind::Screenshots => {
+            let folders: Vec<String> = review
+                .places
+                .iter()
+                .map(|place| short_folder(&place.folder))
+                .collect();
+            (
+                format!("Look through old screenshots: {size}"),
+                format!(
+                    "{} older than a month in {}. Screenshots are often needed only for a \
+                     moment: open them, collect the ones you're done with and delete them \
+                     together.",
+                    count(review.files as usize, "screenshot", "screenshots"),
+                    folders.join(" and ")
+                ),
+            )
+        }
+        ReviewKind::ChatMedia => {
+            // Apps with more than one folder count once.
+            let mut apps: Vec<(String, u64)> = Vec::new();
+            for place in &review.places {
+                match apps.iter_mut().find(|(name, _)| *name == place.name) {
+                    Some((_, bytes)) => *bytes += place.bytes,
+                    None => apps.push((place.name.clone(), place.bytes)),
+                }
+            }
+            apps.sort_by_key(|(_, bytes)| std::cmp::Reverse(*bytes));
+            let named: Vec<String> = apps
+                .iter()
+                .map(|(name, bytes)| format!("{name} ({})", format_size(*bytes)))
+                .collect();
+            let list = match named.as_slice() {
+                [] => String::new(),
+                [one] => one.clone(),
+                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+            };
+            (
+                format!("Look through chat media: {size}"),
+                format!(
+                    "Photos, videos and voice notes saved by {list}. Chats keep everything \
+                     anyone ever sent you; Review lists the biggest files first."
+                ),
+            )
+        }
+    };
+    let key = format!("{REVIEW_PREFIX}{}", review.kind.id());
+    notice(&title, &text, Some(("Review", &key)))
+}
+
+/// The sheet listing the folders of a review with more than one.
+pub fn review_sheet(review: &Review, ids: &[&'static str]) -> Sheet {
+    let what = match review.kind {
+        ReviewKind::Screenshots => "Old screenshots",
+        ReviewKind::ChatMedia => "Chat media",
+    };
+    let mut actions: Vec<(&'static str, String, bool)> = review
+        .places
+        .iter()
+        .zip(ids)
+        .map(|(place, &id)| {
+            let label = format!(
+                "{} · {} · {}",
+                place.name,
+                short_folder(&place.folder),
+                format_size(place.bytes)
+            );
+            (id, label, false)
+        })
+        .collect();
+    actions.push((sheet::CLOSE, "Close".into(), false));
+    Sheet {
+        title: what.into(),
+        subtitle: format!(
+            "{} in {}",
+            format_size(review.bytes),
+            count(review.files as usize, "file", "files")
+        ),
+        facts: vec![
+            "Pick a folder to see its files. Open any of them to look at it, collect the ones \
+             you don't need, then delete or move them together from the basket."
+                .into(),
+        ],
+        note: String::new(),
+        actions,
+    }
 }
 
 /// The question asked before deleting a kind of junk.
@@ -1164,6 +1281,61 @@ mod tests {
             paths: names.iter().map(|n| format!("/x/{n}").into()).collect(),
             names: names.iter().map(|n| n.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn review_cards_and_sheet() {
+        use crate::cleanup::Place;
+        const MB: u64 = 1024 * 1024;
+        let place = |name: &str, folder: &str, mb: u64| Place {
+            name: name.into(),
+            folder: folder.into(),
+            bytes: mb * MB,
+            files: 1500,
+        };
+        let mut report = report();
+        report.reviews = vec![
+            Review {
+                kind: ReviewKind::Screenshots,
+                bytes: 20 * MB,
+                files: 30,
+                places: vec![place("Screenshots", "/s/Pictures/Screenshots", 20)],
+            },
+            Review {
+                kind: ReviewKind::ChatMedia,
+                bytes: 600 * MB,
+                files: 4500,
+                places: vec![
+                    place("Telegram", "/s/Movies/Telegram", 300),
+                    place("WhatsApp", "/s/WhatsApp/Media", 200),
+                    place("Telegram", "/s/Pictures/Telegram", 100),
+                ],
+            },
+        ];
+        let home = rows(&AppsState::Ready(report.clone()), options(View::All));
+        // Too few old screenshots to suggest.
+        assert!(home.iter().all(|r| r.key != "review:screenshots"));
+        let chat = home.iter().find(|r| r.key == "review:chat-media").unwrap();
+        assert_eq!(chat.title, "Look through chat media: 600 MB");
+        assert!(
+            chat.subtitle
+                .contains("saved by Telegram (400 MB) and WhatsApp (200 MB).")
+        );
+        assert_eq!(chat.action, "Review");
+
+        let sheet = review_sheet(&report.reviews[1], &["a", "b", "c", "d"]);
+        assert_eq!(sheet.subtitle, "600 MB in 4,500 files");
+        let labels: Vec<&str> = sheet.actions.iter().map(|a| a.1.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Telegram · Movies/Telegram · 300 MB",
+                "WhatsApp · WhatsApp/Media · 200 MB",
+                "Telegram · Pictures/Telegram · 100 MB",
+                "Close"
+            ]
+        );
+        assert_eq!(sheet.actions[0].0, "a");
     }
 
     #[test]
