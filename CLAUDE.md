@@ -72,6 +72,8 @@ or commit them. The release needs `musl-tools` (for the Unraid plugin) since
      `disktree unraid status`. Unraid downloads the plugin from the
      GitHub release, so the repository has to be public for that.
   3. Next on the roadmap: phase 5 (Nextcloud and "do I have a copy?"),
-     plus the held-back items listed under Done in docs/ROADMAP.md.
+     then phase 6 (a CCleaner-style junk cleaner on every device, every
+     item with a blurb on what cleaning it means), plus the held-back items
+     listed under Done in docs/ROADMAP.md.
   4. No license chosen yet; the Hub's Docker image has never been built
      and pushed (`DISKTREE_IMAGE`, see the README's Releases section).

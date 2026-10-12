@@ -102,8 +102,9 @@ else that can delete:
   of changing a list further down the screen; rows show when they're pressed.
 
 Left over:
-- From 2b/2c: old downloads and screen recordings as their own groups.
-  (Docker's build cache is cleaned on Unraid since 0.8.)
+- From 2b/2c: old downloads and screen recordings as their own groups
+  (phase 6's junk cleaner picks them up). Docker's build cache is cleaned
+  on Unraid since 0.8.
 - From 2d: an Apps bubble view on desktops (an app's install folder plus its
   AppData/Library/cache folders, gathered across drives); Epic and GOG game
   artwork.
@@ -151,7 +152,8 @@ Left over:
     explanation (ZFS, Windows shadow copies and Time Machine are done).
   - **Leftovers of uninstalled programs** in AppData and `~/Library`:
     matching folders to installed programs is reliable for the icons but not
-    yet reliable enough to call a folder abandoned.
+    yet reliable enough to call a folder abandoned. Phase 6's junk cleaner
+    picks it up once it is.
 - From 4, each held back for a reason:
   - **Container logs, writable layers and orphan volumes** are only shown:
     Docker keeps writing to a running container's log, a layer is part of
@@ -332,6 +334,59 @@ Suggestions this enables:
 - Nextcloud conflict copies, server trash and old versions.
 - Later: OneDrive, Google Drive, Syncthing, and backup tools (restic, Borg,
   Duplicacy) as additional sources of copies.
+
+## Phase 6: Junk cleaner on every device
+
+What CCleaner does for Windows, on every device DiskTree runs on and without
+breaking anything: one button finds the junk, every item says what cleaning
+it means, and the person ticks what goes.
+
+- **One "Clean junk" screen** in the Android app, the desktop apps (Windows,
+  macOS, Linux) and the Unraid plugin, and `disktree junk` on the command
+  line. It checks the known places directly, so it takes seconds and needs
+  no scan of the whole drive first.
+- **Categories with a tick box each:** system (temporary files, crash dumps,
+  update leftovers, logs), browsers (caches only), apps, games (shader
+  caches, download leftovers), developer tools (package and build caches),
+  and trash and downloads (the trash, old installers, old downloads and
+  screen recordings). Each shows its size and opens to its items and their
+  exact paths, which open to browse the files.
+- **Ticked only when safe:** items marked safe are ticked, "check first"
+  items aren't, and what Windows, macOS or a package manager should remove
+  itself (Windows Update cleanup, `apt clean`, `journalctl --vacuum-size`)
+  gets a button that opens that tool or shows the command, never a delete.
+- **A blurb on every item about the impact**, as the Android cards have now:
+  what it is, what happens after cleaning and whether it comes back. For
+  example: "Chrome's cache: pages load from the internet again the first
+  time; you stay signed in. It refills as you browse." "Shader cache: games
+  build it again; the first launch may stutter." "Crash dumps: only needed
+  to report a crash that already happened." Junk that refills within days
+  says so, so the space won isn't oversold.
+- **Junk of well-known apps**, like CCleaner's list of applications:
+  Spotify, Discord, Slack, Teams, Zoom, VS Code, Steam, Adobe's media cache
+  and others, each a tested rule with its own blurb. BleachBit's cleaners
+  and `winapp2.ini` show where apps keep junk, but are checked rule by rule
+  rather than imported, since one wrong rule deletes someone's data. An app
+  that's running is skipped until it's closed.
+- **The result afterwards:** what was freed, what was skipped (files in
+  use) and what will refill.
+- **Recoverable where it counts:** "check first" items go to the quarantine
+  (phones and desktops get one, as servers have since 0.8). Caches and
+  temporary files are deleted after the confirmation, which says so: their
+  apps rebuild them, and in a quarantine they'd free nothing.
+- **Reminders, never automatic cleaning:** an optional daily or weekly check
+  says when junk passes a threshold ("2.4 GB of junk to review"). CCleaner's
+  automatic cleaning is left out on purpose. On the Hub: each device's junk
+  total, an alert above a threshold, and a request to clean, approved on the
+  device.
+- **Android:** the Free up space cards become the cleaner's categories, with
+  old downloads, screen recordings and empty folders added. Other apps'
+  private caches still have to be cleared one by one until Shizuku mode.
+- **Left out on purpose:** registry cleaning (frees nothing and can break
+  Windows), memory "boosters", and browser history, cookies and saved
+  passwords (privacy rather than space, and cleaning them signs people out).
+- Builds on the system and app cache rules (0.6), Android's Free up space
+  (0.3) and the quarantine (0.8).
 
 ## Traps to remember
 
