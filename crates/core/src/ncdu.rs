@@ -93,6 +93,12 @@ struct Item {
 /// Reads an ncdu export (from ncdu 1.x, ncdu 2.x's JSON export, or
 /// DiskTree).
 pub fn import(input: impl Read) -> io::Result<Tree> {
+    import_with_time(input).map(|(tree, _)| tree)
+}
+
+/// Reads an ncdu export, with when it was made (seconds since 1970) if the
+/// file says.
+pub fn import_with_time(input: impl Read) -> io::Result<(Tree, Option<i64>)> {
     let bad = |what: &str| io::Error::new(io::ErrorKind::InvalidData, what.to_string());
     let document: Value =
         serde_json::from_reader(input).map_err(|e| bad(&format!("not a saved scan ({e})")))?;
@@ -102,8 +108,12 @@ pub fn import(input: impl Read) -> io::Result<Tree> {
     if parts.first().and_then(Value::as_u64) != Some(1) || parts.len() < 4 {
         return Err(bad("not an ncdu export (version 1)"));
     }
+    let timestamp = parts[2]
+        .get("timestamp")
+        .and_then(Value::as_i64)
+        .filter(|&t| t > 0);
     let root = item(&parts[3]).ok_or_else(|| bad("the export has no root folder"))?;
-    Ok(build(root))
+    Ok((build(root), timestamp))
 }
 
 fn item(value: &Value) -> Option<Item> {
@@ -241,6 +251,8 @@ mod tests {
         let logs = tree.child_by_name(tree.root(), "logs".as_ref()).unwrap();
         let secret = tree.child_by_name(logs, "secret".as_ref()).unwrap();
         assert!(tree.node(secret).has(flags::ERROR));
+        let (_, taken) = import_with_time(text.as_bytes()).unwrap();
+        assert_eq!(taken, Some(1_700_000_000));
         assert!(import(&b"[2, 0]"[..]).is_err());
         assert!(import(&b"not json"[..]).is_err());
     }

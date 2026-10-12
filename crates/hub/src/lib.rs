@@ -12,6 +12,7 @@ pub mod db;
 pub mod devices;
 pub mod error;
 pub mod history;
+pub mod reports;
 pub mod web;
 
 use std::net::SocketAddr;
@@ -127,7 +128,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/me", get(api::me))
         .route("/api/audit", get(api::audit_log))
         .route("/api/audit/verify", get(api::audit_verify))
-        .route("/api/devices", get(dashboard::list))
+        .route(
+            "/api/devices",
+            get(dashboard::list).post(reports::create_device),
+        )
+        .route("/api/devices/export", get(reports::export_devices))
         .route(
             "/api/devices/{id}",
             get(dashboard::detail)
@@ -135,8 +140,24 @@ pub fn router(state: AppState) -> Router {
                 .delete(dashboard::remove),
         )
         .route("/api/devices/{id}/audit", get(dashboard::device_audit))
+        .route("/api/devices/{id}/report", get(reports::device_report))
+        .route(
+            "/api/devices/{id}/scans",
+            post(reports::upload_scan).layer(DefaultBodyLimit::max(reports::MAX_UPLOAD)),
+        )
         .route("/api/scans/{id}/folders", get(dashboard::folder))
         .route("/api/scans/{id}/files", get(dashboard::files))
+        .route("/api/scans/{id}/compare", get(reports::compare))
+        .route("/api/scans/{id}/export", get(reports::export_scan))
+        .route("/api/search", get(reports::search))
+        .route(
+            "/api/searches",
+            get(reports::saved_searches).post(reports::save_search),
+        )
+        .route(
+            "/api/searches/{id}",
+            axum::routing::delete(reports::delete_search),
+        )
         .route(
             "/api/groups",
             get(dashboard::list_groups).post(dashboard::create_group),

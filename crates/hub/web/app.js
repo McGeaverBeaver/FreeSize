@@ -38,7 +38,11 @@ async function api(path, options = {}) {
   const method = options.method || "GET";
   const headers = { Accept: "application/json" };
   let body;
-  if (options.body !== undefined) {
+  if (options.raw !== undefined) {
+    // A file, sent as it is.
+    headers["Content-Type"] = "application/octet-stream";
+    body = options.raw;
+  } else if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(options.body);
   }
@@ -157,6 +161,7 @@ function failed(error) {
 
 const NAV = [
   { route: "devices", label: "Devices" },
+  { route: "search", label: "Search" },
   { route: "requests", label: "Requests" },
   { route: "audit", label: "Audit log", admin: true },
   { route: "settings", label: "Settings" },
@@ -222,6 +227,7 @@ function diskRow(disk) {
 }
 
 function seenText(device) {
+  if (device.agentless) return `no agent · updated ${ago(device.last_seen)}`;
   return device.online ? "online" : `seen ${ago(device.last_seen)}`;
 }
 
@@ -237,7 +243,7 @@ function deviceCard(device) {
       h("span", { class: device.online ? "dot online" : "dot" }), seenText(device),
       ` · ${info.os || PLATFORMS[device.platform] || device.platform} · ${device.group.name}`),
     (device.disks || []).slice(0, 4).map(diskRow),
-    !device.disks.length ? h("p", { class: "dim small", style: "margin-top:10px" }, "No disks reported yet.") : null,
+    !device.disks.length && !device.agentless ? h("p", { class: "dim small", style: "margin-top:10px" }, "No disks reported yet.") : null,
     latest ? h("p", { class: "dim small", style: "margin:10px 0 0" },
       `Last scan: ${latest.label || latest.root}, ${size(latest.allocated)}, ${ago(latest.taken)}`) : null);
 }
@@ -249,7 +255,10 @@ PAGES.devices = async () => {
       h("p", { class: "dim" }, devices.length
         ? `${count(devices.length, "device", "devices")}, ${devices.filter((d) => d.online).length} online now`
         : "Phones, computers and servers you pair show their storage here.")),
-    state.me.admin ? h("button", { class: "primary", onclick: pairDialog }, "Pair a device") : null);
+    h("div", { class: "row" },
+      devices.length ? h("a", { class: "button", href: "/api/devices/export?format=csv" }, "Export CSV") : null,
+      state.me.admin ? h("button", { onclick: addDeviceDialog }, "Add without an agent") : null,
+      state.me.admin ? h("button", { class: "primary", onclick: pairDialog }, "Pair a device") : null));
   if (!devices.length) {
     return [head, h("div", { class: "card empty" },
       h("h2", {}, "No devices yet"),
@@ -337,40 +346,109 @@ async function pairDialog() {
   }, stop);
 }
 
+async function addDeviceDialog() {
+  const groups = await api("/api/groups");
+  dialog((close) => {
+    const name = h("input", { type: "text", id: "new-name", maxlength: 80, placeholder: "e.g. Router or VPS" });
+    const group = h("select", { id: "new-group" }, groups.map((g) => h("option", { value: g.id }, g.name)));
+    const platform = h("select", { id: "new-platform" },
+      Object.entries(PLATFORMS).map(([value, label]) => h("option", { value, selected: value === "linux" }, label)));
+    const add = async () => {
+      try {
+        const made = await api("/api/devices", {
+          method: "POST",
+          body: { name: name.value, group_id: Number(group.value), platform: platform.value },
+        });
+        close();
+        location.hash = `#/device/${encodeURIComponent(made.id)}`;
+      } catch (e) { toast(e.message, true); }
+    };
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+    return [h("h2", {}, "Add a device without an agent"),
+      h("p", { class: "dim" }, "For a machine that can't run the DiskTree agent, such as a router, a VPS or a Proxmox host: scan it with ncdu and upload the file. The Hub can look at it but can't ask it to do anything."),
+      h("label", { for: "new-name" }, "Name"), name,
+      h("label", { for: "new-group" }, "Device group"), group,
+      h("label", { for: "new-platform" }, "System"), platform,
+      h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: add }, "Add"))];
+  });
+}
+
+function uploadDialog(device) {
+  dialog((close) => {
+    const file = h("input", { type: "file", id: "scan-file", accept: ".json,.gz,application/json,application/gzip" });
+    const label = h("input", { type: "text", id: "scan-label", maxlength: 80, placeholder: "Optional, e.g. Root disk" });
+    const status = h("p", { class: "dim small" });
+    const send = h("button", { class: "primary", onclick: upload }, "Upload");
+    async function upload() {
+      const chosen = file.files[0];
+      if (!chosen) {
+        toast("Choose a scan file first.", true);
+        return;
+      }
+      send.disabled = true;
+      status.textContent = `Uploading ${size(chosen.size)}…`;
+      try {
+        const done = await api(`/api/devices/${encodeURIComponent(device.id)}/scans?label=${encodeURIComponent(label.value)}`,
+          { method: "POST", raw: chosen });
+        close();
+        toast(`Added a scan of ${done.root}: ${size(done.size)} in ${count(done.files, "file", "files")}.`);
+        render();
+      } catch (e) {
+        send.disabled = false;
+        status.textContent = "";
+        toast(e.message, true);
+      }
+    }
+    return [h("h2", {}, `Upload a scan of ${device.name}`),
+      h("p", {}, "On that machine, scan a folder with ncdu and save the result:"),
+      h("pre", { class: "command" }, "ncdu -1xo- / | gzip > scan.json.gz"),
+      h("p", { class: "hint" }, "Any ncdu writes this with -o (not ncdu 2.6's binary -O). DiskTree's own export works too: disktree /path --export scan.json. Up to 128 MB unpacked; for bigger machines, run the agent."),
+      h("label", { for: "scan-file" }, "Scan file"), file,
+      h("label", { for: "scan-label" }, "Name for the folder"), label,
+      status,
+      h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), send)];
+  });
+}
+
 // ----- One device ------------------------------------------------------------
 
 const DEVICE_TABS = [
-  ["overview", "Overview"], ["folders", "Folders"], ["files", "Largest files"], ["apps", "Apps"],
-  ["requests", "Requests"], ["activity", "Activity"],
+  ["overview", "Overview"], ["folders", "Folders"], ["files", "Largest files"], ["changes", "Changes"],
+  ["apps", "Apps"], ["requests", "Requests"], ["activity", "Activity"],
 ];
 
 PAGES.device = async (id, tab = "overview", ...rest) => {
   const device = await api(`/api/devices/${encodeURIComponent(id)}`);
   const info = device.info || {};
-  const tabs = DEVICE_TABS.filter(([key]) => key !== "apps" || device.apps);
+  const tabs = DEVICE_TABS.filter(([key]) => (key !== "apps" || device.apps) && (key !== "requests" || !device.agentless));
   const link = (key) => `#/device/${encodeURIComponent(id)}/${key}`;
   const header = h("div", { class: "page-head" },
     h("div", { class: "grow" },
       h("h1", {}, device.name),
       h("p", { class: "dim" },
-        h("span", { class: device.online ? "dot online" : "dot" }), seenText(device),
+        h("span", { class: device.online ? "dot online" : "dot" }),
+        device.agentless ? `updated ${ago(device.last_seen)}` : seenText(device),
         ` · ${info.os || PLATFORMS[device.platform] || device.platform}`,
-        info.app ? ` · ${info.app}` : "", ` · group ${device.group.name}`),
+        info.app && !device.agentless ? ` · ${info.app}` : "", ` · group ${device.group.name}`),
       h("p", { class: "dim small" },
-        info.attended ? "Requests are approved on the device itself."
+        device.agentless ? "No agent runs here: its scans are uploaded as files, and the Hub can't ask it to do anything."
+          : info.attended ? "Requests are approved on the device itself."
           : info.approver ? ["Nobody is at this device; requests go to its approver, ",
               device.approver_name ? h("strong", {}, device.approver_name) : "a device", " (key ", h("span", { class: "mono" }, info.approver), ")."]
           : "Nobody is at this device and it has no approver yet, so it can't be asked to do anything.",
         (info.grants || []).filter((g) => g.expires * 1000 > Date.now()).map((g) =>
           h("span", { class: "badge accent", style: "margin-left:8px" }, `${g.admin_name} may ${g.kind === "delete" ? "delete files" : g.kind === "uninstall" ? "uninstall apps" : "clean up"} until ${new Date(g.expires * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)))),
-    state.me.admin ? h("div", { class: "row" },
-      h("button", { onclick: () => renameDevice(device) }, "Rename"),
-      h("button", { onclick: () => moveDevice(device) }, "Change group"),
-      h("button", { onclick: () => removeDevice(device) }, "Remove")) : null);
+    h("div", { class: "row" },
+      state.me.admin && device.agentless ? h("button", { class: "primary", onclick: () => uploadDialog(device) }, "Upload a scan") : null,
+      h("a", { class: "button", href: `/api/devices/${encodeURIComponent(id)}/report`, target: "_blank", rel: "noopener" }, "Report"),
+      state.me.admin ? [
+        h("button", { onclick: () => renameDevice(device) }, "Rename"),
+        h("button", { onclick: () => moveDevice(device) }, "Change group"),
+        h("button", { onclick: () => removeDevice(device) }, "Remove")] : null));
   const nav = h("nav", { class: "tabs" }, tabs.map(([key, label]) =>
     h("a", { href: link(key), class: key === tab ? "active" : "" }, label)));
   const views = {
-    overview: deviceOverview, folders: deviceFolders, files: deviceFiles, apps: deviceApps,
+    overview: deviceOverview, folders: deviceFolders, files: deviceFiles, changes: deviceChanges, apps: deviceApps,
     requests: deviceRequests, activity: deviceActivity,
   };
   const view = await (views[tab] || deviceOverview)(device, ...rest);
@@ -442,9 +520,11 @@ function deviceOverview(device) {
               h("td", { class: "num hide-narrow" }, r.scans.length));
           }))))
     : h("div", { class: "card empty" }, h("h2", {}, "No scans yet"),
-        h("p", {}, "The device sends a summary after each scan: folder sizes and the biggest files."));
+        h("p", {}, device.agentless
+          ? "Upload a scan file made with ncdu to see this machine's folders."
+          : "The device sends a summary after each scan: folder sizes and the biggest files."));
   return h("div", { class: "stack" },
-    disks.length ? h("div", { class: "grid" }, disks) : h("div", { class: "card dim" }, "No disks reported yet."),
+    disks.length ? h("div", { class: "grid" }, disks) : device.agentless ? null : h("div", { class: "card dim" }, "No disks reported yet."),
     scans);
 }
 
@@ -495,7 +575,8 @@ async function deviceFolders(device, scanArg, pathArg = "") {
   return h("div", { class: "card" },
     h("div", { class: "row", style: "margin-bottom:10px" },
       h("div", { class: "grow" }, crumbs),
-      scanPicker(device, scanId, (id) => { location.hash = `#/device/${encodeURIComponent(device.id)}/folders/${id}`; })),
+      scanPicker(device, scanId, (id) => { location.hash = `#/device/${encodeURIComponent(device.id)}/folders/${id}`; }),
+      exportLinks(`/api/scans/${scanId}/export`)),
     h("p", { class: "dim small" }, `${size(folder.allocated)} on disk (${size(folder.size)} in files) · scanned ${date(folder.scan.taken)}`),
     h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, rows))),
     pick ? pick.bar : null,
@@ -521,6 +602,84 @@ async function deviceFiles(device, scanArg) {
         h("td", { class: "hide-narrow small" }, day(f.modified)),
         h("td", { class: "num" }, size(f.allocated))))))),
     pick ? pick.bar : null);
+}
+
+/** CSV and JSON download links for an export address. */
+function exportLinks(base) {
+  const join = base.includes("?") ? "&" : "?";
+  return h("span", { class: "row exports" },
+    h("a", { class: "button small", href: `${base}${join}format=csv`, title: "Download as CSV" }, "CSV"),
+    h("a", { class: "button small", href: `${base}${join}format=json`, title: "Download as JSON" }, "JSON"));
+}
+
+const CHANGE_KINDS = {
+  grew: ["grew", "warn"], shrank: ["shrank", "ok"], new: ["new", "accent"], gone: ["gone", ""],
+};
+
+async function deviceChanges(device, toArg, fromArg) {
+  const roots = (device.roots || []).filter((r) => r.scans.length >= 2);
+  const root = roots.find((r) => r.scans.some((s) => s.id === Number(toArg))) || roots[0];
+  if (!root) {
+    return h("div", { class: "card empty" }, h("h2", {}, "Nothing to compare yet"),
+      h("p", {}, "Changes show once a folder has been scanned twice. The Hub keeps every scan for a week, then one a day for three months, one a week for a year, and one a month after that."));
+  }
+  const to = root.scans.find((s) => s.id === Number(toArg)) || root.scans[0];
+  const others = root.scans.filter((s) => s.id !== to.id);
+  const from = others.find((s) => s.id === Number(fromArg))
+    || others.find((s) => s.taken <= to.taken - 30 * 86400)
+    || others[others.length - 1];
+  const result = await api(`/api/scans/${to.id}/compare?with=${from.id}`);
+  const base = `#/device/${encodeURIComponent(device.id)}/changes`;
+  const go = (t, f) => { location.hash = `${base}/${t}/${f}`; };
+  const pick = (current, onPick) => h("select", { class: "auto", onchange: (e) => onPick(Number(e.target.value)) },
+    root.scans.map((s) => h("option", { value: s.id, selected: s.id === current }, `${date(s.taken)} · ${size(s.allocated)}`)));
+  const rootPick = roots.length > 1
+    ? h("select", { class: "auto", onchange: (e) => go(Number(e.target.value), "") },
+        roots.map((r) => h("option", { value: r.scans[0].id, selected: r === root }, r.label || r.root)))
+    : h("strong", {}, root.label || root.root);
+  const older = result.from;
+  const newer = result.to;
+  const total = newer.allocated - older.allocated;
+  let filter = "all";
+  const tbody = h("tbody");
+  const filters = h("div", { class: "filters" });
+  const open = (change) => {
+    const scan = change.kind === "gone" ? older.id : newer.id;
+    location.hash = `#/device/${encodeURIComponent(device.id)}/folders/${scan}${change.path ? `/${encodeURIComponent(change.path)}` : ""}`;
+  };
+  const draw = () => {
+    const rows = result.changes.filter((c) => filter === "all" || c.kind === filter);
+    tbody.replaceChildren(...(rows.length ? rows.map((c) => {
+      const delta = c.after - c.before;
+      const [label, tone] = CHANGE_KINDS[c.kind];
+      return h("tr", { class: "clickable", onclick: () => open(c) },
+        h("td", { style: "width:80px" }, h("span", { class: `badge ${tone}` }, label)),
+        h("td", {}, c.path || "(the folder itself)"),
+        h("td", { class: "num hide-narrow dim" }, c.kind === "new" ? "–" : size(c.before)),
+        h("td", { class: "num hide-narrow dim" }, c.kind === "gone" ? "–" : size(c.after)),
+        h("td", { class: `num ${delta > 0 ? "up" : "down"}` }, `${delta >= 0 ? "+" : "−"}${size(Math.abs(delta))}`));
+    }) : [h("tr", {}, h("td", { colspan: 5, class: "dim" }, "Nothing here."))]));
+    filters.replaceChildren(...["all", "grew", "shrank", "new", "gone"].map((kind) => {
+      const n = kind === "all" ? result.changes.length : result.changes.filter((c) => c.kind === kind).length;
+      return h("button", { class: `small ${filter === kind ? "on" : ""}`, onclick: () => { filter = kind; draw(); } },
+        `${kind === "all" ? "All" : CHANGE_KINDS[kind][0][0].toUpperCase() + CHANGE_KINDS[kind][0].slice(1)} (${n})`);
+    }));
+  };
+  draw();
+  return h("div", { class: "card" },
+    h("div", { class: "row", style: "margin-bottom:12px" },
+      h("div", { class: "grow row" }, rootPick, h("span", { class: "dim" }, "from"),
+        pick(older.id, (id) => go(newer.id, id)), h("span", { class: "dim" }, "to"), pick(newer.id, (id) => go(id, older.id))),
+      exportLinks(`/api/scans/${newer.id}/compare?with=${older.id}`)),
+    h("p", {},
+      h("strong", { class: total > 0 ? "up" : "down" }, `${total >= 0 ? "+" : "−"}${size(Math.abs(total))}`),
+      ` in ${Math.max(1, Math.round((newer.taken - older.taken) / 86400))} days, from ${size(older.allocated)} to ${size(newer.allocated)}.`,
+      h("span", { class: "dim" }, ` Folders that changed by less than ${size(result.min_change)} are left out; where one folder explains most of a change, it's listed instead of the folders around it.`)),
+    filters,
+    h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}), h("th", {}, "Folder"), h("th", { class: "num hide-narrow" }, "Before"),
+        h("th", { class: "num hide-narrow" }, "After"), h("th", { class: "num" }, "Change"))),
+      tbody)));
 }
 
 function deviceApps(device) {
@@ -684,6 +843,87 @@ PAGES.audit = async () => {
       h("div", { class: "row" }, result, h("button", { onclick: verify }, "Check the chain"))),
     list,
   ];
+};
+
+// ----- Search -----------------------------------------------------------------
+
+const MIN_SIZES = [[0, "Any size"], [100 * 1024 ** 2, "100 MB or more"], [1024 ** 3, "1 GB or more"], [10 * 1024 ** 3, "10 GB or more"]];
+const HIT_ICONS = { folder: "📁", file: "📄", app: "📱" };
+
+function hitLink(hit) {
+  const device = `#/device/${encodeURIComponent(hit.device_id)}`;
+  if (hit.kind === "app") return `${device}/apps`;
+  const folder = hit.kind === "folder" ? hit.path : hit.path.includes("/") ? hit.path.slice(0, hit.path.lastIndexOf("/")) : "";
+  return `${device}/folders/${hit.scan_id}${folder ? `/${encodeURIComponent(folder)}` : ""}`;
+}
+
+function saveSearchDialog(query, min) {
+  dialog((close) => {
+    const name = h("input", { type: "text", id: "save-name", maxlength: 60, value: query });
+    const save = async () => {
+      try {
+        await api("/api/searches", { method: "POST", body: { name: name.value, query, min: Number(min) || 0 } });
+        close();
+        render();
+      } catch (e) { toast(e.message, true); }
+    };
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    return [h("h2", {}, "Save this search"),
+      h("p", { class: "dim" }, "Saved searches are yours alone; others who sign in don't see them."),
+      h("label", { for: "save-name" }, "Name"), name,
+      h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: save }, "Save"))];
+  });
+}
+
+PAGES.search = async (queryArg = "", minArg = "0", deviceArg = "") => {
+  const [saved, devices] = await Promise.all([api("/api/searches"), api("/api/devices")]);
+  const input = h("input", { type: "search", id: "search-q", value: queryArg, placeholder: "e.g. ubuntu *.iso, or plex", autocomplete: "off", "aria-label": "Search for" });
+  const min = h("select", { class: "auto", "aria-label": "Smallest size" },
+    MIN_SIZES.map(([value, label]) => h("option", { value, selected: String(value) === minArg }, label)));
+  const device = h("select", { class: "auto", "aria-label": "Device" }, h("option", { value: "" }, "All devices"),
+    devices.map((d) => h("option", { value: d.id, selected: d.id === deviceArg }, d.name)));
+  const go = () => {
+    const q = input.value.trim();
+    if (q) location.hash = `#/search/${encodeURIComponent(q)}/${min.value}/${encodeURIComponent(device.value)}`;
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  setTimeout(() => input.focus(), 0);
+  const head = h("div", { class: "page-head" },
+    h("div", { class: "grow" }, h("h1", {}, "Search"),
+      h("p", { class: "dim" }, "Find files, folders and apps on every device at once.")));
+  const form = h("div", { class: "card" },
+    h("div", { class: "row" }, h("div", { class: "grow", style: "min-width:220px" }, input), min, device,
+      h("button", { class: "primary", onclick: go }, "Search")),
+    h("p", { class: "hint", style: "margin-bottom:0" }, "Every word has to appear in the path; *.iso or .iso finds a file type. It looks through the newest scan of each folder, which keeps the biggest folders and files, not every file."),
+    saved.length ? h("div", { class: "row chips", style: "margin-top:12px" }, h("span", { class: "dim small" }, "Saved:"),
+      saved.map((s) => h("span", { class: "chip" },
+        h("a", { href: `#/search/${encodeURIComponent(s.query)}/${s.min}/` }, s.name),
+        h("button", {
+          class: "link", title: `Remove ${s.name}`, "aria-label": `Remove ${s.name}`,
+          onclick: async () => {
+            try { await api(`/api/searches/${s.id}`, { method: "DELETE" }); render(); } catch (e) { toast(e.message, true); }
+          },
+        }, "×")))) : null);
+  if (!queryArg) return [head, form];
+  const result = await api(`/api/search?q=${encodeURIComponent(queryArg)}&min=${Number(minArg) || 0}${deviceArg ? `&device=${encodeURIComponent(deviceArg)}` : ""}`);
+  const found = result.hits.length
+    ? h("div", { class: "card table-wrap" },
+        h("div", { class: "row", style: "margin-bottom:6px" },
+          h("h2", { class: "grow", style: "margin:0" }, `${result.more ? "The biggest " : ""}${count(result.hits.length, "match", "matches")}`),
+          saved.some((s) => s.query === queryArg) ? null : h("button", { class: "small", onclick: () => saveSearchDialog(queryArg, minArg) }, "Save this search")),
+        h("table", {},
+          h("thead", {}, h("tr", {}, h("th", {}, "Found"), h("th", { class: "hide-narrow" }, "Device"), h("th", { class: "num" }, "Size"))),
+          h("tbody", {}, result.hits.map((hit) => {
+            const name = hit.kind === "app" ? hit.path : hit.path.slice(hit.path.lastIndexOf("/") + 1);
+            const where = hit.kind === "app" ? "App" : [hit.label || hit.root, ...hit.path.split("/").slice(0, -1)].join(" / ");
+            return h("tr", { class: "clickable", onclick: () => { location.hash = hitLink(hit); } },
+              h("td", {}, `${HIT_ICONS[hit.kind]} `, name, h("div", { class: "sub" }, where, h("span", { class: "show-narrow" }, ` · ${hit.device_name}`))),
+              h("td", { class: "hide-narrow" }, hit.device_name),
+              h("td", { class: "num" }, size(hit.allocated)));
+          }))))
+    : h("div", { class: "card empty" }, h("h2", {}, "Nothing found"),
+        h("p", {}, `Nothing on ${count(result.devices, "device", "devices")} matches. Only the biggest folders and files of each scan are kept, so small files can't be found.`));
+  return [head, form, found];
 };
 
 // ----- Requests ---------------------------------------------------------------

@@ -177,6 +177,20 @@ const MIGRATIONS: &[&str] = &[
         created INTEGER NOT NULL
     );
     ",
+    // 2: devices without an agent (scans uploaded as files), saved searches.
+    "
+    ALTER TABLE devices ADD COLUMN agentless INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE saved_searches (
+        id INTEGER PRIMARY KEY,
+        subject TEXT NOT NULL,
+        name TEXT NOT NULL,
+        query TEXT NOT NULL,
+        min_size INTEGER NOT NULL DEFAULT 0,
+        created INTEGER NOT NULL
+    );
+    CREATE INDEX saved_searches_by_subject ON saved_searches (subject);
+    ",
 ];
 
 impl Db {

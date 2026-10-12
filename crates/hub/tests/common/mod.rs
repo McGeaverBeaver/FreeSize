@@ -59,12 +59,20 @@ pub async fn start_hub(name: &str) -> TestHub {
 pub struct Response {
     pub status: u16,
     pub location: Option<String>,
+    pub headers: Vec<(String, String)>,
     pub body: String,
 }
 
 impl Response {
     pub fn json(&self) -> Value {
         serde_json::from_str(&self.body).unwrap_or(Value::Null)
+    }
+
+    pub fn header(&self, name: &str) -> &str {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map_or("", |(_, v)| v.as_str())
     }
 }
 
@@ -102,9 +110,15 @@ impl Browser {
             .get("location")
             .and_then(|v| v.to_str().ok())
             .map(String::from);
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_str().unwrap_or_default().to_string()))
+            .collect();
         Response {
             status: response.status().as_u16(),
             location,
+            headers,
             body: response.body_mut().read_to_string().unwrap_or_default(),
         }
     }
@@ -131,6 +145,22 @@ impl Browser {
             request = request.header("X-CSRF-Token", token);
         }
         let response = request.send(body.to_string()).unwrap();
+        self.finish(response)
+    }
+
+    /// A POST of raw bytes, as a file upload sends them.
+    pub fn post_bytes(&mut self, url: &str, body: &[u8]) -> Response {
+        let mut request = self
+            .agent
+            .post(url)
+            .header("Content-Type", "application/octet-stream");
+        if let Some(cookie) = &self.cookie {
+            request = request.header("Cookie", &format!("disktree_session={cookie}"));
+        }
+        if let Some(token) = &self.csrf {
+            request = request.header("X-CSRF-Token", token);
+        }
+        let response = request.send(body).unwrap();
         self.finish(response)
     }
 

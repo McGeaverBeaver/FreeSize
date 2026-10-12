@@ -44,6 +44,10 @@ impl ApiError {
     pub fn conflict(message: impl Into<String>) -> ApiError {
         ApiError::new(StatusCode::CONFLICT, message)
     }
+
+    pub fn internal(message: impl Into<String>) -> ApiError {
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, message)
+    }
 }
 
 impl IntoResponse for ApiError {

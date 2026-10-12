@@ -365,7 +365,107 @@ fn seed(url: &str, state: &AppState) {
             }
         });
     }
+    tower_history(&agents);
+    agentless(state);
     approvals_and_requests(state, &agents);
+}
+
+/// Older scans of the tower's shares, for comparing.
+fn tower_history(agents: &[(DeviceInfo, disktree_agent::AgentState)]) {
+    let transport = UreqTransport::new();
+    let (_, tower) = agents.iter().find(|(i, _)| i.name == "Tower").unwrap();
+    let older = [
+        (
+            45,
+            folders(&[
+                ("", 251_000),
+                ("media", 171_000),
+                ("media/movies", 112_000),
+                ("media/tv", 50_000),
+                ("media/music", 9_000),
+                ("backups", 59_000),
+                ("backups/pc", 47_000),
+                ("backups/phones", 12_000),
+                ("appdata", 8_900),
+                ("appdata/plex", 5_400),
+                ("appdata/immich", 2_700),
+                ("isos", 9_100),
+                ("isos/old", 5_900),
+            ]),
+        ),
+        (
+            14,
+            folders(&[
+                ("", 279_000),
+                ("media", 205_000),
+                ("media/movies", 118_000),
+                ("media/tv", 77_000),
+                ("media/music", 10_000),
+                ("backups", 41_000),
+                ("backups/pc", 29_000),
+                ("backups/phones", 12_000),
+                ("appdata", 9_500),
+                ("appdata/plex", 5_900),
+                ("appdata/immich", 2_800),
+                ("isos", 3_200),
+                ("domains", 14_000),
+            ]),
+        ),
+    ];
+    for (days, list) in older {
+        Client::new(tower, &transport)
+            .report(&Report {
+                scan: Some(scan("/mnt/user", "User shares", days, list, Vec::new())),
+                ..Report::default()
+            })
+            .unwrap();
+    }
+}
+
+/// A Proxmox host without an agent, with a scan uploaded as an ncdu file.
+fn agentless(state: &AppState) {
+    let ncdu = br#"[1,2,{"progname":"ncdu","progver":"1.19","timestamp":0},
+        [{"name":"/var/lib/vz","asize":4096,"dsize":4096},
+         [{"name":"images","asize":4096,"dsize":4096},
+          [{"name":"100","asize":4096,"dsize":4096},
+           {"name":"vm-100-disk-0.qcow2","asize":68719476736,"dsize":41231686041}],
+          [{"name":"101","asize":4096,"dsize":4096},
+           {"name":"vm-101-disk-0.raw","asize":34359738368,"dsize":34359738368}]],
+         [{"name":"template","asize":4096,"dsize":4096},
+          [{"name":"iso","asize":4096,"dsize":4096},
+           {"name":"debian-13.1.0-amd64-netinst.iso","asize":786432000,"dsize":786436096},
+           {"name":"ubuntu-24.04.3-live-server-amd64.iso","asize":3213064192,"dsize":3213066240}]],
+         [{"name":"dump","asize":4096,"dsize":4096},
+          {"name":"vzdump-qemu-100-2026_09_01.vma.zst","asize":21474836480,"dsize":21474836480},
+          {"name":"vzdump-qemu-100-2026_10_01.vma.zst","asize":22548578304,"dsize":22548578304}]]]"#;
+    let tree = disktree_core::ncdu::import(&ncdu[..]).unwrap();
+    let report = disktree_agent::report::scan_report(
+        &tree,
+        "VM storage",
+        disktree_hub::db::now() - 2 * 86_400,
+        0,
+        true,
+    );
+    let key = disktree_proto::keys::KeyPair::generate().public();
+    let mut info = info("Proxmox host", Platform::Linux, "", false);
+    info.app = "No agent: scans are uploaded as files".into();
+    info.actions = Vec::new();
+    state.db.now(|c| {
+        let now = disktree_hub::db::now();
+        c.execute(
+            "INSERT INTO devices (id, name, platform, key, fingerprint, group_id, info, paired,
+                                  last_seen, agentless)
+             VALUES ('DEMOPROXMOX', 'Proxmox host', 'linux', ?1, ?2, 1, ?3, ?4, ?4, 1)",
+            params![
+                key.to_base64(),
+                key.fingerprint(),
+                serde_json::to_string(&info).unwrap(),
+                now - 2 * 86_400
+            ],
+        )
+        .unwrap();
+        disktree_hub::devices::store_scan(c, "DEMOPROXMOX", report).unwrap();
+    });
 }
 
 /// The tower's approver is the phone; a few requests in different states.

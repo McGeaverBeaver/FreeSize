@@ -56,7 +56,11 @@ pub fn groups(c: &Connection) -> rusqlite::Result<Vec<Group>> {
 }
 
 /// Ids of the device groups `user` may look at.
-fn visible(c: &Connection, user: &User, config: &Config) -> rusqlite::Result<HashSet<i64>> {
+pub(crate) fn visible(
+    c: &Connection,
+    user: &User,
+    config: &Config,
+) -> rusqlite::Result<HashSet<i64>> {
     Ok(groups(c)?
         .into_iter()
         .filter(|g| user.sees(&g.viewer_groups, config))
@@ -104,6 +108,8 @@ pub struct DeviceSummary {
     pub waiting: i64,
     /// The name of the approver's device, if it's paired here.
     pub approver_name: Option<String>,
+    /// No agent runs on it: its scans are uploaded as files.
+    pub agentless: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -112,7 +118,7 @@ pub struct GroupRef {
     pub name: String,
 }
 
-fn disks(c: &Connection, device: &str) -> rusqlite::Result<Vec<DiskRow>> {
+pub(crate) fn disks(c: &Connection, device: &str) -> rusqlite::Result<Vec<DiskRow>> {
     let mut stmt = c.prepare(
         "SELECT name, path, total, free, updated FROM disks WHERE device_id = ?1 ORDER BY total DESC",
     )?;
@@ -128,7 +134,7 @@ fn disks(c: &Connection, device: &str) -> rusqlite::Result<Vec<DiskRow>> {
     rows.collect()
 }
 
-fn scan_row(r: &rusqlite::Row) -> rusqlite::Result<ScanRow> {
+pub(crate) fn scan_row(r: &rusqlite::Row) -> rusqlite::Result<ScanRow> {
     Ok(ScanRow {
         id: r.get(0)?,
         root: r.get(1)?,
@@ -143,9 +149,10 @@ fn scan_row(r: &rusqlite::Row) -> rusqlite::Result<ScanRow> {
     })
 }
 
-const SCAN_COLUMNS: &str = "id, root, label, taken, size, allocated, files, dirs, errors, complete";
+pub(crate) const SCAN_COLUMNS: &str =
+    "id, root, label, taken, size, allocated, files, dirs, errors, complete";
 
-fn latest_scans(c: &Connection, device: &str) -> rusqlite::Result<Vec<ScanRow>> {
+pub(crate) fn latest_scans(c: &Connection, device: &str) -> rusqlite::Result<Vec<ScanRow>> {
     let mut stmt = c.prepare(&format!(
         "SELECT {SCAN_COLUMNS} FROM scans s WHERE device_id = ?1 AND taken = (
              SELECT max(taken) FROM scans t WHERE t.device_id = s.device_id AND t.root = s.root)
@@ -155,7 +162,7 @@ fn latest_scans(c: &Connection, device: &str) -> rusqlite::Result<Vec<ScanRow>> 
     rows.collect()
 }
 
-fn device_summaries(
+pub(crate) fn device_summaries(
     c: &Connection,
     groups: &HashSet<i64>,
     only: Option<&str>,
@@ -164,7 +171,8 @@ fn device_summaries(
         "SELECT d.id, d.name, d.platform, d.fingerprint, d.group_id, g.name, d.info, d.paired,
                 d.last_seen,
                 (SELECT count(*) FROM commands m WHERE m.device_id = d.id
-                   AND m.state IN ('queued', 'delivered', 'shown', 'needs_approver'))
+                   AND m.state IN ('queued', 'delivered', 'shown', 'needs_approver')),
+                d.agentless
          FROM devices d JOIN device_groups g ON g.id = d.group_id
          WHERE d.removed = 0 AND (?1 IS NULL OR d.id = ?1)
          ORDER BY d.name COLLATE NOCASE",
@@ -172,6 +180,7 @@ fn device_summaries(
     let rows: Vec<DeviceSummary> = stmt
         .query_map([only], |r| {
             let last_seen: i64 = r.get(8)?;
+            let agentless: bool = r.get(10)?;
             Ok(DeviceSummary {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -184,11 +193,12 @@ fn device_summaries(
                 info: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
                 paired: r.get(7)?,
                 last_seen,
-                online: now() - last_seen < ONLINE_SECONDS,
+                online: !agentless && now() - last_seen < ONLINE_SECONDS,
                 disks: Vec::new(),
                 scans: Vec::new(),
                 waiting: r.get(9)?,
                 approver_name: None,
+                agentless,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -230,7 +240,12 @@ pub async fn list(
 }
 
 /// The device if `user` may see it.
-fn find_device(c: &Connection, user: &User, config: &Config, id: &str) -> ApiResult<DeviceSummary> {
+pub(crate) fn find_device(
+    c: &Connection,
+    user: &User,
+    config: &Config,
+    id: &str,
+) -> ApiResult<DeviceSummary> {
     let groups = visible(c, user, config)?;
     device_summaries(c, &groups, Some(id))?
         .into_iter()
@@ -439,7 +454,7 @@ pub async fn device_audit(
 }
 
 /// A scan the user may see, with its device id.
-fn find_scan(
+pub(crate) fn find_scan(
     c: &Connection,
     user: &User,
     config: &Config,
@@ -457,7 +472,7 @@ fn find_scan(
     Ok(row)
 }
 
-fn parent_of(path: &str) -> Option<&str> {
+pub(crate) fn parent_of(path: &str) -> Option<&str> {
     if path.is_empty() {
         None
     } else {
@@ -465,7 +480,7 @@ fn parent_of(path: &str) -> Option<&str> {
     }
 }
 
-fn name_of(path: &str) -> &str {
+pub(crate) fn name_of(path: &str) -> &str {
     path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
@@ -661,7 +676,7 @@ fn clean_viewers(groups: Vec<String>) -> ApiResult<Vec<String>> {
     Ok(groups)
 }
 
-fn clean_name(name: &str) -> ApiResult<String> {
+pub(crate) fn clean_name(name: &str) -> ApiResult<String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 60 {
         return Err(ApiError::bad_request("names are 1 to 60 characters"));

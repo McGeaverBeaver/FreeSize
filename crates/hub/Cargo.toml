@@ -14,6 +14,7 @@ path = "src/main.rs"
 axum = "0.8.9"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+disktree-agent.workspace = true
 disktree-core.workspace = true
 disktree-proto.workspace = true
 flate2 = "1.1.10"

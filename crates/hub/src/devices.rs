@@ -284,7 +284,7 @@ impl<T: DeserializeOwned + Send> FromRequest<AppState> for DeviceRequest<T> {
                 let row = c
                     .query_row(
                         "SELECT id, name, key, fingerprint, group_id, info, removed
-                         FROM devices WHERE id = ?1",
+                         FROM devices WHERE id = ?1 AND agentless = 0",
                         [&sig.device],
                         |r| {
                             Ok((
@@ -526,7 +526,7 @@ pub async fn device_key(
         .call(move |c| {
             c.query_row(
                 "SELECT id, name, platform, key FROM devices
-                 WHERE fingerprint = ?1 AND removed = 0",
+                 WHERE fingerprint = ?1 AND removed = 0 AND agentless = 0",
                 [fingerprint],
                 |r| {
                     Ok((
