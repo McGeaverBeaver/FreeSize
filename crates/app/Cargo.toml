@@ -16,13 +16,17 @@ name = "disktree-gui"
 path = "src/main.rs"
 
 [dependencies]
+disktree-agent.workspace = true
 disktree-core.workspace = true
+disktree-proto.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 slint = "1.18.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
+# The Hub is reached with ureq on desktops; Android uses Java's HTTP client.
+disktree-agent = { workspace = true, features = ["ureq"] }
 rfd = "0.17.2"
 trash = "5.2.9"
 
@@ -65,6 +69,13 @@ theme = "@style/AppTheme"
 config_changes = "orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|fontScale|keyboard|keyboardHidden|navigation|locale|layoutDirection|colorMode|touchscreen"
 launch_mode = "singleTask"
 
+# Opens pairing links (disktree://pair?...) from a scanned QR code. cargo-apk
+# still adds the launcher entry, since this filter has no MAIN action.
+[[package.metadata.android.application.activity.intent_filter]]
+actions = ["android.intent.action.VIEW"]
+categories = ["android.intent.category.DEFAULT", "android.intent.category.BROWSABLE"]
+data = [{ scheme = "disktree", host = "pair" }]
+
 # Android 10 and older: classic storage permissions.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.READ_EXTERNAL_STORAGE"
@@ -86,6 +97,10 @@ name = "android.permission.PACKAGE_USAGE_STATS"
 # Android 11+ only lists every installed app with this.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.QUERY_ALL_PACKAGES"
+
+# Talking to a DiskTree Hub, when one is connected.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
 
 # Lets the Uninstall button open Android's uninstall confirmation. Without it
 # Android silently ignores the request.

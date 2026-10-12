@@ -1827,3 +1827,217 @@ fn app_icon(env: &mut Env, pm: &JObject, package: &str) -> JniResult<Pixels> {
         rgba,
     })
 }
+
+/// HTTP for the Hub through Java's `HttpURLConnection`, which checks
+/// certificates against Android's own store (including CAs the user
+/// installed, where the app allows them) and needs no native TLS library.
+pub struct JavaTransport;
+
+impl disktree_agent::Transport for JavaTransport {
+    fn request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Option<&[u8]>,
+        timeout_secs: u64,
+    ) -> Result<(u16, Vec<u8>), String> {
+        with_activity(|env, _| http(env, method, url, headers, body, timeout_secs))
+            .map_err(|err| format!("{err}"))
+    }
+}
+
+fn http(
+    env: &mut Env,
+    method: &str,
+    url: &str,
+    headers: &[(&str, String)],
+    body: Option<&[u8]>,
+    timeout_secs: u64,
+) -> JniResult<(u16, Vec<u8>)> {
+    env.with_local_frame(32, |env| -> JniResult<(u16, Vec<u8>)> {
+        let url = env.new_string(url)?;
+        let url = env.new_object(
+            jni_str!("java/net/URL"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[JValue::Object(&url)],
+        )?;
+        let conn = env
+            .call_method(
+                &url,
+                jni_str!("openConnection"),
+                jni_sig!("()Ljava/net/URLConnection;"),
+                &[],
+            )?
+            .l()?;
+        let method = env.new_string(method)?;
+        env.call_method(
+            &conn,
+            jni_str!("setRequestMethod"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[JValue::Object(&method)],
+        )?;
+        let millis = i32::try_from(timeout_secs.saturating_mul(1000)).unwrap_or(i32::MAX);
+        env.call_method(
+            &conn,
+            jni_str!("setConnectTimeout"),
+            jni_sig!("(I)V"),
+            &[JValue::Int(millis.min(15_000))],
+        )?;
+        env.call_method(
+            &conn,
+            jni_str!("setReadTimeout"),
+            jni_sig!("(I)V"),
+            &[JValue::Int(millis)],
+        )?;
+        env.call_method(
+            &conn,
+            jni_str!("setInstanceFollowRedirects"),
+            jni_sig!("(Z)V"),
+            &[JValue::Bool(false)],
+        )?;
+        for (name, value) in headers {
+            let name = env.new_string(name)?;
+            let value = env.new_string(value)?;
+            env.call_method(
+                &conn,
+                jni_str!("setRequestProperty"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+                &[JValue::Object(&name), JValue::Object(&value)],
+            )?;
+        }
+        if let Some(body) = body {
+            env.call_method(
+                &conn,
+                jni_str!("setDoOutput"),
+                jni_sig!("(Z)V"),
+                &[JValue::Bool(true)],
+            )?;
+            let out = env
+                .call_method(
+                    &conn,
+                    jni_str!("getOutputStream"),
+                    jni_sig!("()Ljava/io/OutputStream;"),
+                    &[],
+                )?
+                .l()?;
+            let bytes = env.byte_array_from_slice(body)?;
+            env.call_method(
+                &out,
+                jni_str!("write"),
+                jni_sig!("([B)V"),
+                &[JValue::Object(&bytes)],
+            )?;
+            env.call_method(&out, jni_str!("close"), jni_sig!("()V"), &[])?;
+        }
+        let status = env
+            .call_method(&conn, jni_str!("getResponseCode"), jni_sig!("()I"), &[])?
+            .i()?;
+        // Errors come on a separate stream, which may be missing.
+        let stream = if status >= 400 {
+            env.call_method(
+                &conn,
+                jni_str!("getErrorStream"),
+                jni_sig!("()Ljava/io/InputStream;"),
+                &[],
+            )?
+            .l()?
+        } else {
+            env.call_method(
+                &conn,
+                jni_str!("getInputStream"),
+                jni_sig!("()Ljava/io/InputStream;"),
+                &[],
+            )?
+            .l()?
+        };
+        let mut answer = Vec::new();
+        if !stream.is_null() {
+            const CHUNK: usize = 16 * 1024;
+            let buffer = env.new_byte_array(CHUNK)?;
+            let mut chunk = vec![0i8; CHUNK];
+            loop {
+                let read = env
+                    .call_method(
+                        &stream,
+                        jni_str!("read"),
+                        jni_sig!("([BII)I"),
+                        &[
+                            JValue::Object(&buffer),
+                            JValue::Int(0),
+                            JValue::Int(CHUNK as i32),
+                        ],
+                    )?
+                    .i()?;
+                if read < 0 {
+                    break;
+                }
+                let read = read as usize;
+                buffer.get_region(env, 0, &mut chunk[..read])?;
+                answer.extend(chunk[..read].iter().map(|&b| b as u8));
+            }
+            env.call_method(&stream, jni_str!("close"), jni_sig!("()V"), &[])?;
+        }
+        env.call_method(&conn, jni_str!("disconnect"), jni_sig!("()V"), &[])?;
+        Ok((u16::try_from(status).unwrap_or(0), answer))
+    })
+}
+
+/// The link the app was opened with (a `disktree://pair` link from a
+/// scanned QR code), if any.
+pub fn launch_link() -> Option<String> {
+    with_activity(|env, activity| {
+        let intent = env
+            .call_method(
+                activity,
+                jni_str!("getIntent"),
+                jni_sig!("()Landroid/content/Intent;"),
+                &[],
+            )?
+            .l()?;
+        if intent.is_null() {
+            return Ok(None);
+        }
+        let data = env
+            .call_method(
+                &intent,
+                jni_str!("getDataString"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        java_string_opt(env, data)
+    })
+    .ok()
+    .flatten()
+}
+
+/// The phone's model, e.g. "Pixel 9 Pro", for naming it at the Hub.
+pub fn device_name() -> String {
+    with_activity(|env, _| {
+        let model = env
+            .get_static_field(
+                jni_str!("android/os/Build"),
+                jni_str!("MODEL"),
+                jni_sig!("Ljava/lang/String;"),
+            )?
+            .l()?;
+        java_string(env, model)
+    })
+    .unwrap_or_else(|_| "Android phone".into())
+}
+
+/// "Android 16".
+pub fn os_name() -> String {
+    with_activity(|env, _| {
+        let release = env
+            .get_static_field(
+                jni_str!("android/os/Build$VERSION"),
+                jni_str!("RELEASE"),
+                jni_sig!("Ljava/lang/String;"),
+            )?
+            .l()?;
+        java_string(env, release)
+    })
+    .map_or_else(|_| "Android".into(), |v| format!("Android {v}"))
+}

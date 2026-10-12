@@ -268,6 +268,11 @@ pub struct PollRequest {
     /// How long the Hub may hold the request open waiting for something new,
     /// in seconds (at most 60).
     pub wait: u32,
+    /// Sends everything still open again, not just what's new: set on the
+    /// first poll after the device starts, so requests shown before a
+    /// restart come back.
+    #[serde(default)]
+    pub resend: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

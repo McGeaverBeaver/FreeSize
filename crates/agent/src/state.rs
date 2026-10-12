@@ -23,6 +23,9 @@ pub struct AgentState {
     pub hub_key: PublicKey,
     /// This device's id at the Hub.
     pub device: String,
+    /// The name it paired under.
+    #[serde(default)]
+    pub name: String,
     /// This device's private key, as its base64 seed.
     key: String,
     /// The approver set on this device, for a device nobody sits at.
@@ -56,6 +59,7 @@ impl AgentState {
             hub_name,
             hub_key,
             device,
+            name: String::new(),
             key: STANDARD.encode(key.seed()),
             approver: None,
             grants: Vec::new(),

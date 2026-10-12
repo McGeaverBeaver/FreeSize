@@ -1544,6 +1544,18 @@ export component AppWindow inherits Window {
     in property <[string]> sheet-facts;
     in property <string> sheet-note;
     in property <[SheetAction]> sheet-actions;
+    // Connecting to a DiskTree Hub.
+    in property <bool> hub-connect-open;
+    in-out property <string> hub-link;
+    in-out property <string> hub-code;
+    in property <string> hub-connect-status;
+    in property <bool> hub-busy;
+    in property <string> hub-confirm-fingerprint;
+    // A request from the Hub to approve.
+    in property <bool> approval-open;
+    in property <string> approval-title;
+    in property <[string]> approval-lines;
+    in property <[int]> approval-minutes;
     in-out property <bool> size-on-disk: true;
     in-out property <length> tree-scroll;
 
@@ -1597,6 +1609,12 @@ export component AppWindow inherits Window {
     callback grant-permission();
     callback sheet-action(string);
     callback cleanup-action(string);
+    callback hub-connect();
+    callback hub-confirm();
+    callback hub-connect-cancel();
+    /// -1 to deny, 0 to approve once, else minutes of the grant.
+    callback approval-answer(int);
+    callback approval-later();
 
     forward-focus: keys;
 
@@ -1607,6 +1625,14 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if (event.text != Key.Back && event.text != Key.Escape) {
                 return reject;
+            }
+            if (root.approval-open) {
+                root.approval-later();
+                return accept;
+            }
+            if (root.hub-connect-open) {
+                root.hub-connect-cancel();
+                return accept;
             }
             if (root.sheet-open) {
                 root.sheet-action("close");
@@ -2372,6 +2398,192 @@ export component AppWindow inherits Window {
                         clicked => {
                             root.sheet-action(action.id);
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Connecting to a DiskTree Hub: a pairing link, or its address and code.
+    if root.hub-connect-open: Rectangle {
+        background: #00000088;
+        TouchArea { }
+
+        Rectangle {
+            width: root.compact ? parent.width : min(480px, parent.width - 32px);
+            height: min(connect-layout.preferred-height, parent.height - root.safe-area-insets.top - 24px);
+            y: root.compact ? parent.height - self.height : (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            clip: true;
+            connect-layout := VerticalLayout {
+                padding: 18px;
+                padding-bottom: 18px + (root.compact ? root.safe-area-insets.bottom : 0px);
+                spacing: 10px;
+                Text {
+                    text: "Connect to a DiskTree Hub";
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: "In the Hub's dashboard, choose Pair a device. Paste the link it shows, or type the Hub's address and the code.";
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+
+                LineEdit {
+                    text <=> root.hub-link;
+                    placeholder-text: "Pairing link, or the Hub's address";
+                    enabled: !root.hub-busy && root.hub-confirm-fingerprint == "";
+                }
+
+                LineEdit {
+                    text <=> root.hub-code;
+                    placeholder-text: "Code, when typing the address";
+                    enabled: !root.hub-busy && root.hub-confirm-fingerprint == "";
+                }
+
+                if root.hub-confirm-fingerprint != "": Rectangle {
+                    border-radius: 6px;
+                    background: Theme.system.transparentize(80%);
+                    height: fingerprint-layout.preferred-height;
+                    fingerprint-layout := VerticalLayout {
+                        padding: 10px;
+                        spacing: 4px;
+                        Text {
+                            text: "This Hub's key is";
+                            font-size: 13px;
+                        }
+
+                        Text {
+                            text: root.hub-confirm-fingerprint;
+                            font-size: 17px;
+                            font-weight: 700;
+                        }
+
+                        Text {
+                            text: "Check it matches the dashboard (Settings → This Hub) before connecting.";
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                if root.hub-connect-status != "": Text {
+                    text: root.hub-connect-status;
+                    font-size: 13px;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.hub-connect-cancel();
+                        }
+                    }
+
+                    Button {
+                        text: root.hub-confirm-fingerprint != "" ? "It matches, connect" : "Connect";
+                        primary: true;
+                        enabled: !root.hub-busy;
+                        clicked => {
+                            if (root.hub-confirm-fingerprint != "") {
+                                root.hub-confirm();
+                            } else {
+                                root.hub-connect();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A request from the Hub: shown in full, nothing happens until it's
+    // approved here.
+    if root.approval-open: Rectangle {
+        background: #00000088;
+        TouchArea { }
+
+        Rectangle {
+            width: root.compact ? parent.width : min(500px, parent.width - 32px);
+            height: min(approval-layout.preferred-height, parent.height - root.safe-area-insets.top - 24px);
+            y: root.compact ? parent.height - self.height : (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            clip: true;
+            approval-layout := VerticalLayout {
+                padding: 18px;
+                padding-bottom: 18px + (root.compact ? root.safe-area-insets.bottom : 0px);
+                spacing: 8px;
+                Text {
+                    text: root.approval-title;
+                    font-size: 18px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {
+                    border-radius: 6px;
+                    background: Palette.alternate-background;
+                    height: min(lines-layout.preferred-height, 260px);
+                    Flickable {
+                        content-height: lines-layout.preferred-height;
+                        lines-layout := VerticalLayout {
+                            padding: 10px;
+                            spacing: 3px;
+                            for line[i] in root.approval-lines: Text {
+                                text: line;
+                                font-size: i == 0 ? 14px : 12px;
+                                font-weight: i == 0 ? 600 : 400;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Nothing happens unless you approve. A grant lets the same person do the same kind of thing again without asking, until it runs out.";
+                    font-size: 12px;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+
+                Button {
+                    text: "Approve once";
+                    primary: true;
+                    clicked => {
+                        root.approval-answer(0);
+                    }
+                }
+
+                for minutes in root.approval-minutes: Button {
+                    text: "Approve for " + minutes + " minutes";
+                    clicked => {
+                        root.approval-answer(minutes);
+                    }
+                }
+
+                Button {
+                    text: "Deny";
+                    clicked => {
+                        root.approval-answer(-1);
+                    }
+                }
+
+                Button {
+                    text: "Not now";
+                    clicked => {
+                        root.approval-later();
                     }
                 }
             }

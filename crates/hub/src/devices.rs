@@ -360,11 +360,24 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
     let tx = c.transaction()?;
     let time = now();
     if let Some(info) = report.info {
+        // The name stays as paired, or as an admin renamed it.
         let info = clean_info(info);
+        if info.approver != device.info.approver {
+            audit::append(
+                &tx,
+                &device.name,
+                if info.approver.is_some() {
+                    "approver set on the device"
+                } else {
+                    "approver removed on the device"
+                },
+                Some(&device.id),
+                &json!({"approver": info.approver}),
+            )?;
+        }
         tx.execute(
-            "UPDATE devices SET name = ?1, platform = ?2, info = ?3 WHERE id = ?4",
+            "UPDATE devices SET platform = ?1, info = ?2 WHERE id = ?3",
             params![
-                info.name,
                 platform_id(info.platform),
                 serde_json::to_string(&info).unwrap_or_default(),
                 device.id
@@ -482,9 +495,11 @@ pub async fn poll(
     let wait = Duration::from_secs(u64::from(request.body.wait.min(MAX_WAIT)));
     let deadline = tokio::time::Instant::now() + wait;
     let waker = state.wakers.get(&device.id);
+    let mut resend = request.body.resend;
     loop {
         let notified = waker.notified();
-        let pending = crate::commands::pending_for(&state, &device).await?;
+        let pending = crate::commands::pending_for(&state, &device, resend).await?;
+        resend = false;
         let empty = pending.commands.is_empty()
             && pending.approvals.is_empty()
             && pending.decisions.is_empty()

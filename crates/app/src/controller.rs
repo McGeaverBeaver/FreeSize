@@ -1,7 +1,7 @@
 //! Application state and the logic behind every UI callback.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::path::{MAIN_SEPARATOR_STR, PathBuf};
 use std::rc::{Rc, Weak};
@@ -31,6 +31,7 @@ use crate::filecleanup::{self, Duplicates, Hidden, Similar};
 use crate::growth::{self, DriveLog};
 use crate::hidden;
 use crate::home::{self, AppsState, sheet};
+use crate::hub::{self, Hub};
 use crate::insights::{self, View};
 use crate::moves;
 use crate::owners::Owners;
@@ -132,6 +133,8 @@ struct RunningDelete {
 enum SheetTarget {
     App(String),
     Removed(String),
+    /// The DiskTree Hub settings.
+    Hub,
     /// The folders of old screenshots or chat media.
     Review(ReviewKind),
 }
@@ -255,6 +258,20 @@ pub struct Controller {
     /// Which group of apps the home screen lists.
     view: View,
     sheet: Option<SheetTarget>,
+    /// The connection to a DiskTree Hub, if paired.
+    hub: Hub,
+    hub_status: String,
+    /// Picks up the Hub's events; slower than `timer`.
+    hub_timer: Timer,
+    /// Requests from the Hub waiting to be shown, and the one on screen.
+    prompts: VecDeque<hub::Prompt>,
+    prompt: Option<hub::Prompt>,
+    /// Pairing: the link being tried, and the Hub to confirm by fingerprint.
+    hub_link: Option<disktree_proto::PairingLink>,
+    hub_hello: Option<disktree_proto::Hello>,
+    /// Junk last found, for cleaning it when the Hub asks.
+    hub_junk: Arc<Mutex<Vec<cleanup::Junk>>>,
+    disks_reported: Option<std::time::Instant>,
     return_watch: Option<ReturnWatch>,
     apk_job: Option<Slot<Result<String, String>>>,
     /// Junk waiting for the user to confirm deleting it.
@@ -295,9 +312,59 @@ macro_rules! on {
     }};
 }
 
+/// The phone's model or the computer's name, for the Hub.
+fn device_name() -> String {
+    #[cfg(target_os = "android")]
+    return crate::android::device_name();
+    #[cfg(not(target_os = "android"))]
+    disktree_agent::hostname()
+}
+
+fn os_name() -> String {
+    #[cfg(target_os = "android")]
+    return crate::android::os_name();
+    #[cfg(not(target_os = "android"))]
+    disktree_proto::Platform::current().label().to_string()
+}
+
+/// The Hub connection, with this platform's HTTP client and actions.
+fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>) -> Hub {
+    let path = growth::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("hub.json");
+    #[cfg(target_os = "android")]
+    let transport: Arc<dyn disktree_agent::Transport + Send + Sync> =
+        Arc::new(crate::android::JavaTransport);
+    #[cfg(not(target_os = "android"))]
+    let transport: Arc<dyn disktree_agent::Transport + Send + Sync> =
+        Arc::new(disktree_agent::UreqTransport::new());
+    let executor = Arc::new(hub::AppExecutor { junk: junk.clone() });
+    let mut roots: Vec<PathBuf> = locations::list().into_iter().map(|l| l.path).collect();
+    if let Some(home) = std::env::home_dir() {
+        roots.push(home);
+    }
+    let platform = disktree_proto::Platform::current();
+    let policy = disktree_agent::commands::Policy {
+        attended: true,
+        actions: if platform == disktree_proto::Platform::Android {
+            vec![
+                disktree_proto::ActionKind::Delete,
+                disktree_proto::ActionKind::Uninstall,
+                disktree_proto::ActionKind::Clean,
+            ]
+        } else {
+            vec![disktree_proto::ActionKind::Delete]
+        },
+        roots,
+        keep: vec![path.clone()],
+    };
+    Hub::new(path, transport, executor, policy)
+}
+
 /// Creates the controller and connects it to `ui`. Keep the returned value
 /// alive for as long as the window runs.
 pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controller>> {
+    let hub_junk: Arc<Mutex<Vec<cleanup::Junk>>> = Arc::default();
     let ctl = Rc::new_cyclic(|me| {
         RefCell::new(Controller {
             me: me.clone(),
@@ -341,6 +408,15 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             awaiting_usage_access: false,
             view: View::All,
             sheet: None,
+            hub: new_hub(&hub_junk),
+            hub_status: String::new(),
+            hub_timer: Timer::default(),
+            prompts: VecDeque::new(),
+            prompt: None,
+            hub_link: None,
+            hub_hello: None,
+            hub_junk: hub_junk.clone(),
+            disks_reported: None,
             return_watch: None,
             apk_job: None,
             pending_cleanup: None,
@@ -411,6 +487,12 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_open_app, weak, |c, package| c
         .open_app(package.as_str()));
     on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
+    on!(ui, on_hub_connect, weak, |c| c.hub_connect());
+    on!(ui, on_hub_confirm, weak, |c| c.hub_confirm());
+    on!(ui, on_hub_connect_cancel, weak, |c| c.hub_connect_cancel());
+    on!(ui, on_approval_answer, weak, |c, answer| c
+        .approval_answer(answer));
+    on!(ui, on_approval_later, weak, |c| c.approval_later());
     // Export buttons save through a modal dialog, so they run without
     // holding the controller; other sheet buttons go to the controller.
     let sheet_weak = weak.clone();
@@ -473,6 +555,14 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
 
     {
         let mut c = ctl.borrow_mut();
+        c.start_hub_timer();
+        // Opened from a scanned pairing QR code.
+        #[cfg(target_os = "android")]
+        if let Some(link) = crate::android::launch_link()
+            && link.starts_with("disktree://pair")
+        {
+            c.open_hub_connect(&link);
+        }
         c.record_drives();
         if apps::supported() {
             if apps::has_access() {
@@ -580,6 +670,11 @@ impl Controller {
             if let AppsState::Ready(report) = &self.apps {
                 // Folders of apps in Android/media and the like get their icons.
                 self.owners.set_android_icons(report.icons.clone());
+                *self.hub_junk.lock().unwrap_or_else(|e| e.into_inner()) = report.junk.clone();
+                self.hub.report(disktree_proto::Report {
+                    apps: Some(hub::apps_report(report)),
+                    ..disktree_proto::Report::default()
+                });
                 self.update_map();
             }
             if self.remeasure {
@@ -765,6 +860,15 @@ impl Controller {
         let root = PathBuf::from(&path);
         let progress = Arc::new(ScanProgress::new());
         let result: Slot<io::Result<Scanned>> = Arc::default();
+        // Deletes the Hub asks for may only reach scanned folders.
+        self.hub.add_root(&root);
+        let reporter = self.hub.reporter();
+        let label = locations::list()
+            .into_iter()
+            .find(|l| l.path == root)
+            .map(|l| l.label)
+            .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| path.clone());
         let spawned = {
             let (root, progress, result) = (root.clone(), progress.clone(), result.clone());
             std::thread::Builder::new()
@@ -805,6 +909,19 @@ impl Controller {
                             let taken = snapshot::take(&r.tree, now, scans::MAX_FOLDERS);
                             scans::record(&root, &taken)
                         };
+                        // A summary for the Hub, made here off the UI thread.
+                        if reporter.connected() && !r.cancelled {
+                            reporter.send(disktree_proto::Report {
+                                scan: Some(disktree_agent::report::scan_report(
+                                    &r.tree,
+                                    &label,
+                                    apps::now() as i64,
+                                    r.errors,
+                                    true,
+                                )),
+                                ..disktree_proto::Report::default()
+                            });
+                        }
                         let hidden = (!r.cancelled && hidden::is_drive_root(&root))
                             .then(|| disk_space(&root))
                             .flatten()
@@ -953,6 +1070,11 @@ impl Controller {
     /// the list keeps its scroll position and the measured heights of rows
     /// that stay the same.
     fn refresh_home(&self) {
+        let card = home::HubCard {
+            hub: self.hub.state().map(|s| s.hub_name),
+            status: self.hub_status.clone(),
+            waiting: self.prompts.len(),
+        };
         let options = home::Options {
             view: self.view,
             refreshing: self.apps_job.is_some() && matches!(self.apps, AppsState::Ready(_)),
@@ -962,6 +1084,7 @@ impl Controller {
             drives: Some(&self.drive_log),
             bubbles: self.app_bubbles,
             zoom: self.app_zoom.as_deref(),
+            hub: Some(&card),
         };
         sync_model(&self.home_rows, home::rows(&self.apps, options));
         self.update_app_bubbles(false);
@@ -1140,6 +1263,9 @@ impl Controller {
                 self.refresh_home();
                 self.update_app_bubbles(true);
             }
+            home::HUB_CONNECT => self.open_hub_connect(""),
+            home::HUB_SETTINGS => self.open_hub_settings(),
+            home::HUB_REVIEW => self.show_next_prompt(),
             home::ZOOM_OUT => {
                 self.app_zoom = None;
                 self.refresh_home();
@@ -1221,6 +1347,242 @@ impl Controller {
         ui.set_sheet_actions(ModelRc::new(VecModel::from(buttons)));
         ui.set_sheet_open(true);
         self.sheet = target;
+    }
+
+    // ----- DiskTree Hub -------------------------------------------------------
+
+    /// Picks up the Hub's events twice a second. Separate from `timer`, which
+    /// stops when nothing runs, so a connected app doesn't wake every 100 ms.
+    fn start_hub_timer(&self) {
+        if self.hub_timer.running() {
+            return;
+        }
+        let weak = self.me.clone();
+        self.hub_timer
+            .start(TimerMode::Repeated, Duration::from_millis(500), move || {
+                if let Some(rc) = weak.upgrade()
+                    && let Ok(mut c) = rc.try_borrow_mut()
+                {
+                    c.hub_tick();
+                }
+            });
+    }
+
+    fn this_device(&self) -> disktree_proto::DeviceInfo {
+        let state = self.hub.state();
+        hub::device_info(&device_name(), &os_name(), state.as_ref())
+    }
+
+    /// Tells the Hub about this device and its drives.
+    fn report_disks(&mut self) {
+        if self.hub.state().is_none() {
+            return;
+        }
+        let places: Vec<(String, PathBuf)> = locations::list()
+            .into_iter()
+            .map(|l| (l.label, l.path))
+            .collect();
+        self.hub.report(disktree_proto::Report {
+            info: Some(self.this_device()),
+            disks: Some(disktree_agent::report::disks(&places)),
+            ..disktree_proto::Report::default()
+        });
+        self.disks_reported = Some(std::time::Instant::now());
+    }
+
+    fn hub_tick(&mut self) {
+        let due = self
+            .disks_reported
+            .is_none_or(|at| at.elapsed() > Duration::from_secs(3600));
+        if due && self.hub.state().is_some() {
+            self.report_disks();
+        }
+        let mut home = false;
+        for event in self.hub.events() {
+            match event {
+                hub::Event::Status(status) => {
+                    home |= status != self.hub_status;
+                    self.hub_status = status;
+                }
+                hub::Event::Ask(prompt) => {
+                    self.prompts.push_back(prompt);
+                    self.show_next_prompt();
+                    home = true;
+                }
+                hub::Event::Withdrawn(id) => {
+                    self.prompts.retain(|p| p.id != id);
+                    if self.prompt.as_ref().is_some_and(|p| p.id == id) {
+                        self.prompt = None;
+                        if let Some(ui) = self.ui() {
+                            ui.set_approval_open(false);
+                        }
+                        self.set_status("The Hub withdrew its request.");
+                        self.show_next_prompt();
+                    }
+                    home = true;
+                }
+                hub::Event::Done { text, deleted } => {
+                    self.forget_deleted(&deleted);
+                    self.set_status(&text);
+                }
+                hub::Event::Removed => {
+                    self.hub.disconnect();
+                    self.prompts.clear();
+                    self.hub_status.clear();
+                    self.set_status("The Hub removed this device. Connect again to pair anew.");
+                    home = true;
+                }
+                hub::Event::Confirm(hello) => {
+                    if let Some(ui) = self.ui() {
+                        ui.set_hub_busy(false);
+                        ui.set_hub_confirm_fingerprint(hello.key.fingerprint().into());
+                        ui.set_hub_connect_status(format!("Reached \"{}\".", hello.name).into());
+                    }
+                    self.hub_hello = Some(hello);
+                }
+                hub::Event::Paired(Ok(name)) => {
+                    self.hub.connected();
+                    self.hub_link = None;
+                    self.hub_hello = None;
+                    self.hub_status = format!("Connected to {name}");
+                    if let Some(ui) = self.ui() {
+                        ui.set_hub_busy(false);
+                        ui.set_hub_connect_open(false);
+                    }
+                    self.report_disks();
+                    if let Some(report) = self.report() {
+                        let apps = hub::apps_report(report);
+                        self.hub.report(disktree_proto::Report {
+                            apps: Some(apps),
+                            ..disktree_proto::Report::default()
+                        });
+                    }
+                    self.set_status(&format!(
+                        "Connected to {name}. Scan a drive to send its summary."
+                    ));
+                    home = true;
+                }
+                hub::Event::Paired(Err(err)) => {
+                    if let Some(ui) = self.ui() {
+                        ui.set_hub_busy(false);
+                        ui.set_hub_confirm_fingerprint(SharedString::new());
+                        ui.set_hub_connect_status(err.into());
+                    }
+                    self.hub_hello = None;
+                }
+            }
+        }
+        if home {
+            self.refresh_home();
+        }
+    }
+
+    fn open_hub_connect(&mut self, link: &str) {
+        let Some(ui) = self.ui() else { return };
+        ui.set_hub_link(link.into());
+        ui.set_hub_code(SharedString::new());
+        ui.set_hub_connect_status(SharedString::new());
+        ui.set_hub_confirm_fingerprint(SharedString::new());
+        ui.set_hub_busy(false);
+        ui.set_hub_connect_open(true);
+        self.hub_hello = None;
+    }
+
+    fn hub_connect(&mut self) {
+        let Some(ui) = self.ui() else { return };
+        match hub::link_from(&ui.get_hub_link(), &ui.get_hub_code()) {
+            Ok(link) => {
+                ui.set_hub_busy(true);
+                ui.set_hub_connect_status(format!("Reaching {}…", link.hub).into());
+                self.hub_link = Some(link.clone());
+                self.hub.connect(link, self.this_device(), None);
+            }
+            Err(err) => ui.set_hub_connect_status(err.into()),
+        }
+    }
+
+    /// The person compared the Hub's fingerprint and it matches.
+    fn hub_confirm(&mut self) {
+        let (Some(link), Some(hello)) = (self.hub_link.clone(), self.hub_hello.take()) else {
+            return;
+        };
+        if let Some(ui) = self.ui() {
+            ui.set_hub_busy(true);
+            ui.set_hub_connect_status("Connecting…".into());
+        }
+        self.hub.connect(link, self.this_device(), Some(hello));
+    }
+
+    fn hub_connect_cancel(&mut self) {
+        self.hub_link = None;
+        self.hub_hello = None;
+        if let Some(ui) = self.ui() {
+            ui.set_hub_connect_open(false);
+        }
+    }
+
+    fn open_hub_settings(&mut self) {
+        let Some(state) = self.hub.state() else {
+            return;
+        };
+        let content = home::hub_sheet(&state, &self.hub_status, apps::now() as i64);
+        self.show_sheet(content, Some(SheetTarget::Hub));
+    }
+
+    /// Shows the next request from the Hub, if none is on screen.
+    fn show_next_prompt(&mut self) {
+        if self.prompt.is_some() {
+            return;
+        }
+        let Some(prompt) = self.prompts.pop_front() else {
+            return;
+        };
+        let Some(ui) = self.ui() else { return };
+        ui.set_approval_title(prompt.title.as_str().into());
+        let lines: Vec<SharedString> = prompt.lines.iter().map(|l| l.as_str().into()).collect();
+        ui.set_approval_lines(ModelRc::new(VecModel::from(lines)));
+        let minutes: Vec<i32> = prompt
+            .minutes
+            .iter()
+            .take(3)
+            .map(|&m| i32::try_from(m).unwrap_or(i32::MAX))
+            .collect();
+        ui.set_approval_minutes(ModelRc::new(VecModel::from(minutes)));
+        ui.set_approval_open(true);
+        self.prompt = Some(prompt);
+        self.refresh_home();
+    }
+
+    fn approval_answer(&mut self, answer: i32) {
+        let Some(prompt) = self.prompt.take() else {
+            return;
+        };
+        if let Some(ui) = self.ui() {
+            ui.set_approval_open(false);
+        }
+        let choice = match answer {
+            a if a < 0 => disktree_agent::commands::Choice::Deny,
+            0 => disktree_agent::commands::Choice::Once,
+            minutes => disktree_agent::commands::Choice::For(minutes as u32),
+        };
+        self.set_status(match choice {
+            disktree_agent::commands::Choice::Deny => "Denied. The Hub is told.",
+            _ => "Approved. Working on it…",
+        });
+        self.hub.answer(prompt, choice);
+        self.show_next_prompt();
+        self.refresh_home();
+    }
+
+    /// "Not now": the request waits on the home screen until reviewed.
+    fn approval_later(&mut self) {
+        if let Some(prompt) = self.prompt.take() {
+            self.prompts.push_back(prompt);
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_approval_open(false);
+        }
+        self.refresh_home();
     }
 
     // ----- Export -----------------------------------------------------------
@@ -1389,6 +1751,17 @@ impl Controller {
                     self.open_place(*kind, &place);
                 }
             }
+            (sheet::HUB_REVOKE, SheetTarget::Hub) => {
+                self.hub.revoke_grants();
+                self.set_status("Grants ended: the Hub's requests ask first again.");
+            }
+            (sheet::HUB_DISCONNECT, SheetTarget::Hub) => {
+                self.hub.disconnect();
+                self.hub_status.clear();
+                self.prompts.clear();
+                self.set_status("Disconnected. An admin can remove this device from the Hub.");
+                self.refresh_home();
+            }
             (sheet::FORGET, SheetTarget::Removed(package)) => {
                 if let Err(err) = apps::forget(package) {
                     self.set_status(&format!("Couldn't update the app history: {err}"));
@@ -1417,7 +1790,7 @@ impl Controller {
                 .find(|e| &e.package == package)?
                 .installer
                 .clone(),
-            SheetTarget::Review(_) => None,
+            SheetTarget::Review(_) | SheetTarget::Hub => None,
         }
     }
 
@@ -2836,6 +3209,47 @@ impl Controller {
             result,
         });
         self.ensure_ticking();
+    }
+
+    /// Takes paths deleted at the Hub's request out of the open scan.
+    fn forget_deleted(&mut self, paths: &[PathBuf]) {
+        let Some(tree) = &mut self.tree else {
+            return;
+        };
+        let root = tree.path(tree.root());
+        let mut gone = Vec::new();
+        for path in paths {
+            let Ok(below) = path.strip_prefix(&root) else {
+                continue;
+            };
+            let mut id = Some(tree.root());
+            for part in below.components() {
+                id = id.and_then(|id| tree.child_by_name(id, part.as_os_str()));
+            }
+            if let Some(id) = id
+                && id != tree.root()
+            {
+                tree.mark_deleted(id);
+                gone.push(id);
+            }
+        }
+        if gone.is_empty() {
+            return;
+        }
+        self.basket
+            .retain(|&b| !tree.ancestors(b).any(|a| gone.contains(&a)));
+        let selected_gone = tree.ancestors(self.selected).find(|a| gone.contains(a));
+        let expanded = self.rows.expanded_nodes();
+        self.rows.rebuild(tree, self.mode, &expanded);
+        match selected_gone {
+            Some(id) => {
+                let parent = tree.node(id).parent;
+                self.focus = NO_NODE;
+                self.select(parent as i32, false);
+            }
+            None => self.refresh_selection(),
+        }
+        self.refresh_cleanup();
     }
 
     fn finish_delete(&mut self, deletion: RunningDelete, result: Result<(), String>) {

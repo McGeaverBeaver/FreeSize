@@ -98,7 +98,8 @@ async fn pair_report_and_look() {
         let devices = admin.get(&format!("{url}/api/devices")).json();
         assert_eq!(devices.as_array().unwrap().len(), 1);
         let device = &devices[0];
-        assert_eq!(device["name"], "Big NAS");
+        // The dashboard keeps the name from pairing; only an admin renames.
+        assert_eq!(device["name"], "NAS");
         assert_eq!(device["online"], true);
         assert_eq!(device["disks"][0]["total"], 8u64 << 40);
         assert_eq!(device["scans"][0]["label"], "Shares");

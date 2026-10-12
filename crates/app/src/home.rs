@@ -28,6 +28,10 @@ pub const REMOVED_PREFIX: &str = "removed:";
 pub const CLEAN_PREFIX: &str = "clean:";
 /// Prefix of the action ids that open files to review (see `ReviewKind::id`).
 pub const REVIEW_PREFIX: &str = "review:";
+/// The DiskTree Hub card's buttons.
+pub const HUB_CONNECT: &str = "hub-connect";
+pub const HUB_SETTINGS: &str = "hub-settings";
+pub const HUB_REVIEW: &str = "hub-review";
 /// Switches the app group between a list and bubbles.
 pub const TOGGLE_BUBBLES: &str = "toggle-bubbles";
 /// Leaves the app the bubbles zoomed into.
@@ -51,6 +55,8 @@ pub mod sheet {
     pub const APP_INFO: &str = "app-info";
     pub const FORGET: &str = "forget";
     pub const CLOSE: &str = "close";
+    pub const HUB_REVOKE: &str = "hub-revoke";
+    pub const HUB_DISCONNECT: &str = "hub-disconnect";
 }
 
 const DRIVE: i32 = 0;
@@ -97,6 +103,18 @@ pub struct Options<'a> {
     /// Show the app group as bubbles, zoomed into this app if set.
     pub bubbles: bool,
     pub zoom: Option<&'a str>,
+    /// The DiskTree Hub card; none leaves the section out.
+    pub hub: Option<&'a HubCard>,
+}
+
+/// What the DiskTree Hub card shows.
+#[derive(Clone, Debug, Default)]
+pub struct HubCard {
+    /// The Hub's name when connected.
+    pub hub: Option<String>,
+    pub status: String,
+    /// Requests set aside with "Not now".
+    pub waiting: usize,
 }
 
 pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
@@ -106,6 +124,9 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
             .iter()
             .map(|location| drive_row(location, options.drives)),
     );
+    if let Some(card) = options.hub {
+        rows.extend(hub_rows(card));
+    }
     let title = "Apps & system";
     match apps {
         AppsState::Unsupported => {}
@@ -388,6 +409,82 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
     let mut rows = vec![heading(title, "", None)];
     rows.extend(cards);
     rows
+}
+
+/// The DiskTree Hub card: connect, or how the connection is going.
+fn hub_rows(card: &HubCard) -> Vec<HomeRow> {
+    let mut rows = vec![heading("DiskTree Hub", "", None)];
+    match &card.hub {
+        None => rows.push(notice(
+            "Connect to a DiskTree Hub",
+            "Show this device's storage in your Hub's dashboard, next to your other devices. \
+             The Hub can ask this device to free space; nothing happens unless you approve it \
+             here.",
+            Some(("Connect", HUB_CONNECT)),
+        )),
+        Some(name) => {
+            if card.waiting > 0 {
+                rows.push(notice(
+                    &count(
+                        card.waiting,
+                        "request waiting for you",
+                        "requests waiting for you",
+                    ),
+                    "Set aside with Not now. The Hub withdraws requests after a day.",
+                    Some(("Review", HUB_REVIEW)),
+                ));
+            }
+            let status = if card.status.is_empty() {
+                format!("Connected to {name}")
+            } else {
+                card.status.clone()
+            };
+            rows.push(notice(
+                &status,
+                "Sends a summary after each scan. Anything the Hub asks for is shown here to \
+                 approve or deny first.",
+                Some(("Hub settings", HUB_SETTINGS)),
+            ));
+        }
+    }
+    rows
+}
+
+/// The Hub settings sheet.
+pub fn hub_sheet(state: &disktree_agent::AgentState, status: &str, now: i64) -> Sheet {
+    let fingerprint = state.fingerprint();
+    let mut facts = vec![
+        format!("This device's key: {fingerprint}"),
+        format!(
+            "A server or NAS can name this device as its approver with `disktree approver set \
+             {fingerprint}`; its requests then come here to approve."
+        ),
+    ];
+    let grants: Vec<_> = state.grants.iter().filter(|g| g.expires > now).collect();
+    if grants.is_empty() {
+        facts.push("No grants: every request asks first.".into());
+    }
+    for grant in &grants {
+        facts.push(format!(
+            "{} may {} without asking for {} more minutes.",
+            grant.admin_name,
+            grant.kind.label(),
+            ((grant.expires - now) / 60).max(1)
+        ));
+    }
+    let mut actions = Vec::new();
+    if !grants.is_empty() {
+        actions.push((sheet::HUB_REVOKE, "End grants".to_string(), false));
+    }
+    actions.push((sheet::HUB_DISCONNECT, "Disconnect".to_string(), false));
+    actions.push((sheet::CLOSE, "Close".to_string(), true));
+    Sheet {
+        title: state.hub_name.clone(),
+        subtitle: format!("{} · Hub key {}", state.hub, state.hub_key.fingerprint()),
+        facts,
+        note: status.to_string(),
+        actions,
+    }
 }
 
 /// "a.jpg, b.jpg and 3 more".

@@ -414,13 +414,22 @@ pub async fn cancel(
 }
 
 /// Everything waiting for `device`, marked as delivered.
-pub async fn pending_for(state: &AppState, device: &Device) -> ApiResult<PollResponse> {
+///
+/// With `resend`, everything still open goes out again, not only what's new
+/// or overdue: the device restarted and lost what it was shown.
+pub async fn pending_for(
+    state: &AppState,
+    device: &Device,
+    resend: bool,
+) -> ApiResult<PollResponse> {
     let device = device.clone();
     let pending = state
         .db
         .call(move |c| -> rusqlite::Result<PollResponse> {
             expire(c)?;
             let now = now();
+            // Delivered before this goes out again.
+            let again = if resend { now + 1 } else { now - REDELIVER };
             let mut response = PollResponse::default();
 
             // Its own commands.
@@ -429,7 +438,7 @@ pub async fn pending_for(state: &AppState, device: &Device) -> ApiResult<PollRes
                    OR (state IN ('delivered', 'shown', 'needs_approver') AND updated < ?2))",
             )?;
             let due: Vec<(String, String, String)> = stmt
-                .query_map(params![device.id, now - REDELIVER], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .query_map(params![device.id, again], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             for (id, signed, current) in due {
                 if let Ok(signed) = serde_json::from_str(&signed) {
@@ -450,7 +459,7 @@ pub async fn pending_for(state: &AppState, device: &Device) -> ApiResult<PollRes
                    AND (a.delivered IS NULL OR a.delivered < ?2)"
             ))?;
             let asks: Vec<(String, String, String, String)> = stmt
-                .query_map(params![device.fingerprint, now - REDELIVER], |r| {
+                .query_map(params![device.fingerprint, again], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
                 })?
                 .collect::<rusqlite::Result<_>>()?;
@@ -472,7 +481,7 @@ pub async fn pending_for(state: &AppState, device: &Device) -> ApiResult<PollRes
                    AND (a.decision_delivered IS NULL OR a.decision_delivered < ?2)"
             ))?;
             let decided: Vec<(String, String)> = stmt
-                .query_map(params![device.id, now - REDELIVER], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .query_map(params![device.id, again], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             for (id, decision) in decided {
                 if let Ok(decision) = serde_json::from_str(&decision) {

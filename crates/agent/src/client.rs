@@ -117,6 +117,7 @@ pub fn pair(
         }
     }
     let key = KeyPair::generate();
+    let name = info.name.clone();
     let request = Signed::sign(
         &PairRequest {
             code: link.code.clone(),
@@ -146,13 +147,15 @@ pub fn pair(
             "the Hub's answer was meant for another device",
         ));
     }
-    Ok(AgentState::new(
+    let mut state = AgentState::new(
         link.hub.clone(),
         hello.name,
         hello.key,
         response.device,
         &key,
-    ))
+    );
+    state.name = name;
+    Ok(state)
 }
 
 /// A paired device's connection to its Hub.
@@ -221,11 +224,19 @@ impl<'a> Client<'a> {
     /// Waits up to `wait` seconds for commands, approval requests or
     /// decisions.
     pub fn poll(&self, wait: u32) -> AgentResult<PollResponse> {
-        self.post(
-            "/api/v1/poll",
-            &PollRequest { wait },
-            u64::from(wait) + TIMEOUT,
-        )
+        self.poll_request(&PollRequest {
+            wait,
+            resend: false,
+        })
+    }
+
+    /// The first poll after starting: everything still open, new or not.
+    pub fn poll_all(&self, wait: u32) -> AgentResult<PollResponse> {
+        self.poll_request(&PollRequest { wait, resend: true })
+    }
+
+    fn poll_request(&self, request: &PollRequest) -> AgentResult<PollResponse> {
+        self.post("/api/v1/poll", request, u64::from(request.wait) + TIMEOUT)
     }
 
     pub fn update(&self, command: &str, update: &CommandUpdate) -> AgentResult<()> {

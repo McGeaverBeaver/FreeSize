@@ -10,9 +10,19 @@ use disktree_core::{
     old_files, rebuildable, scan,
 };
 
+mod agent;
+
 /// Shows what is using space on a drive or in a folder.
 #[derive(Parser, Debug)]
-#[command(version, about)]
+#[command(version, about, args_conflicts_with_subcommands = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<agent::Command>,
+    #[command(flatten)]
+    scan: Args,
+}
+
+#[derive(clap::Args, Debug)]
 struct Args {
     /// Folder or drive to scan.
     #[arg(default_value = ".")]
@@ -71,7 +81,14 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let cli = Cli::parse();
+    match cli.command {
+        Some(command) => agent::main(command),
+        None => scan_and_print(cli.scan),
+    }
+}
+
+fn scan_and_print(args: Args) -> ExitCode {
     let options = ScanOptions {
         threads: args.threads,
         one_filesystem: !args.cross_filesystems,

@@ -15,6 +15,7 @@ mod growth;
 mod hidden;
 mod history;
 mod home;
+mod hub;
 mod insights;
 mod locations;
 mod moves;

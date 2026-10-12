@@ -28,7 +28,8 @@ pub struct Policy {
     pub actions: Vec<ActionKind>,
     /// Folders this device scans; deletes stay inside them.
     pub roots: Vec<PathBuf>,
-    /// More paths never to delete, such as the agent's own files.
+    /// Files never to delete, nor any folder holding them, such as the
+    /// agent's own state.
     pub keep: Vec<PathBuf>,
 }
 
@@ -276,10 +277,11 @@ pub fn delete_targets(
 
 /// Why `path` must never be deleted, if it mustn't.
 pub fn protected(path: &Path, policy: &Policy) -> Option<&'static str> {
+    // The kept files themselves, and any folder holding one.
     if policy
         .keep
         .iter()
-        .any(|keep| path == keep || keep.starts_with(path) || path.starts_with(keep))
+        .any(|keep| path == keep || keep.starts_with(path))
     {
         return Some("DiskTree's own files");
     }
