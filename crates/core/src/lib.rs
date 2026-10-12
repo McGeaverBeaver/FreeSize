@@ -20,6 +20,7 @@ mod kinds;
 mod platform;
 mod reclaim;
 mod scan;
+pub mod snapshot;
 mod space;
 mod stats;
 mod tree;

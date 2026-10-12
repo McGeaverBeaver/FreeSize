@@ -779,6 +779,44 @@ component CleanupPane inherits Rectangle {
     }
 }
 
+/// What changed since an earlier scan, with a picker for which one.
+component ChangesPane inherits VerticalLayout {
+    in property <[string]> scans;
+    in-out property <int> scan-index;
+    in property <[CleanRow]> rows;
+    in property <int> selected-id;
+    callback select(int);
+    callback compare(int);
+
+    if root.scans.length > 0: HorizontalLayout {
+        padding: 8px;
+        padding-bottom: 0;
+        spacing: 8px;
+        Text {
+            text: "Compared with the scan from";
+            vertical-alignment: center;
+            color: Theme.dim;
+        }
+
+        ComboBox {
+            model: root.scans;
+            current-index <=> root.scan-index;
+            horizontal-stretch: 1;
+            selected => {
+                root.compare(self.current-index);
+            }
+        }
+    }
+    CleanupPane {
+        rows: root.rows;
+        selected-id: root.selected-id;
+        select(id) => {
+            root.select(id);
+        }
+    }
+}
+
+
 /// Size by file type. Tapping a type lists its files.
 component TypesPane inherits Rectangle {
     in property <[TypeRow]> types;
@@ -1379,6 +1417,9 @@ export component AppWindow inherits Window {
     in-out property <bool> bubbles-view;
     in property <[BubbleItem]> app-bubbles;
     in property <string> files-filter;
+    in property <[string]> change-scans;
+    in-out property <int> change-scan-index;
+    in property <[CleanRow]> change-rows;
     /// The selected tab of each layout's tabs.
     in-out property <int> wide-tab;
     in-out property <int> compact-tab;
@@ -1429,6 +1470,7 @@ export component AppWindow inherits Window {
     callback app-bubble(string);
     callback type-picked(string);
     callback clear-files-filter();
+    callback compare-scan(int);
     callback app-bubbles-resized(length, length);
     callback size-mode-changed();
     callback go-up();
@@ -1704,6 +1746,22 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+
+                        Tab {
+                            title: "Changes";
+                            ChangesPane {
+                                scans: root.change-scans;
+                                scan-index <=> root.change-scan-index;
+                                rows: root.change-rows;
+                                selected-id: root.selected-id;
+                                select(id) => {
+                                    root.select-node(id, true);
+                                }
+                                compare(index) => {
+                                    root.compare-scan(index);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1794,6 +1852,22 @@ export component AppWindow inherits Window {
                         }
                         action => {
                             root.cleanup-action();
+                        }
+                    }
+                }
+
+                Tab {
+                    title: "Changes";
+                    ChangesPane {
+                        scans: root.change-scans;
+                        scan-index <=> root.change-scan-index;
+                        rows: root.change-rows;
+                        selected-id: root.selected-id;
+                        select(id) => {
+                            root.select-node(id, true);
+                        }
+                        compare(index) => {
+                            root.compare-scan(index);
                         }
                     }
                 }

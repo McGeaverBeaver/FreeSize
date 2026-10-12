@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 crossbeam-channel = "0.5.17"
+serde = { version = "1.0.228", features = ["derive"] }
 # Pure Rust, so nothing extra to compile for Android or Windows.
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
@@ -18,4 +19,5 @@ libc = "0.2"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+serde_json = "1.0.145"
 tempfile = "3.27.0"

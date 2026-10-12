@@ -7,6 +7,7 @@ mod actions;
 mod android;
 mod appbubbles;
 mod apps;
+mod changes;
 mod cleanup;
 mod controller;
 mod filecleanup;
@@ -17,6 +18,7 @@ mod insights;
 mod locations;
 mod owners;
 mod rows;
+mod scans;
 #[cfg(windows)]
 mod winicon;
 

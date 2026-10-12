@@ -1087,6 +1087,8 @@ version = "0.5.1"
 dependencies = [
  "crossbeam-channel",
  "libc",
+ "serde",
+ "serde_json",
  "tempfile",
  "windows-sys 0.61.2",
  "xxhash-rust",

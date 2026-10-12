@@ -1,7 +1,7 @@
 //! Application state and the logic behind every UI callback.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{MAIN_SEPARATOR_STR, PathBuf};
 use std::rc::{Rc, Weak};
@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use disktree_core::bubbles::{self, BubbleOptions};
+use disktree_core::snapshot::{self, Snapshot};
 use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
     DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
@@ -22,6 +23,7 @@ use slint::{
 
 use crate::appbubbles;
 use crate::apps::{self, AppReport};
+use crate::changes;
 use crate::cleanup::JunkKind;
 use crate::filecleanup::{self, Duplicates};
 use crate::growth::{self, DriveLog};
@@ -29,6 +31,7 @@ use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
 use crate::owners::Owners;
 use crate::rows::{self, TreeRows};
+use crate::scans;
 use crate::{
     AppWindow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction, TypeRow,
     actions, locations,
@@ -54,7 +57,15 @@ fn put<T>(slot: &Slot<T>, value: T) {
 struct RunningScan {
     path: PathBuf,
     progress: Arc<ScanProgress>,
-    result: Slot<io::Result<(ScanResult, Vec<Kind>)>>,
+    result: Slot<io::Result<Scanned>>,
+}
+
+/// A finished scan with what's worked out from it on the scan thread.
+struct Scanned {
+    result: ScanResult,
+    kinds: Vec<Kind>,
+    /// Folder sizes from earlier scans of the same folder, oldest first.
+    earlier: Vec<Snapshot>,
 }
 
 struct RunningDelete {
@@ -121,6 +132,11 @@ pub struct Controller {
     app_bubble_rows: Rc<VecModel<BubbleItem>>,
     /// The file type the files list is limited to.
     type_filter: Option<String>,
+    /// Folder sizes of earlier scans of the scanned folder, oldest first,
+    /// and the one the Changes tab compares with.
+    earlier: Vec<Snapshot>,
+    compare: Option<usize>,
+    change_rows: Rc<VecModel<CleanRow>>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
     deletion: Option<RunningDelete>,
@@ -194,6 +210,9 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             app_bubble_size: (0.0, 0.0),
             app_bubble_rows: Rc::new(VecModel::default()),
             type_filter: None,
+            earlier: Vec::new(),
+            compare: None,
+            change_rows: Rc::new(VecModel::default()),
             summary: None,
             scan: None,
             deletion: None,
@@ -222,6 +241,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     ui.set_home_rows(ModelRc::from(ctl.borrow().home_rows.clone()));
     ui.set_cleanup_rows(ModelRc::from(ctl.borrow().cleanup_rows.clone()));
     ui.set_app_bubbles(ModelRc::from(ctl.borrow().app_bubble_rows.clone()));
+    ui.set_change_rows(ModelRc::from(ctl.borrow().change_rows.clone()));
     let start = initial.clone().unwrap_or_else(locations::default_path);
     ui.set_path(start.to_string_lossy().as_ref().into());
     ui.set_can_browse(actions::CAN_BROWSE);
@@ -244,6 +264,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_app_bubble, weak, |c, key| c.app_bubble(key.as_str()));
     on!(ui, on_type_picked, weak, |c, key| c.pick_type(key.as_str()));
     on!(ui, on_clear_files_filter, weak, |c| c.clear_type_filter());
+    on!(ui, on_compare_scan, weak, |c, index| c.compare_with(index));
     on!(ui, on_app_bubbles_resized, weak, |c, w, h| c
         .app_bubbles_resized(w, h));
     on!(ui, on_size_mode_changed, weak, |c| c.size_mode_changed());
@@ -536,7 +557,7 @@ impl Controller {
 
         let root = PathBuf::from(&path);
         let progress = Arc::new(ScanProgress::new());
-        let result: Slot<io::Result<(ScanResult, Vec<Kind>)>> = Arc::default();
+        let result: Slot<io::Result<Scanned>> = Arc::default();
         let spawned = {
             let (root, progress, result) = (root.clone(), progress.clone(), result.clone());
             std::thread::Builder::new()
@@ -546,7 +567,19 @@ impl Controller {
                     // rather than on the UI thread.
                     let scanned = scan(&root, &ScanOptions::default(), &progress).map(|r| {
                         let kinds = kinds(&r.tree);
-                        (r, kinds)
+                        // A cancelled scan is incomplete: nothing to save.
+                        let earlier = if r.cancelled {
+                            Vec::new()
+                        } else {
+                            let now = apps::now() as i64;
+                            let taken = snapshot::take(&r.tree, now, scans::MAX_FOLDERS);
+                            scans::record(&root, &taken)
+                        };
+                        Scanned {
+                            result: r,
+                            kinds,
+                            earlier,
+                        }
                     });
                     put(&result, scanned)
                 })
@@ -597,15 +630,17 @@ impl Controller {
         ui.set_scan_current(snap.current.to_string_lossy().as_ref().into());
     }
 
-    fn finish_scan(&mut self, path: PathBuf, result: io::Result<(ScanResult, Vec<Kind>)>) {
+    fn finish_scan(&mut self, path: PathBuf, result: io::Result<Scanned>) {
         let Some(ui) = self.ui() else {
             return;
         };
         ui.set_scanning(false);
         let result = match result {
-            Ok((result, kinds)) => {
-                self.kinds = kinds;
-                result
+            Ok(scanned) => {
+                self.kinds = scanned.kinds;
+                self.earlier = scanned.earlier;
+                self.compare = self.earlier.len().checked_sub(1);
+                scanned.result
             }
             Err(err) => {
                 ui.set_status(format!("Could not scan {}: {err}", path.display()).into());
@@ -649,6 +684,9 @@ impl Controller {
         ui.set_file_types(ModelRc::default());
         self.cleanup_found.clear();
         self.cleanup_rows.clear();
+        self.change_rows.clear();
+        self.earlier.clear();
+        self.compare = None;
         ui.set_has_tree(false);
         ui.set_status("Pick a drive or folder, or type a path and press Scan.".into());
         // Free space and app sizes may have changed since the last visit.
@@ -1266,6 +1304,79 @@ impl Controller {
 
     // ----- Clean up tab ---------------------------------------------------
 
+    // ----- Changes tab -----------------------------------------------------
+
+    /// Picks the earlier scan to compare with; `index` counts from the
+    /// newest, as the picker lists them.
+    fn compare_with(&mut self, index: i32) {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        self.compare = self.earlier.len().checked_sub(index + 1);
+        self.refresh_changes();
+        self.update_map();
+    }
+
+    fn refresh_changes(&self) {
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        let now = apps::now() as i64;
+        let labels: Vec<SharedString> = self
+            .earlier
+            .iter()
+            .rev()
+            .map(|s| {
+                format!(
+                    "{} · {}",
+                    changes::when(now, s.taken),
+                    format_size(s.total(self.mode))
+                )
+                .into()
+            })
+            .collect();
+        ui.set_change_scans(ModelRc::new(VecModel::from(labels)));
+        if let Some(i) = self.compare {
+            ui.set_change_scan_index((self.earlier.len() - 1 - i) as i32);
+        }
+        let rows = match self.compare.and_then(|i| self.earlier.get(i)) {
+            Some(earlier) => changes::rows(tree, &self.root_label(tree), earlier, self.mode, now),
+            None => vec![CleanRow {
+                kind: 0,
+                id: -1,
+                title: "No earlier scan of this folder".into(),
+                subtitle: "DiskTree keeps the folder sizes of every scan. Scan this folder again \
+                           another day to see what grew, what's new and what's gone."
+                    .into(),
+                ..Default::default()
+            }],
+        };
+        sync_model(&self.change_rows, rows);
+    }
+
+    /// Sizes of the compared scan's folders by path, for growth on bubbles.
+    fn compare_sizes(&self) -> HashMap<&str, u64> {
+        self.compare
+            .and_then(|i| self.earlier.get(i))
+            .map(|s| s.sizes(self.mode))
+            .unwrap_or_default()
+    }
+
+    /// What the scanned folder is called: its drive's name, or its own.
+    fn root_label(&self, tree: &Tree) -> String {
+        let root_path = tree.path(tree.root());
+        locations::list()
+            .into_iter()
+            .find(|l| l.path == root_path)
+            .map(|l| l.label)
+            .or_else(|| {
+                root_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| root_path.display().to_string())
+    }
+
     /// Finds rebuildable folders and old files again, then shows the tab.
     fn refresh_cleanup(&mut self) {
         let Some(tree) = &self.tree else {
@@ -1273,6 +1384,7 @@ impl Controller {
         };
         self.cleanup_found = filecleanup::found_rows(tree, self.mode, apps::now() as i64);
         self.show_cleanup();
+        self.refresh_changes();
     }
 
     fn show_cleanup(&self) {
@@ -1375,17 +1487,7 @@ impl Controller {
         let mut chain: Vec<NodeId> = tree.ancestors(self.focus).collect();
         chain.reverse();
         let root = tree.root();
-        let root_path = tree.path(root);
-        let root_label = locations::list()
-            .into_iter()
-            .find(|l| l.path == root_path)
-            .map(|l| l.label)
-            .or_else(|| {
-                root_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-            })
-            .unwrap_or_else(|| root_path.display().to_string());
+        let root_label = self.root_label(tree);
         let crumb = |id: NodeId, label: Option<&str>| Crumb {
             id: id as i32,
             label: match label {
@@ -1437,6 +1539,7 @@ impl Controller {
             height,
             &BubbleOptions::default(),
         );
+        let before = self.compare_sizes();
         let out: Vec<BubbleItem> = items
             .iter()
             .enumerate()
@@ -1460,7 +1563,26 @@ impl Controller {
                     };
                     if r >= 26.0 {
                         let detail = if r >= 38.0 {
-                            format_size(b.size)
+                            // With an earlier scan, also how much it grew.
+                            let growth = b
+                                .node
+                                .filter(|&id| tree.node(id).is_dir())
+                                .and_then(|id| {
+                                    before.get(snapshot::relative_path(tree, id).as_str())
+                                })
+                                .map(|&was| b.size as i64 - was as i64)
+                                .filter(|d| {
+                                    d.unsigned_abs() >= (b.size / 20).max(10 * 1024 * 1024)
+                                });
+                            match growth {
+                                Some(d) => format!(
+                                    "{} · {}{}",
+                                    format_size(b.size),
+                                    if d > 0 { "+" } else { "−" },
+                                    format_size(d.unsigned_abs())
+                                ),
+                                None => format_size(b.size),
+                            }
                         } else {
                             String::new()
                         };
