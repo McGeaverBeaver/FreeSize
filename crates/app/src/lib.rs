@@ -17,6 +17,7 @@ mod history;
 mod home;
 mod insights;
 mod locations;
+mod moves;
 mod owners;
 mod rows;
 mod scans;

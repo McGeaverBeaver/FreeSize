@@ -32,6 +32,19 @@ pub fn browse(_start: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Asks where to move things to.
+#[cfg(not(target_os = "android"))]
+pub fn pick_destination() -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .set_title("Move the basket to")
+        .pick_folder()
+}
+
+#[cfg(target_os = "android")]
+pub fn pick_destination() -> Option<PathBuf> {
+    None
+}
+
 /// Opens the system file manager with `path` selected.
 pub fn reveal(path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]

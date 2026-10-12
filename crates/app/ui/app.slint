@@ -57,6 +57,14 @@ export struct BubbleItem {
     pill: bool,
 }
 
+/// An item in the basket.
+export struct BasketRow {
+    id: int,
+    name: string,
+    place: string,
+    size: string,
+}
+
 /// One step of the path to the folder shown.
 export struct Crumb {
     id: int,
@@ -1473,6 +1481,15 @@ export component AppWindow inherits Window {
     in-out property <bool> bubbles-view;
     in property <[BubbleItem]> app-bubbles;
     in property <string> files-filter;
+    in property <bool> in-basket;
+    in property <int> basket-count;
+    in property <string> basket-summary;
+    in property <[BasketRow]> basket-rows;
+    in property <bool> basket-open;
+    /// What the last move was, while it can be put back.
+    in property <string> put-back-label;
+    /// Places to move the basket to, while choosing one (phones).
+    in property <[string]> move-targets;
     /// What the Types tab shows: 0 types, 1 ages, 2 sizes.
     in-out property <int> types-view;
     in property <[string]> change-scans;
@@ -1528,6 +1545,15 @@ export component AppWindow inherits Window {
     callback app-bubble(string);
     callback type-picked(string);
     callback clear-files-filter();
+    callback collect();
+    callback basket-review();
+    callback basket-remove(int);
+    callback basket-delete-all();
+    callback basket-move-all();
+    callback basket-clear();
+    callback basket-close();
+    callback put-back();
+    callback move-target(int);
     callback types-view-changed();
     callback compare-scan(int);
     callback app-bubbles-resized(length, length);
@@ -1554,6 +1580,10 @@ export component AppWindow inherits Window {
             }
             if (root.sheet-open) {
                 root.sheet-action("close");
+                return accept;
+            }
+            if (root.basket-open) {
+                root.basket-close();
                 return accept;
             }
             if (root.confirm-open) {
@@ -1940,6 +1970,37 @@ export component AppWindow inherits Window {
                 }
             }
 
+            // Basket bar: what's collected, and the last move to put back.
+            if !root.scanning && root.has-tree && (root.basket-count > 0 || root.put-back-label != ""): Rectangle {
+                background: Palette.accent-background.transparentize(85%);
+                HorizontalLayout {
+                    padding: 6px;
+                    padding-left: 10px;
+                    padding-right: 8px;
+                    spacing: 8px;
+                    Text {
+                        text: root.basket-count > 0 ? "Basket: " + root.basket-summary : "Moved: " + root.put-back-label;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+
+                    if root.basket-count > 0: Button {
+                        text: "Review";
+                        primary: true;
+                        clicked => {
+                            root.basket-review();
+                        }
+                    }
+                    if root.basket-count == 0: Button {
+                        text: "Put back";
+                        clicked => {
+                            root.put-back();
+                        }
+                    }
+                }
+            }
+
             // Selection bar
             if !root.scanning && root.has-tree: Rectangle {
                 background: Palette.alternate-background;
@@ -1980,12 +2041,20 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.can-reveal: Button {
-                        text: root.compact ? "Folder" : "Show in folder";
+                    if root.can-reveal && !root.compact: Button {
+                        text: "Show in folder";
                         clicked => {
                             root.reveal-selected();
                         }
                     }
+                    Button {
+                        text: root.in-basket ? "Collected" : "Collect";
+                        enabled: root.can-delete || root.in-basket;
+                        clicked => {
+                            root.collect();
+                        }
+                    }
+
                     Button {
                         text: "Delete";
                         enabled: root.can-delete;
@@ -2038,6 +2107,144 @@ export component AppWindow inherits Window {
                         primary: true;
                         clicked => {
                             root.delete-confirmed();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The basket: everything collected, to delete or move at once. A bottom
+    // sheet on phones, a centered dialog on wide windows.
+    if root.basket-open: Rectangle {
+        background: #00000088;
+        TouchArea {
+            clicked => {
+                root.basket-close();
+            }
+        }
+
+        Rectangle {
+            width: root.compact ? parent.width : min(520px, parent.width - 32px);
+            height: min(basket-layout.preferred-height, parent.height - root.safe-area-insets.top - 24px);
+            y: root.compact ? parent.height - self.height : (parent.height - self.height) / 2;
+            border-radius: 12px;
+            background: Palette.background;
+            border-width: 1px;
+            border-color: Palette.border;
+            clip: true;
+            TouchArea { }
+
+            basket-layout := VerticalLayout {
+                padding: 18px;
+                padding-bottom: 18px + (root.compact ? root.safe-area-insets.bottom : 0px);
+                spacing: 8px;
+                Text {
+                    text: "Basket";
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: root.basket-count > 0 ? root.basket-summary : "Empty.";
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+
+                if root.basket-count > 0: ListView {
+                    height: min(root.basket-rows.length * 46px, 276px);
+                    for row in root.basket-rows: Rectangle {
+                        height: 46px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: row.name;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: row.place;
+                                    font-size: 11px;
+                                    color: Theme.dim;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Text {
+                                text: row.size;
+                                vertical-alignment: center;
+                            }
+
+                            Button {
+                                text: "Remove";
+                                clicked => {
+                                    root.basket-remove(row.id);
+                                }
+                            }
+                        }
+                    }
+                }
+                if root.move-targets.length > 0: VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Move everything to:";
+                        font-weight: 600;
+                    }
+
+                    for target[i] in root.move-targets: Button {
+                        text: target;
+                        clicked => {
+                            root.move-target(i);
+                        }
+                    }
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.basket-close();
+                        }
+                    }
+                }
+                if root.move-targets.length == 0: VerticalLayout {
+                    spacing: 6px;
+                    padding-top: 6px;
+                    Button {
+                        text: "Delete all";
+                        primary: true;
+                        enabled: root.basket-count > 0;
+                        clicked => {
+                            root.basket-delete-all();
+                        }
+                    }
+
+                    Button {
+                        text: "Move all…";
+                        enabled: root.basket-count > 0;
+                        clicked => {
+                            root.basket-move-all();
+                        }
+                    }
+
+                    if root.put-back-label != "": Button {
+                        text: "Put back: " + root.put-back-label;
+                        clicked => {
+                            root.put-back();
+                        }
+                    }
+                    Button {
+                        text: "Empty basket";
+                        enabled: root.basket-count > 0;
+                        clicked => {
+                            root.basket-clear();
+                        }
+                    }
+
+                    Button {
+                        text: "Close";
+                        clicked => {
+                            root.basket-close();
                         }
                     }
                 }

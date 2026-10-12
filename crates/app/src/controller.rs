@@ -31,12 +31,13 @@ use crate::growth::{self, DriveLog};
 use crate::hidden;
 use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
+use crate::moves;
 use crate::owners::Owners;
 use crate::rows::{self, TreeRows};
 use crate::scans;
 use crate::{
-    AppWindow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction, TypeRow,
-    actions, locations,
+    AppWindow, BasketRow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction,
+    TypeRow, actions, locations,
 };
 
 /// Icons beyond the kinds of content (see `Icons.of` in the UI).
@@ -120,6 +121,22 @@ struct ReturnWatch {
     ticks: u64,
 }
 
+/// What a basket job does with every item.
+enum BasketAction {
+    Delete,
+    /// Into this folder, keeping the folders below the scanned one.
+    Move(PathBuf),
+}
+
+/// What a basket job did.
+struct BasketOutcome {
+    done: Vec<NodeId>,
+    failed: Vec<String>,
+    bytes: u64,
+    /// For a move: the record to put it back.
+    moved: Option<moves::Manifest>,
+}
+
 /// The duplicate search in the scanned folder.
 enum DupeSearch {
     Idle,
@@ -172,6 +189,16 @@ pub struct Controller {
     compare: Option<usize>,
     /// Space no file accounts for, when a whole drive was scanned.
     hidden: Option<Hidden>,
+    /// Items collected to delete or move at once, and what's being done
+    /// with them.
+    basket: Vec<NodeId>,
+    pending_basket: bool,
+    basket_job: Option<Slot<BasketOutcome>>,
+    /// The last move, until it's put back.
+    last_move: Option<moves::Manifest>,
+    put_back_job: Option<Slot<(usize, Vec<String>)>>,
+    /// Folders offered as move destinations on phones.
+    move_targets: Vec<PathBuf>,
     change_rows: Rc<VecModel<CleanRow>>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
@@ -250,6 +277,12 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             earlier: Vec::new(),
             compare: None,
             hidden: None,
+            basket: Vec::new(),
+            pending_basket: false,
+            basket_job: None,
+            last_move: moves::last(),
+            put_back_job: None,
+            move_targets: Vec::new(),
             change_rows: Rc::new(VecModel::default()),
             summary: None,
             scan: None,
@@ -305,6 +338,15 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_clear_files_filter, weak, |c| c.clear_file_filter());
     on!(ui, on_types_view_changed, weak, |c| c.update_lists());
     on!(ui, on_compare_scan, weak, |c, index| c.compare_with(index));
+    on!(ui, on_collect, weak, |c| c.toggle_collect());
+    on!(ui, on_basket_review, weak, |c| c.open_basket(true));
+    on!(ui, on_basket_close, weak, |c| c.open_basket(false));
+    on!(ui, on_basket_remove, weak, |c, id| c.remove_from_basket(id));
+    on!(ui, on_basket_clear, weak, |c| c.clear_basket());
+    on!(ui, on_basket_delete_all, weak, |c| c
+        .request_basket_delete());
+    on!(ui, on_move_target, weak, |c, i| c.move_to_target(i));
+    on!(ui, on_put_back, weak, |c| c.put_back());
     on!(ui, on_app_bubbles_resized, weak, |c, w, h| c
         .app_bubbles_resized(w, h));
     on!(ui, on_size_mode_changed, weak, |c| c.size_mode_changed());
@@ -322,7 +364,19 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
         .sheet_action(id.as_str()));
     on!(ui, on_cleanup_action, weak, |c| c.cleanup_action());
 
-    // The folder picker is modal, so run it without holding the controller.
+    // Folder pickers are modal, so they run without holding the controller.
+    let move_weak = weak.clone();
+    ui.on_basket_move_all(move || {
+        if actions::CAN_BROWSE {
+            if let Some(destination) = actions::pick_destination() {
+                Controller::run(&move_weak, move |c| {
+                    c.run_basket(BasketAction::Move(destination))
+                });
+            }
+        } else {
+            Controller::run(&move_weak, |c| c.show_move_targets());
+        }
+    });
     let ui_weak = ui.as_weak();
     let browse_weak = weak.clone();
     ui.on_browse(move || {
@@ -551,6 +605,30 @@ impl Controller {
             }
         }
 
+        if let Some(job) = &self.basket_job
+            && let Some(outcome) = take(job)
+        {
+            self.basket_job = None;
+            self.finish_basket(outcome);
+        }
+
+        if let Some(job) = &self.put_back_job
+            && let Some((back, errors)) = take(job)
+        {
+            self.put_back_job = None;
+            self.last_move = moves::last();
+            let mut text = format!(
+                "Put back {}. Scan again to see {}.",
+                plural(back as u64, "item", "items"),
+                if back == 1 { "it" } else { "them" }
+            );
+            if let Some(err) = errors.first() {
+                text.push_str(&format!(" {} couldn't: {err}", errors.len()));
+            }
+            self.set_status(&text);
+            self.refresh_basket();
+        }
+
         if let Some(job) = &self.apk_job
             && let Some(result) = take(job)
         {
@@ -569,7 +647,9 @@ impl Controller {
             || self.apk_job.is_some()
             || self.cleanup_job.is_some()
             || matches!(self.dupes, DupeSearch::Running { .. })
-            || self.pending_open.is_some();
+            || self.pending_open.is_some()
+            || self.basket_job.is_some()
+            || self.put_back_job.is_some();
         if !busy {
             self.timer.stop();
         }
@@ -704,6 +784,7 @@ impl Controller {
         });
         self.owners.clear();
         self.file_filter = None;
+        self.basket.clear();
         let tree = self.tree.insert(result.tree);
         self.rebuildable = rebuildable(tree, tree.root())
             .into_iter()
@@ -734,6 +815,7 @@ impl Controller {
         self.cleanup_found.clear();
         self.cleanup_rows.clear();
         self.change_rows.clear();
+        self.basket.clear();
         self.earlier.clear();
         self.compare = None;
         ui.set_has_tree(false);
@@ -1348,6 +1430,7 @@ impl Controller {
         ui.set_can_delete(id != tree.root() && self.deletion.is_none());
         // Android has no file manager to open a folder in.
         ui.set_can_open(!(cfg!(target_os = "android") && node.is_dir()));
+        ui.set_in_basket(self.basket.contains(&id));
         ui.set_can_go_up(self.focus != tree.root());
     }
 
@@ -1937,6 +2020,310 @@ impl Controller {
         self.update_lists();
     }
 
+    // ----- Basket -----------------------------------------------------------
+
+    /// Adds the selected item to the basket, or takes it out again.
+    fn toggle_collect(&mut self) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        let id = self.selected;
+        if id == tree.root() {
+            return;
+        }
+        if let Some(pos) = self.basket.iter().position(|&b| b == id) {
+            self.basket.remove(pos);
+        } else if let Some(&holder) = self
+            .basket
+            .iter()
+            .find(|&&b| tree.ancestors(id).skip(1).any(|a| a == b))
+        {
+            let text = format!("Already in the basket with {}.", tree.name(holder));
+            self.set_status(&text);
+            return;
+        } else {
+            // A folder takes the place of anything collected inside it.
+            self.basket
+                .retain(|&b| !tree.ancestors(b).skip(1).any(|a| a == id));
+            self.basket.push(id);
+        }
+        self.refresh_basket();
+    }
+
+    fn remove_from_basket(&mut self, id: i32) {
+        self.basket.retain(|&b| b as i32 != id);
+        self.refresh_basket();
+    }
+
+    fn clear_basket(&mut self) {
+        self.basket.clear();
+        self.refresh_basket();
+    }
+
+    fn open_basket(&mut self, open: bool) {
+        self.move_targets.clear();
+        if let Some(ui) = self.ui() {
+            ui.set_basket_open(open);
+        }
+        self.refresh_basket();
+    }
+
+    fn refresh_basket(&self) {
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        let rows: Vec<BasketRow> = match &self.tree {
+            Some(tree) => self
+                .basket
+                .iter()
+                .map(|&id| BasketRow {
+                    id: id as i32,
+                    name: tree.name(id).as_ref().into(),
+                    place: {
+                        let place = relative_path(tree, tree.root(), tree.node(id).parent);
+                        if place.is_empty() {
+                            self.root_label(tree)
+                        } else {
+                            place
+                        }
+                    }
+                    .into(),
+                    size: format_size(tree.node(id).size_in(self.mode)).into(),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let bytes: u64 = self.tree.as_ref().map_or(0, |tree| {
+            self.basket
+                .iter()
+                .map(|&id| tree.node(id).size_in(self.mode))
+                .sum()
+        });
+        ui.set_basket_count(rows.len() as i32);
+        ui.set_basket_summary(
+            format!(
+                "{}, {}",
+                plural(rows.len() as u64, "item", "items"),
+                format_size(bytes)
+            )
+            .into(),
+        );
+        ui.set_basket_rows(ModelRc::new(VecModel::from(rows)));
+        ui.set_in_basket(self.basket.contains(&self.selected));
+        ui.set_put_back_label(
+            self.last_move
+                .as_ref()
+                .map(|m| {
+                    format!(
+                        "{} to {}",
+                        plural(m.moved.len() as u64, "item", "items"),
+                        m.folder.display()
+                    )
+                })
+                .unwrap_or_default()
+                .into(),
+        );
+        let targets: Vec<SharedString> = self
+            .move_targets
+            .iter()
+            .map(|p| p.to_string_lossy().as_ref().into())
+            .collect();
+        ui.set_move_targets(ModelRc::new(VecModel::from(targets)));
+    }
+
+    fn request_basket_delete(&mut self) {
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        if self.basket.is_empty() || self.basket_job.is_some() {
+            return;
+        }
+        let bytes: u64 = self
+            .basket
+            .iter()
+            .map(|&id| tree.node(id).size_in(self.mode))
+            .sum();
+        let what = format!(
+            "the {} in the basket ({})",
+            plural(self.basket.len() as u64, "item", "items"),
+            format_size(bytes)
+        );
+        let text = if cfg!(target_os = "android") {
+            format!("Permanently delete {what}? This cannot be undone.")
+        } else if cfg!(windows) {
+            format!("Move {what} to the Recycle Bin?")
+        } else {
+            format!("Move {what} to the Trash?")
+        };
+        self.pending_basket = true;
+        ui.set_basket_open(false);
+        ui.set_confirm_text(text.into());
+        ui.set_confirm_open(true);
+    }
+
+    /// On phones: where the basket can be moved, a "DiskTree moved" folder
+    /// on each drive.
+    fn show_move_targets(&mut self) {
+        self.move_targets = locations::list()
+            .into_iter()
+            .map(|l| l.path.join("DiskTree moved"))
+            .collect();
+        self.refresh_basket();
+    }
+
+    fn move_to_target(&mut self, index: i32) {
+        let target = usize::try_from(index)
+            .ok()
+            .and_then(|i| self.move_targets.get(i).cloned());
+        self.move_targets.clear();
+        if let Some(target) = target {
+            self.run_basket(BasketAction::Move(target));
+        }
+    }
+
+    /// Deletes or moves everything in the basket on a worker thread.
+    fn run_basket(&mut self, action: BasketAction) {
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        if self.basket.is_empty() || self.basket_job.is_some() {
+            return;
+        }
+        let root_path = tree.path(tree.root());
+        let items: Vec<(NodeId, PathBuf, u64)> = self
+            .basket
+            .iter()
+            .map(|&id| (id, tree.path(id), tree.node(id).size_in(self.mode)))
+            .collect();
+        let verb = match &action {
+            BasketAction::Delete => "Deleting",
+            BasketAction::Move(_) => "Moving",
+        };
+        let result: Slot<BasketOutcome> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("disktree-basket".into())
+            .spawn(move || {
+                let mut outcome = BasketOutcome {
+                    done: Vec::new(),
+                    failed: Vec::new(),
+                    bytes: 0,
+                    moved: None,
+                };
+                let mut moved = Vec::new();
+                for (id, path, size) in items {
+                    let result = match &action {
+                        BasketAction::Delete => actions::delete(&path),
+                        BasketAction::Move(destination) => {
+                            let to = moves::target(&root_path, &path, destination);
+                            let result = moves::move_item(&path, &to).map_err(|e| e.to_string());
+                            if result.is_ok() {
+                                moved.push((path.clone(), to));
+                            }
+                            result
+                        }
+                    };
+                    match result {
+                        Ok(()) => {
+                            outcome.done.push(id);
+                            outcome.bytes += size;
+                        }
+                        Err(err) => outcome.failed.push(format!("{}: {err}", path.display())),
+                    }
+                }
+                if let BasketAction::Move(destination) = &action
+                    && !moved.is_empty()
+                {
+                    let manifest = moves::Manifest {
+                        when: apps::now(),
+                        folder: moves::target(&root_path, &root_path, destination),
+                        moved,
+                    };
+                    moves::save(&manifest);
+                    outcome.moved = Some(manifest);
+                }
+                put(&worker_result, outcome);
+            });
+        if let Err(err) = spawned {
+            ui.set_status(format!("Could not start: {err}").into());
+            return;
+        }
+        ui.set_basket_open(false);
+        ui.set_status(
+            format!(
+                "{verb} {}…",
+                plural(self.basket.len() as u64, "item", "items")
+            )
+            .into(),
+        );
+        self.basket_job = Some(result);
+        self.ensure_ticking();
+    }
+
+    fn finish_basket(&mut self, outcome: BasketOutcome) {
+        let Some(tree) = &mut self.tree else {
+            return;
+        };
+        for &id in &outcome.done {
+            tree.mark_deleted(id);
+        }
+        self.basket.retain(|b| !outcome.done.contains(b));
+        let expanded = self.rows.expanded_nodes();
+        self.rows.rebuild(tree, self.mode, &expanded);
+        let count = plural(outcome.done.len() as u64, "item", "items");
+        let mut text = match &outcome.moved {
+            Some(manifest) => format!(
+                "Moved {count} ({}) to {}.",
+                format_size(outcome.bytes),
+                manifest.folder.display()
+            ),
+            None => format!("Deleted {count} and freed {}.", format_size(outcome.bytes)),
+        };
+        if let Some(err) = outcome.failed.first() {
+            text.push_str(&format!(
+                " {} failed, for example {err}",
+                outcome.failed.len()
+            ));
+        }
+        if outcome.moved.is_some() {
+            self.last_move = outcome.moved;
+        }
+        // Show the folder again from the top of what's left.
+        let focus = self.focus;
+        self.focus = NO_NODE;
+        let still_there = self.tree.as_ref().is_some_and(|t| {
+            !t.ancestors(focus)
+                .any(|a| t.node(a).has(disktree_core::flags::DELETED))
+        });
+        let tree_root = self.tree.as_ref().map_or(0, |t| t.root());
+        self.select(if still_there { focus } else { tree_root } as i32, false);
+        self.refresh_cleanup();
+        self.refresh_basket();
+        self.set_status(&text);
+    }
+
+    fn put_back(&mut self) {
+        let Some(manifest) = self.last_move.clone() else {
+            return;
+        };
+        if self.put_back_job.is_some() {
+            return;
+        }
+        let result: Slot<(usize, Vec<String>)> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("disktree-put-back".into())
+            .spawn(move || put(&worker_result, moves::put_back(&manifest)));
+        if spawned.is_ok() {
+            if let Some(ui) = self.ui() {
+                ui.set_basket_open(false);
+            }
+            self.set_status("Putting things back…");
+            self.put_back_job = Some(result);
+            self.ensure_ticking();
+        }
+    }
+
     // ----- Actions --------------------------------------------------------
 
     fn reveal_selected(&mut self) {
@@ -1999,6 +2386,7 @@ impl Controller {
 
     fn cancel_delete(&mut self) {
         self.pending_cleanup = None;
+        self.pending_basket = false;
         if let Some(ui) = self.ui() {
             ui.set_confirm_open(false);
             ui.set_delete_label(actions::DELETE_LABEL.into());
@@ -2006,6 +2394,14 @@ impl Controller {
     }
 
     fn confirm_delete(&mut self) {
+        if std::mem::take(&mut self.pending_basket) {
+            if let Some(ui) = self.ui() {
+                ui.set_confirm_open(false);
+                ui.set_delete_label(actions::DELETE_LABEL.into());
+            }
+            self.run_basket(BasketAction::Delete);
+            return;
+        }
         if let Some(kind) = self.pending_cleanup.take() {
             if let Some(ui) = self.ui() {
                 ui.set_confirm_open(false);
@@ -2058,6 +2454,9 @@ impl Controller {
         }
 
         tree.mark_deleted(deletion.node);
+        let gone = deletion.node;
+        self.basket
+            .retain(|&b| !tree.ancestors(b).any(|a| a == gone));
         let parent = tree.node(deletion.node).parent;
         let expanded = self.rows.expanded_nodes();
         self.rows.rebuild(tree, self.mode, &expanded);

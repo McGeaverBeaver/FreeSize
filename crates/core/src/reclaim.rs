@@ -649,7 +649,7 @@ pub fn default_spot_rules() -> Vec<SpotRule> {
     let env = |name: &str| std::env::var_os(name).map(PathBuf::from);
 
     if cfg!(windows) {
-        // "C:" names the drive; "C:\\" its top folder.
+        // SystemDrive is "C:"; the drive's top folder is "C:" plus a backslash.
         let drive = env("SystemDrive").map_or_else(
             || PathBuf::from("C:\\"),
             |d| PathBuf::from(format!("{}\\", d.to_string_lossy())),
