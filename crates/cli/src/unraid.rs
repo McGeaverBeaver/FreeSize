@@ -74,6 +74,19 @@ pub enum UnraidAction {
         #[command(subcommand)]
         action: MoveAction,
     },
+    /// The folders in a share (or a folder in it), and which disks hold
+    /// each, for choosing what to move.
+    Folders {
+        #[arg(long)]
+        share: String,
+        #[arg(long, default_value = "")]
+        folder: String,
+        /// Look at sleeping disks too, spinning them up.
+        #[arg(long)]
+        wake: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove unused Docker images or the build cache, by the ids the
     /// status lists.
     DockerCleanup { items: Vec<String> },
@@ -106,8 +119,9 @@ pub struct MoveArgs {
     /// A folder in the share; empty for all of the share on that disk.
     #[arg(long, default_value = "")]
     folder: String,
-    #[arg(long)]
-    from: String,
+    /// The disks to move from, one move each; they run one after another.
+    #[arg(long, required = true)]
+    from: Vec<String>,
     #[arg(long)]
     to: String,
 }
@@ -233,6 +247,12 @@ pub fn main(action: UnraidAction, args: DirArgs) -> Result<(), String> {
         UnraidAction::Estimate { paths, json } => estimate(&dirs, &paths, json),
         UnraidAction::Quarantine { action } => quarantine(&dirs, action),
         UnraidAction::Move { action } => moves(&dirs, action),
+        UnraidAction::Folders {
+            share,
+            folder,
+            wake,
+            json,
+        } => folders(&dirs, &share, &folder, wake, json),
         UnraidAction::DockerCleanup { items } => docker_cleanup(&dirs, &items),
     }
 }
@@ -430,44 +450,67 @@ fn estimate(dirs: &Dirs, paths: &[String], json: bool) -> Result<(), String> {
 fn moves(dirs: &Dirs, action: MoveAction) -> Result<(), String> {
     match action {
         MoveAction::Plan { args, json } => {
-            let plan = make_plan(dirs, &args);
+            let plans = make_plans(dirs, &args);
+            let problems = shared_problems(&plans);
+            let ok = problems.is_empty() && plans.iter().all(|p| p.ok());
             if json {
+                let plans: Vec<_> = plans
+                    .iter()
+                    .map(|plan| {
+                        serde_json::json!({
+                            "ok": plan.ok(),
+                            "problems": plan.problems,
+                            "warnings": plan.warnings,
+                            "job": plan.job,
+                        })
+                    })
+                    .collect();
                 println!(
                     "{}",
-                    serde_json::json!({
-                        "ok": plan.ok(),
-                        "problems": plan.problems,
-                        "warnings": plan.warnings,
-                        "job": plan.job,
-                    })
+                    serde_json::json!({ "ok": ok, "problems": problems, "plans": plans })
                 );
             } else {
-                println!(
-                    "{} files, {}: {}",
-                    plan.job.files,
-                    format_size(plan.job.bytes),
-                    if plan.ok() {
-                        "can be moved"
-                    } else {
-                        "can't be moved"
+                for plan in &plans {
+                    println!(
+                        "From {}: {} file{}, {}: {}",
+                        plan.job.from,
+                        plan.job.files,
+                        if plan.job.files == 1 { "" } else { "s" },
+                        format_size(plan.job.bytes),
+                        if plan.ok() {
+                            "can be moved"
+                        } else {
+                            "can't be moved"
+                        }
+                    );
+                    for line in plan.problems.iter().chain(&plan.warnings) {
+                        println!("  {line}");
                     }
-                );
-                for line in plan.problems.iter().chain(&plan.warnings) {
-                    println!("  {line}");
+                }
+                for line in &problems {
+                    println!("{line}");
                 }
             }
             Ok(())
         }
         MoveAction::Start { args } => {
-            let plan = make_plan(dirs, &args);
-            if !plan.ok() {
-                return Err(plan.problems.join("; "));
+            let plans = make_plans(dirs, &args);
+            let mut problems = shared_problems(&plans);
+            for plan in &plans {
+                problems.extend(plan.problems.iter().map(|p| match plans.len() {
+                    1 => p.clone(),
+                    _ => format!("from {}: {p}", plan.job.from),
+                }));
             }
+            if !problems.is_empty() {
+                return Err(problems.join("; "));
+            }
+            let id = format!("m{}", now());
             dirs.request(
-                &format!("move-{}.json", plan.job.id),
+                &format!("move-{id}.json"),
                 &serde_json::to_string(&args).unwrap_or_default(),
             )?;
-            println!("{}", plan.job.id);
+            println!("{id}");
             Ok(())
         }
         MoveAction::Cancel { id } => {
@@ -479,20 +522,93 @@ fn moves(dirs: &Dirs, action: MoveAction) -> Result<(), String> {
     }
 }
 
-fn make_plan(dirs: &Dirs, args: &MoveArgs) -> mover::Plan {
+/// The disks to move from, each once.
+fn sources(args: &MoveArgs) -> Vec<String> {
+    let mut froms: Vec<String> = Vec::new();
+    for from in &args.from {
+        if !froms.contains(from) {
+            froms.push(from.clone());
+        }
+    }
+    froms
+}
+
+/// A move's id: with several disks to move from, one each.
+fn move_id(base: &str, index: usize, count: usize) -> String {
+    match count {
+        1 => base.to_string(),
+        _ => format!("{base}s{}", index + 1),
+    }
+}
+
+/// A plan per disk to move from.
+fn make_plans(dirs: &Dirs, args: &MoveArgs) -> Vec<mover::Plan> {
     let system = &dirs.system;
     let array = array::read(system);
     let (rules, _) = current_rules(dirs, &array);
-    mover::plan(
-        system,
-        &array,
-        &rules,
-        &args.share,
-        &args.folder,
-        &args.from,
-        &args.to,
-        now(),
-    )
+    let now = now();
+    let froms = sources(args);
+    froms
+        .iter()
+        .enumerate()
+        .map(|(i, from)| {
+            let mut plan = mover::plan(
+                system,
+                &array,
+                &rules,
+                &args.share,
+                &args.folder,
+                from,
+                &args.to,
+                now,
+            );
+            plan.job.id = move_id(&plan.job.id, i, froms.len());
+            plan
+        })
+        .collect()
+}
+
+/// What stops moving from several disks, beyond what stops each move.
+fn shared_problems(plans: &[mover::Plan]) -> Vec<String> {
+    let (shown, total) = mover::duplicates(plans);
+    if total == 0 {
+        return Vec::new();
+    }
+    vec![format!(
+        "{} on more than one of these disks, and the share shows only one of each: {}{}. Move \
+         from one disk at a time, and keep the copy you want",
+        match total {
+            1 => "1 file is".to_string(),
+            n => format!("{n} files are"),
+        },
+        shown.join(", "),
+        if total > shown.len() { ", …" } else { "" }
+    )]
+}
+
+fn folders(dirs: &Dirs, share: &str, folder: &str, wake: bool, json: bool) -> Result<(), String> {
+    let array = array::read(&dirs.system);
+    let found = mover::folders(&dirs.system, &array, share, folder, wake)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&found).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    for child in &found.children {
+        println!("{}  ({})", child.name, child.disks.join(", "));
+    }
+    if found.more > 0 {
+        println!("… and {} more", found.more);
+    }
+    if !found.asleep.is_empty() {
+        println!(
+            "Not looked at, asleep: {} (--wake spins them up)",
+            found.asleep.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn docker_cleanup(dirs: &Dirs, items: &[String]) -> Result<(), String> {
@@ -770,33 +886,95 @@ impl Daemon {
         }
     }
 
-    fn start_move(&mut self, id: &str, args: MoveArgs) {
-        let system = self.dirs.system.clone();
-        let mut plan = make_plan(&self.dirs, &args);
-        // The id the page was given.
-        plan.job.id = id.to_string();
-        if !plan.ok() {
-            let mut job = plan.job.clone();
-            job.state = "failed".into();
-            job.detail = plan.problems.join("; ");
-            self.moves.push(job);
+    /// Queues a move from each disk the page asked for.
+    fn queue_moves(&mut self, id: &str, args: MoveArgs) {
+        let froms = sources(&args);
+        for (i, from) in froms.iter().enumerate() {
+            let mut job_id = move_id(id, i, froms.len());
+            // Two moves asked for in the same second.
+            while self.moves.iter().any(|m| m.id == job_id) {
+                job_id.push('x');
+            }
+            self.moves.push(MoveJob {
+                id: job_id,
+                share: args.share.clone(),
+                folder: args.folder.clone(),
+                from: from.clone(),
+                to: args.to.clone(),
+                state: "queued".into(),
+                started: now(),
+                ..MoveJob::default()
+            });
+        }
+        self.next_move();
+        self.save_moves();
+        self.write_status();
+    }
+
+    /// Starts the next queued move, unless one is running: one at a time
+    /// is easier on parity. Each is planned again first, since the one
+    /// before may have changed what fits.
+    fn next_move(&mut self) {
+        if !self.cancels.is_empty() {
             return;
         }
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.cancels.insert(plan.job.id.clone(), cancel.clone());
-        self.moves.push(plan.job.clone());
-        let events = self.events.clone();
-        let array = self.array();
-        let _ = std::thread::Builder::new()
-            .name("disktree-move".into())
-            .spawn(move || {
-                let quarantine = quarantine_for(&system, &array);
-                let mut progress = |job: &MoveJob| {
-                    let _ = events.send(Event::Move(job.clone(), false));
-                };
-                let done = mover::run(&system, &plan, &quarantine, &mut progress, &cancel);
-                let _ = events.send(Event::Move(done, true));
-            });
+        while let Some(index) = self.moves.iter().position(|m| m.state == "queued") {
+            let job = self.moves[index].clone();
+            let args = MoveArgs {
+                share: job.share.clone(),
+                folder: job.folder.clone(),
+                from: vec![job.from.clone()],
+                to: job.to.clone(),
+            };
+            let Some(mut plan) = make_plans(&self.dirs, &args).pop() else {
+                return;
+            };
+            plan.job.id = job.id.clone();
+            if !plan.ok() {
+                let failed = &mut self.moves[index];
+                failed.state = "failed".into();
+                failed.detail = plan.problems.join("; ");
+                failed.finished = Some(now());
+                continue;
+            }
+            self.moves[index] = plan.job.clone();
+            let system = self.dirs.system.clone();
+            let cancel = Arc::new(AtomicBool::new(false));
+            self.cancels.insert(plan.job.id.clone(), cancel.clone());
+            let events = self.events.clone();
+            let array = self.array();
+            let _ = std::thread::Builder::new()
+                .name("disktree-move".into())
+                .spawn(move || {
+                    let quarantine = quarantine_for(&system, &array);
+                    let mut progress = |job: &MoveJob| {
+                        let _ = events.send(Event::Move(job.clone(), false));
+                    };
+                    let done = mover::run(&system, &plan, &quarantine, &mut progress, &cancel);
+                    let _ = events.send(Event::Move(done, true));
+                });
+            return;
+        }
+    }
+
+    /// Keeps the last 20 moves, and every one still to run.
+    fn save_moves(&mut self) {
+        while self.moves.len() > 20 {
+            match self
+                .moves
+                .iter()
+                .position(|m| m.state != "queued" && !self.cancels.contains_key(&m.id))
+            {
+                Some(oldest) => {
+                    self.moves.remove(oldest);
+                }
+                None => break,
+            }
+        }
+        let _ = write_atomic(
+            &self.moves_path(),
+            &serde_json::to_vec(&self.moves).unwrap_or_default(),
+        );
     }
 
     /// Requests the page left in `requests/`.
@@ -836,6 +1014,16 @@ impl Daemon {
             } else if let Some(id) = name.strip_prefix("cancel-") {
                 if let Some(flag) = self.cancels.get(id) {
                     flag.store(true, Ordering::Relaxed);
+                } else if let Some(job) = self
+                    .moves
+                    .iter_mut()
+                    .find(|m| m.id == id && m.state == "queued")
+                {
+                    job.state = "cancelled".into();
+                    job.detail = "not started".into();
+                    job.finished = Some(now());
+                    self.save_moves();
+                    self.write_status();
                 }
             } else if let Some(id) = name
                 .strip_prefix("move-")
@@ -843,7 +1031,7 @@ impl Daemon {
             {
                 match serde_json::from_str::<MoveArgs>(&body) {
                     Ok(args) if id.chars().all(|c| c.is_ascii_alphanumeric()) => {
-                        self.start_move(id, args)
+                        self.queue_moves(id, args)
                     }
                     Ok(_) => log("a move request had a bad id"),
                     Err(err) => log(&format!("a move request was garbled: {err}")),
@@ -1029,6 +1217,9 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
                     job.detail = "stopped when DiskTree restarted; the copies made so far are on \
                                   the target disk, the originals untouched"
                         .into();
+                } else if job.state == "queued" {
+                    job.state = "cancelled".into();
+                    job.detail = "not started: DiskTree restarted".into();
                 }
                 job
             })
@@ -1133,13 +1324,10 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
                     Some(existing) => *existing = job,
                     None => daemon.moves.push(job),
                 }
-                // Keep the last 20.
-                let excess = daemon.moves.len().saturating_sub(20);
-                daemon.moves.drain(..excess);
-                let _ = write_atomic(
-                    &daemon.moves_path(),
-                    &serde_json::to_vec(&daemon.moves).unwrap_or_default(),
-                );
+                if finished {
+                    daemon.next_move();
+                }
+                daemon.save_moves();
                 daemon.write_status();
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}

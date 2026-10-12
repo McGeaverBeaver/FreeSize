@@ -704,15 +704,19 @@ server's root (`/`, or a folder laid out like a server in the tests).
   hard links that would be split, the in-use rules), then file by file:
   copy to a hidden `.name.disktree-part`, compare the xxh3-128 hashes of
   both, keep owner, mode and times, rename into place. The originals go to
-  the source disk's quarantine. Cancelling stops between files.
+  the source disk's quarantine. Cancelling stops between files. Also the
+  folders in a share's folder per disk, for the page's picker (sleeping
+  disks only when asked), and the files that are in more than one of
+  several source disks, which stop a move from all of them.
 - `round.rs`: one look at the server: scan the disks that are awake (and
   one that slept for `WAKE_DAYS`), then shares, Docker, VMs, permissions
   and the rules.
 
 The daemon (`crates/cli/src/unraid.rs`, `disktree unraid daemon`) runs a
 round every `SCAN_HOURS` on a thread (and as soon as a stopped array
-starts), samples activity each minute, runs moves on threads of their own,
-and writes `status.json` to `/var/local/disktree` for the page. The page
+starts), samples activity each minute, runs moves on a thread of their
+own, one at a time (a move from several disks queues one per disk, each
+planned again just before it starts), and writes `status.json` to `/var/local/disktree` for the page. The page
 asks it for things with files in `requests/` (scan, refresh, settings,
 hub, `move-<id>.json`, `cancel-<id>`); quick actions (quarantine,
 estimates, plans, Docker cleanup) it runs with the same command directly.

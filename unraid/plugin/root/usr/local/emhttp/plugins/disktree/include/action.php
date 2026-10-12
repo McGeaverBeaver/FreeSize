@@ -24,11 +24,24 @@ function dt_disk($name) {
   return $disk;
 }
 
-function dt_move_args() {
+/** A share, and a folder in it (empty for all of it). */
+function dt_share_folder() {
   $share = dt_text('share', 100);
   $folder = trim(dt_text('folder', 500), '/');
   if ($share === '' || str_contains($share, '/')) dt_fail('choose a share');
-  return ['--share', $share, '--folder', $folder, '--from', dt_disk('from'), '--to', dt_disk('to')];
+  // With `=`, a name starting with a dash isn't taken for an option.
+  return ["--share=$share", "--folder=$folder"];
+}
+
+function dt_move_args() {
+  $froms = $_POST['from'] ?? [];
+  if (!is_array($froms) || !$froms || count($froms) > 40) dt_fail('choose the disks to move from');
+  $args = dt_share_folder();
+  foreach ($froms as $from) {
+    if (!preg_match('/^[a-z][a-z0-9_]{0,30}$/', (string)$from)) dt_fail('choose a disk');
+    array_push($args, '--from', (string)$from);
+  }
+  return array_merge($args, ['--to', dt_disk('to')]);
 }
 
 switch ($_POST['action'] ?? '') {
@@ -68,6 +81,11 @@ case 'move_plan':
 
 case 'move_start':
   dt_reply(dt_run(array_merge(['unraid', 'move', 'start'], dt_move_args())));
+
+case 'folders':
+  $args = array_merge(['unraid', 'folders', '--json'], dt_share_folder());
+  if (($_POST['wake'] ?? '') === 'yes') $args[] = '--wake';
+  dt_json(dt_run($args));
 
 case 'move_cancel':
   dt_reply(dt_run(['unraid', 'move', 'cancel', dt_id('id')]));

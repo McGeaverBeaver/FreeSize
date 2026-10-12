@@ -362,81 +362,228 @@
     if (built.moveKey === key) return;
     built.moveKey = key;
     const old = built.move || {};
+    const oldFrom = fromValues();
     const select = (name, options, value) => h("select", { name }, options.map((o) => h("option", { value: o, selected: o === value }, o)));
     const f = {
       share: select("share", shares, old.share && old.share.value),
       folder: h("input", { type: "text", name: "folder", placeholder: "all of it, or a folder inside, e.g. Old Films", value: old.folder ? old.folder.value : "" }),
-      from: select("from", disks, old.from && old.from.value),
+      from: h("div", { class: "dt-chips" }, disks.map((d) =>
+        h("label", { class: "dt-chip" }, h("input", { type: "checkbox", value: d, checked: oldFrom.includes(d), onchange: () => pickTarget(false) }), d))),
       to: select("to", disks, old.to && old.to.value),
+      note: h("div"),
     };
     built.move = f;
-    f.from.addEventListener("change", () => pickTarget(true));
-    pickTarget(false);
+    f.share.addEventListener("change", () => pickShare(f.share.value, false));
+    f.folder.addEventListener("change", () => locate());
+    f.to.addEventListener("change", () => syncFrom());
+    if (!oldFrom.length && f.share.value) pickShare(f.share.value, false);
+    pickTarget(!old.to);
     const plan = h("button", { type: "button", onclick: (e) => planMove(e.target) }, "Plan");
     fill(built.shares.form,
       h("div", { class: "dt-form" },
         h("label", {}, "Share", f.share),
-        h("label", { class: "dt-grow" }, "Folder", f.folder),
-        h("label", {}, "From", f.from),
+        h("div", { class: "dt-field dt-grow" }, h("span", {}, "Folder"),
+          h("div", { class: "dt-inline" }, f.folder, h("button", { type: "button", onclick: () => chooseFolder() }, "Choose…")))),
+      h("div", { class: "dt-form" },
+        h("div", { class: "dt-field dt-grow" }, h("span", {}, "From"), f.from),
         h("label", {}, "To", f.to),
-        plan));
+        plan),
+      f.note);
   }
 
-  // Moving to the disk it's on can't be meant: offer the one with the
-  // most room instead.
+  function fromValues() {
+    if (!built.move) return [];
+    return [...built.move.from.querySelectorAll("input:checked")].map((box) => box.value);
+  }
+
+  // Ticks just these disks to move from, then makes sure the disk moved
+  // to isn't one of them.
+  function setFrom(disks) {
+    for (const box of built.move.from.querySelectorAll("input")) {
+      box.disabled = false;
+      box.checked = disks.includes(box.value);
+    }
+    pickTarget(false);
+  }
+
+  // The disk moved to can't also be moved from.
+  function syncFrom() {
+    const to = built.move.to.value;
+    for (const box of built.move.from.querySelectorAll("input")) {
+      box.disabled = box.value === to;
+      if (box.disabled) box.checked = false;
+    }
+  }
+
+  // Moving to a disk it's moved from can't be meant: offer the one with
+  // the most room instead.
   function pickTarget(always) {
     const f = built.move;
-    if (!always && f.to.value && f.to.value !== f.from.value) return;
-    const roomiest = moveDisks().filter((d) => d.name !== f.from.value).sort((a, b) => b.free - a.free)[0];
-    if (roomiest) f.to.value = roomiest.name;
+    const froms = fromValues();
+    if (always || !f.to.value || froms.includes(f.to.value)) {
+      const roomiest = moveDisks().filter((d) => !froms.includes(d.name)).sort((a, b) => b.free - a.free)[0];
+      if (roomiest) f.to.value = roomiest.name;
+    }
+    syncFrom();
   }
 
-  function pickShare(name) {
+  // A share, all of it: from the disk that holds the most of it.
+  function pickShare(name, focus) {
     if (!built.move) return;
     built.move.share.value = name;
+    built.move.folder.value = "";
+    fill(built.move.note);
     const share = (report().shares || []).find((s) => s.name === name);
     const biggest = share && share.placements.filter((p) => !p.stale).sort((a, b) => b.bytes - a.bytes)[0];
-    if (biggest) built.move.from.value = biggest.disk;
-    pickTarget(false);
-    built.move.folder.focus();
+    if (biggest) setFrom([biggest.disk]);
+    if (focus !== false) built.move.folder.focus();
+  }
+
+  // A folder chosen or typed: move it from the disks it's on. When part of
+  // it is on the disk moved to already, the rest is gathered there.
+  function useFolder(path, found) {
+    const f = built.move;
+    f.folder.value = path;
+    const to = f.to.value;
+    const froms = found.disks.filter((d) => d !== to);
+    if (found.disks.length) setFrom(froms.length ? froms : found.disks);
+    fill(f.note,
+      found.disks.length ? null : h("p", { class: "dt-note dt-bad" }, `${path || "It"} isn't on any disk that's awake.`),
+      found.asleep && found.asleep.length
+        ? h("p", { class: "dt-muted" }, `Not looked at, asleep: ${found.asleep.join(", ")}. If part of this folder is there too, tick it.`)
+        : null);
+  }
+
+  function folderOf(input) {
+    return input.value.trim().replace(/^\/+|\/+$/g, "");
+  }
+
+  // Typed by hand: find which disks it's on.
+  async function locate() {
+    const f = built.move;
+    const folder = folderOf(f.folder);
+    if (!folder) return fill(f.note);
+    const reply = await post("folders", { share: f.share.value, folder });
+    if (folderOf(f.folder) !== folder) return;
+    if (reply.ok && reply.result) useFolder(folder, reply.result);
+    else fill(f.note, h("p", { class: "dt-note dt-bad" }, reply.output));
+  }
+
+  // The share's folders, from the disks that are awake (sleeping ones only
+  // when asked), each with the disks it's on.
+  function chooseFolder() {
+    const share = built.move.share.value;
+    if (!share) return toast("Choose a share first.", "bad");
+    let at = folderOf(built.move.folder);
+    let wake = false;
+    let here = null;
+    const crumbs = h("p", { class: "dt-crumbs" });
+    const where = h("p", { class: "dt-muted" });
+    const list = h("div", { class: "dt-scroll dt-picker" });
+    const asleep = h("div");
+    const ui = dialog(`Choose a folder in ${share}`, h("div", {}, crumbs, where, list, asleep),
+      [{ label: "Choose", kind: "primary", onclick: (close) => {
+        useFolder(at, here);
+        close();
+      } }]);
+    const choose = ui.buttons[ui.buttons.length - 1];
+    const link = (text, path) => h("a", { href: "#", onclick: (e) => {
+      e.preventDefault();
+      go(path);
+    } }, text);
+    async function go(path) {
+      at = path;
+      const parts = path ? path.split("/") : [];
+      fill(crumbs, parts.length ? link(share, "") : h("b", {}, share),
+        parts.map((part, i) => [" / ", i === parts.length - 1 ? h("b", {}, part) : link(part, parts.slice(0, i + 1).join("/"))]));
+      fill(where);
+      fill(list, h("p", { class: "dt-muted" }, "Looking…"));
+      choose.disabled = true;
+      choose.textContent = parts.length ? `Choose ${parts[parts.length - 1]}` : `Choose all of ${share}`;
+      const reply = await post("folders", { share, folder: path, wake: wake ? "yes" : "no" });
+      if (at !== path) return;
+      if (!reply.ok || !reply.result) {
+        fill(list, h("p", { class: "dt-note dt-bad" }, reply.output || "Couldn't look."));
+        return;
+      }
+      here = reply.result;
+      choose.disabled = !here.disks.length;
+      fill(list,
+        here.disks.length ? null : h("p", { class: "dt-note" }, "It isn't on any disk that's awake."),
+        here.children.map((c) => {
+          const sub = path ? `${path}/${c.name}` : c.name;
+          return h("div", { class: "dt-pick-row" },
+            link(c.name, sub),
+            h("span", { class: "dt-muted" }, c.disks.join(", ")),
+            h("button", { type: "button", onclick: () => {
+              useFolder(sub, { disks: c.disks, asleep: here.asleep });
+              ui.close();
+            } }, "Choose"));
+        }),
+        here.disks.length && !here.children.length ? h("p", { class: "dt-muted" }, "No folders in it.") : null,
+        here.more ? h("p", { class: "dt-muted" }, `… and ${here.more} more: type the path in the Folder box instead.`) : null);
+      fill(asleep, here.asleep.length
+        ? h("p", { class: "dt-muted" }, `Asleep, so not listed: ${here.asleep.join(", ")}. `,
+          h("button", { type: "button", onclick: () => {
+            wake = true;
+            go(at);
+          } }, "List them too (spins them up)"))
+        : null);
+      fill(where, here.disks.length ? `On ${here.disks.join(", ")}. Open a folder to look inside, or choose it.` : null);
+    }
+    go(at);
   }
 
   function moveArgs() {
     const f = built.move;
-    return { share: f.share.value, folder: f.folder.value.trim(), from: f.from.value, to: f.to.value };
+    return { share: f.share.value, folder: folderOf(f.folder), from: fromValues(), to: f.to.value };
+  }
+
+  function movePath(disk, args) {
+    return `/mnt/${disk}/${args.share}${args.folder ? "/" + args.folder : ""}`;
   }
 
   async function planMove(button) {
     const args = moveArgs();
+    if (!args.from.length) {
+      fill(built.shares.plan, h("p", { class: "dt-note dt-bad" }, "Tick at least one disk to move from."));
+      return;
+    }
     const reply = await busy(button, () => post("move_plan", args));
     if (!reply.ok) {
       fill(built.shares.plan, h("p", { class: "dt-note dt-bad" }, reply.output));
       return;
     }
     const p = reply.result;
-    const job = p.job;
-    const what = `/mnt/${args.from}/${args.share}${args.folder ? "/" + args.folder : ""}`;
+    const files = p.plans.reduce((n, x) => n + x.job.files, 0);
+    const bytes = p.plans.reduce((n, x) => n + x.job.bytes, 0);
     fill(built.shares.plan,
       h("div", { class: `dt-note ${p.ok ? "" : "dt-bad"}` },
-        h("p", {}, h("b", {}, what), ` → ${args.to}: ${count(job.files, "file")}, ${size(job.bytes)}. `, p.ok ? "It can be moved." : "It can't be moved:"),
-        p.problems.length ? h("ul", {}, p.problems.map((x) => h("li", {}, x))) : null,
-        p.warnings.length ? h("ul", { class: "dt-warn" }, p.warnings.map((x) => h("li", {}, x))) : null,
-        h("p", {}, browse(what),
-          p.ok ? h("button", { type: "button", class: "dt-primary", onclick: () => confirmMove(args, job, what) }, "Start the move…") : null)));
+        p.plans.map((x) => h("div", {},
+          h("p", {}, h("b", {}, movePath(x.job.from, args)), ` → ${args.to}: ${count(x.job.files, "file")}, ${size(x.job.bytes)}. `,
+            x.ok ? "It can be moved. " : "It can't be moved: ", browse(movePath(x.job.from, args))),
+          x.problems.length ? h("ul", {}, x.problems.map((m) => h("li", {}, m))) : null,
+          x.warnings.length ? h("ul", { class: "dt-warn" }, x.warnings.map((m) => h("li", {}, m))) : null)),
+        p.problems.length ? h("ul", {}, p.problems.map((m) => h("li", {}, m))) : null,
+        p.plans.length > 1 ? h("p", {}, `Together ${count(files, "file")}, ${size(bytes)}, from one disk after another.`) : null,
+        p.ok ? h("p", {}, h("button", { type: "button", class: "dt-primary", onclick: () => confirmMove(args, p.plans) },
+          p.plans.length > 1 ? `Start ${p.plans.length} moves…` : "Start the move…")) : null));
   }
 
-  function confirmMove(args, job, what) {
+  function confirmMove(args, plans) {
     dialog("Move between disks",
       h("div", {},
-        h("p", {}, `Copy ${count(job.files, "file")} (${size(job.bytes)}) from ${what} to /mnt/${args.to}/${args.share}${args.folder ? "/" + args.folder : ""}.`),
-        h("p", {}, `Each copy is checked against its original. Then the originals go to ${args.from}'s quarantine; nothing is deleted. Once you've checked the copies, empty the quarantine yourself.`),
-        h("p", { class: "dt-muted" }, "Stopping the move stops it between files; copies made so far stay, the originals are untouched.")),
+        h("p", {}, `Copy to ${movePath(args.to, args)}:`),
+        h("ul", { class: "dt-list" }, plans.map((x) => h("li", {}, `${movePath(x.job.from, args)}: ${count(x.job.files, "file")}, ${size(x.job.bytes)}`))),
+        h("p", {}, "Each copy is checked against its original. Then the originals go to their disk's quarantine; nothing is deleted. Once you've checked the copies, empty the quarantine yourself."),
+        plans.length > 1 ? h("p", { class: "dt-muted" }, "The moves run one at a time, each planned again just before it starts.") : null,
+        h("p", { class: "dt-muted" }, "Stopping a move stops it between files; copies made so far stay, the originals are untouched.")),
       [{ label: "Start", kind: "primary", onclick: async (close, button) => {
         const reply = await busy(button, () => post("move_start", args));
         if (!reply.ok) return toast(reply.output, "bad");
         close();
         fill(built.shares.plan);
-        toast("The move started; it shows below.", "good");
+        toast(plans.length > 1 ? "The moves are queued; they show below." : "The move started; it shows below.", "good");
         refreshSoon();
       } }]);
   }
@@ -451,18 +598,18 @@
       h("h3", {}, "Moves"),
       h("table", { class: "dt-table" }, h("tbody", {}, moves.map((m) => {
         const pct = m.bytes ? Math.round((m.done_bytes / m.bytes) * 100) : m.state === "done" ? 100 : 0;
-        const kinds = { done: "safe", failed: "protected", cancelled: "check", running: "plain", planned: "plain" };
+        const kinds = { done: "safe", failed: "protected", cancelled: "check", running: "plain", planned: "plain", queued: "plain" };
         return h("tr", {},
           h("td", { class: "dt-name" }, h("b", {}, `${m.share}${m.folder ? "/" + m.folder : ""}`), h("div", { class: "dt-muted" }, `${m.from} → ${m.to} · started ${ago(m.started)}`)),
           h("td", {}, badge(m.state, kinds[m.state])),
           h("td", { class: "dt-wide" },
             h("div", { class: "dt-bar" }, h("span", { style: `width:${pct}%` })),
-            h("div", { class: "dt-muted" }, `${m.done_files} of ${m.files} files, ${size(m.done_bytes)} of ${size(m.bytes)}`, m.detail ? ` · ${m.detail}` : "")),
-          h("td", { class: "dt-actions" }, m.state === "running" ? h("button", { type: "button", onclick: async (e) => {
+            h("div", { class: "dt-muted" }, m.state === "queued" ? "waits for the move before it" : `${m.done_files} of ${m.files} files, ${size(m.done_bytes)} of ${size(m.bytes)}`, m.detail ? ` · ${m.detail}` : "")),
+          h("td", { class: "dt-actions" }, m.state === "running" || m.state === "queued" ? h("button", { type: "button", onclick: async (e) => {
             const reply = await busy(e.target, () => post("move_cancel", { id: m.id }));
-            toast(reply.ok ? "It stops after the file it's on." : reply.output, reply.ok ? "good" : "bad");
+            toast(reply.ok ? (m.state === "queued" ? "It won't start." : "It stops after the file it's on.") : reply.output, reply.ok ? "good" : "bad");
             refreshSoon();
-          } }, "Stop") : null));
+          } }, m.state === "queued" ? "Don't start" : "Stop") : null));
       }))));
   }
 

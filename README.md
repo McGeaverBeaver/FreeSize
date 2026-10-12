@@ -750,6 +750,11 @@ What it does, only when asked:
   (room, files in the way, hard links that would be split), then each file
   is copied, checked against its original, and the originals go to the
   source disk's quarantine. The path in `/mnt/user` stays the same.
+  **Choose…** browses the share's folders, showing which disks hold each
+  (sleeping disks only when you ask, since listing them spins them up),
+  and ticks the disks the chosen folder is on. A folder spread over
+  several disks moves from each of them, one disk after another; a file
+  on two of them stops the plan, since the share shows only one.
 - **Removing Docker images** nobody uses, and the build cache.
 
 Never offered, whoever asks: the flash drive, the system share
@@ -798,8 +803,9 @@ disktree unraid quarantine list
 disktree unraid quarantine add /mnt/user/isos/old.iso --reason "not needed"
 disktree unraid quarantine restore <batch>
 disktree unraid quarantine empty <batch>...
+disktree unraid folders --share Movies --folder "Old Films"   # --wake: sleeping disks too
 disktree unraid move plan --share Movies --folder "Old Films" --from disk1 --to disk3
-disktree unraid move start --share Movies --folder "Old Films" --from disk1 --to disk3
+disktree unraid move start --share Movies --folder "Old Films" --from disk1 --from disk2 --to disk3
 disktree unraid docker-cleanup <id>...    # ids from status --json
 ```
 

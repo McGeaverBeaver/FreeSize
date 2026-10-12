@@ -106,7 +106,9 @@ else that can delete:
   every cell on one line and pushed the buttons off the page), groups
   Docker's findings into safe, check first and in use (folded), and until
   the first look is done says what it's looking at instead of that Docker
-  and the VMs are off.
+  and the VMs are off. Moving between disks has a folder picker that shows
+  which disks hold each folder and ticks them; a folder on several disks
+  moves from each, one after another.
 
 Left over:
 - From 2b/2c: old downloads and screen recordings as their own groups

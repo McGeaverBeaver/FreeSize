@@ -75,6 +75,8 @@ compiling inside Docker.
   Docker image and ARM (aarch64) downloads of the Hub and command line.
   The Unraid page fits the screen, groups Docker's findings, and says it's
   still looking (which disk, of how many) until the first look is done.
+  Moving between disks: a folder picker, several source disks, and a
+  queue in the daemon so moves run one at a time.
 - Not yet done:
   1. Build 0.8.3 with `scripts/release.sh --draft`, have the owner make the
      ghcr.io package public once (Unraid pulls without logging in), then

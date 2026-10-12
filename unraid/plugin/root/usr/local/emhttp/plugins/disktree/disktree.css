@@ -96,3 +96,19 @@
   .disktree .dt-row .dt-actions:empty { display: none; }
   .disktree .dt-settings { grid-template-columns: 1fr; }
 }
+/* Moving between disks: the disks to move from, and the folder picker. */
+.disktree .dt-form .dt-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.9em; }
+.disktree .dt-chips { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 0; font-size: 1.1em; }
+.disktree .dt-form label.dt-chip { flex-direction: row; align-items: center; gap: 5px; font-size: 1em; white-space: nowrap; cursor: pointer; }
+.disktree .dt-chip input { margin: 0; width: auto; }
+.disktree .dt-chip:has(input:disabled) { opacity: 0.45; cursor: default; }
+.disktree .dt-form > button { margin: 0; }
+.dt-dialog .dt-crumbs { margin: 0 0 4px; overflow-wrap: anywhere; }
+.dt-dialog .dt-picker { border-top: 1px solid rgba(128, 128, 128, 0.28); }
+.dt-dialog .dt-pick-row { display: flex; gap: 12px; align-items: center; padding: 6px 4px; border-bottom: 1px solid rgba(128, 128, 128, 0.28); }
+.dt-dialog .dt-pick-row > a { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.dt-dialog .dt-pick-row > span { white-space: nowrap; }
+.dt-dialog .dt-pick-row button, .dt-dialog .dt-muted button { margin: 0; padding: 3px 10px; }
+.disktree .dt-inline { display: flex; gap: 10px; align-items: center; }
+.disktree .dt-inline button { margin: 0; flex: none; }
+.dt-dialog p { text-align: left; }

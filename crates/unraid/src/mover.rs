@@ -9,6 +9,7 @@
 //! `/mnt/user`: copying between a disk path and a user share path can
 //! destroy the very files being copied.
 
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use disktree_agent::quarantine::{QUARANTINE_DIR, Quarantine};
 use disktree_core::format_size;
 use disktree_proto::unraid::{DiskKind, MoveJob};
+use serde::Serialize;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::System;
@@ -24,6 +26,8 @@ use crate::protect::{Rule, check};
 
 /// Files named in a plan's problems at most.
 const MAX_LISTED: usize = 20;
+/// Folders listed at most, for picking one.
+const MAX_FOLDERS: usize = 2000;
 
 /// A move worked out, before anything is copied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -221,6 +225,128 @@ pub fn plan(
         plan.warnings.push("sleeping disks will spin up".into());
     }
     plan
+}
+
+/// A folder of a share across the disks, for picking what to move: the
+/// folders in it, and which disks hold each.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Folders {
+    /// The disks this folder is on.
+    pub disks: Vec<String>,
+    /// Sleeping disks, not looked at: listing them would spin them up.
+    pub asleep: Vec<String>,
+    pub children: Vec<Folder>,
+    /// Folders left out past `MAX_FOLDERS`.
+    pub more: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Folder {
+    pub name: String,
+    pub disks: Vec<String>,
+}
+
+/// The folders in `folder` (in `share`; empty for the share itself) on each
+/// array disk and pool. Sleeping disks are left alone unless `wake`.
+pub fn folders(
+    system: &System,
+    array: &Array,
+    share: &str,
+    folder: &str,
+    wake: bool,
+) -> Result<Folders, String> {
+    let folder = folder.trim_matches('/');
+    if share.is_empty()
+        || share.contains('/')
+        || share.starts_with('.')
+        || !plain(share)
+        || !plain(folder)
+    {
+        return Err("choose a share and a folder inside it".into());
+    }
+    let rest = if folder.is_empty() {
+        share.to_string()
+    } else {
+        format!("{share}/{folder}")
+    };
+    let mut out = Folders::default();
+    let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for disk in &array.disks {
+        let (DiskKind::Data | DiskKind::Pool, Some(mount)) = (&disk.kind, &disk.path) else {
+            continue;
+        };
+        if disk.asleep && !wake {
+            out.asleep.push(disk.name.clone());
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(system.file(&format!("{mount}/{rest}"))) else {
+            continue;
+        };
+        out.disks.push(disk.name.clone());
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // Hidden folders: the recycle bin's, DiskTree's own and such.
+            if name.starts_with('.') || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            children.entry(name).or_default().push(disk.name.clone());
+        }
+    }
+    let mut children: Vec<Folder> = children
+        .into_iter()
+        .map(|(name, disks)| Folder { name, disks })
+        .collect();
+    children.sort_by_cached_key(|f| f.name.to_lowercase());
+    out.more = children.len().saturating_sub(MAX_FOLDERS);
+    children.truncate(MAX_FOLDERS);
+    out.children = children;
+    Ok(out)
+}
+
+/// Files in more than one of the plans' sources, as paths in the share:
+/// the share shows only one of each, and moving both would put two files
+/// in one place. At most `MAX_LISTED`, then the count of all.
+pub fn duplicates(plans: &[Plan]) -> (Vec<String>, usize) {
+    if plans.len() < 2 {
+        return (Vec::new(), 0);
+    }
+    let mut seen: HashMap<PathBuf, usize> = HashMap::new();
+    for plan in plans {
+        let mut stack = vec![plan.source.clone()];
+        while let Some(path) = stack.pop() {
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&path) {
+                    stack.extend(entries.flatten().map(|e| e.path()));
+                }
+            } else if let Ok(relative) = path.strip_prefix(&plan.source) {
+                *seen.entry(relative.to_path_buf()).or_default() += 1;
+            }
+        }
+    }
+    let mut twice: Vec<&PathBuf> = seen
+        .iter()
+        .filter(|(_, n)| **n > 1)
+        .map(|(p, _)| p)
+        .collect();
+    twice.sort();
+    let total = twice.len();
+    let base = plans[0].job.folder.trim_matches('/');
+    let share = format!("/mnt/user/{}", plans[0].job.share);
+    let shown = twice
+        .into_iter()
+        .take(MAX_LISTED)
+        .map(|p| {
+            let p = p.to_string_lossy();
+            match base {
+                "" => format!("{share}/{p}"),
+                base => format!("{share}/{base}/{p}"),
+            }
+        })
+        .collect();
+    (shown, total)
 }
 
 /// Copies one file to a temporary name beside its target, checks the copy
@@ -595,5 +721,74 @@ mod tests {
         assert_eq!(done.state, "cancelled");
         assert!(system.file("/mnt/disk1/Movies/Old/a.mkv").exists());
         assert!(quarantine.list().is_empty());
+    }
+
+    fn write(system: &System, path: &str) {
+        let file = system.file(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, b"x").unwrap();
+    }
+
+    #[test]
+    fn lists_folders_without_waking_disks() {
+        let (_dir, system, _) = setup();
+        write(&system, "/mnt/disk2/Movies/Old/x.mkv");
+        write(&system, "/mnt/cache/Movies/New/y.mkv");
+        std::fs::create_dir_all(system.file("/mnt/disk1/Movies/.Recycle.Bin")).unwrap();
+        // disk2 is asleep.
+        let array = array::read(&system);
+        let found = folders(&system, &array, "Movies", "", false).unwrap();
+        assert_eq!(found.disks, ["disk1", "cache"]);
+        assert_eq!(found.asleep, ["disk2"]);
+        let names: Vec<(&str, Vec<&str>)> = found
+            .children
+            .iter()
+            .map(|f| {
+                (
+                    f.name.as_str(),
+                    f.disks.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("Keep", vec!["disk1"]),
+                ("New", vec!["cache"]),
+                ("Old", vec!["disk1"])
+            ]
+        );
+
+        // Woken on purpose, and a folder further in.
+        let found = folders(&system, &array, "Movies", "/Old/", true).unwrap();
+        assert_eq!(found.disks, ["disk1", "disk2"]);
+        assert!(found.asleep.is_empty());
+        assert_eq!(found.children.len(), 1);
+        assert_eq!(found.children[0].name, "sub");
+
+        // Nowhere: no disks, nothing in it.
+        let found = folders(&system, &array, "Movies", "Gone", true).unwrap();
+        assert!(found.disks.is_empty() && found.children.is_empty());
+
+        for (share, folder) in [("", ""), ("Movies", "../etc"), ("../boot", ""), ("a/b", "")] {
+            assert!(
+                folders(&system, &array, share, folder, true).is_err(),
+                "{share} {folder}"
+            );
+        }
+    }
+
+    #[test]
+    fn finds_files_on_two_source_disks() {
+        let (_dir, system, array) = setup();
+        write(&system, "/mnt/disk2/Movies/Old/a.mkv");
+        write(&system, "/mnt/disk2/Movies/Old/only-here.mkv");
+        let plan_from =
+            |from: &str| plan(&system, &array, &[], "Movies", "Old", from, "cache", 1000);
+        let one = plan_from("disk1");
+        assert_eq!(duplicates(std::slice::from_ref(&one)), (vec![], 0));
+        let (shown, total) = duplicates(&[one, plan_from("disk2")]);
+        assert_eq!(total, 1);
+        assert_eq!(shown, ["/mnt/user/Movies/Old/a.mkv"]);
     }
 }
