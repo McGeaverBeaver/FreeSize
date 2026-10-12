@@ -2,6 +2,7 @@
 //! the app: pairing, reports, polling for commands, and deciding on them.
 
 pub mod client;
+pub mod commands;
 pub mod report;
 pub mod state;
 pub mod transport;

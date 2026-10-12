@@ -246,7 +246,7 @@ fn header(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(String::from)
 }
 
-impl<T: DeserializeOwned + Default + Send> FromRequest<AppState> for DeviceRequest<T> {
+impl<T: DeserializeOwned + Send> FromRequest<AppState> for DeviceRequest<T> {
     type Rejection = ApiError;
 
     async fn from_request(request: Request, state: &AppState) -> Result<Self, ApiError> {
@@ -330,11 +330,10 @@ impl<T: DeserializeOwned + Default + Send> FromRequest<AppState> for DeviceReque
                 Ok(device)
             })
             .await?;
-        let body = if bytes.is_empty() {
-            T::default()
-        } else {
-            serde_json::from_slice(&bytes).map_err(|e| ApiError::bad_request(e.to_string()))?
-        };
+        // No body (a GET) reads as null.
+        let text: &[u8] = if bytes.is_empty() { b"null" } else { &bytes };
+        let body =
+            serde_json::from_slice(text).map_err(|e| ApiError::bad_request(e.to_string()))?;
         Ok(DeviceRequest { device, body })
     }
 }
@@ -488,7 +487,8 @@ pub async fn poll(
         let pending = crate::commands::pending_for(&state, &device).await?;
         let empty = pending.commands.is_empty()
             && pending.approvals.is_empty()
-            && pending.decisions.is_empty();
+            && pending.decisions.is_empty()
+            && pending.cancelled.is_empty();
         if !empty || tokio::time::Instant::now() >= deadline {
             return Ok(Json(pending));
         }

@@ -146,6 +146,9 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(dashboard::update_group).delete(dashboard::delete_group),
         )
         .route("/api/pairing-codes", post(dashboard::pairing_code))
+        .route("/api/devices/{id}/commands", post(commands::create))
+        .route("/api/commands", get(commands::list))
+        .route("/api/commands/{id}/cancel", post(commands::cancel))
         // Devices.
         .route("/api/v1/hello", get(devices::hello))
         .route("/api/v1/pair", post(devices::pair))
@@ -156,6 +159,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/poll", post(devices::poll))
         .route("/api/v1/devices/{fingerprint}", get(devices::device_key))
+        .route("/api/v1/commands/{id}", post(commands::update))
+        .route("/api/v1/decisions", post(commands::decide))
         .layer(axum::middleware::from_fn(web::security_headers))
         .with_state(state)
 }

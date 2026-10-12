@@ -102,6 +102,8 @@ pub struct DeviceSummary {
     /// The newest scan of each scanned folder.
     pub scans: Vec<ScanRow>,
     pub waiting: i64,
+    /// The name of the approver's device, if it's paired here.
+    pub approver_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -186,6 +188,7 @@ fn device_summaries(
                 disks: Vec::new(),
                 scans: Vec::new(),
                 waiting: r.get(9)?,
+                approver_name: None,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -196,6 +199,15 @@ fn device_summaries(
         }
         device.disks = disks(c, &device.id)?;
         device.scans = latest_scans(c, &device.id)?;
+        if let Some(approver) = &device.info.approver {
+            device.approver_name = c
+                .query_row(
+                    "SELECT name FROM devices WHERE fingerprint = ?1 AND removed = 0",
+                    [approver],
+                    |r| r.get(0),
+                )
+                .optional()?;
+        }
         visible.push(device);
     }
     Ok(visible)

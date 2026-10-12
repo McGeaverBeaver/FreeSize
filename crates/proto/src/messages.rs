@@ -281,6 +281,10 @@ pub struct PollResponse {
     /// Decisions of this device's approver.
     #[serde(default)]
     pub decisions: Vec<Signed<Decision>>,
+    /// Commands an admin withdrew: drop them if they're still waiting.
+    /// (Unsigned: withdrawing can only stop an action.)
+    #[serde(default)]
+    pub cancelled: Vec<String>,
 }
 
 /// The admin a command comes from.

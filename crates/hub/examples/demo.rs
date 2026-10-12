@@ -77,7 +77,11 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
         } else {
             "DiskTree agent 0.7.0".into()
         },
-        actions: vec![ActionKind::Delete],
+        actions: if platform == Platform::Android {
+            vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]
+        } else {
+            vec![ActionKind::Delete]
+        },
         attended,
         approver: None,
         grants: vec![],
@@ -323,6 +327,7 @@ fn seed(url: &str, state: &AppState) {
     ];
 
     let group = 1;
+    let mut agents = Vec::new();
     for (i, (device, report, history)) in devices.into_iter().enumerate() {
         let code = make_code(state, url, group);
         let link = PairingLink::parse(&code).unwrap();
@@ -331,6 +336,7 @@ fn seed(url: &str, state: &AppState) {
         Client::new(&agent, &transport).report(&report).unwrap();
         // Two months of daily disk samples, growing towards today's.
         let id = agent.device.clone();
+        agents.push((device.clone(), agent));
         state.db.now(|c| {
             for (path, total, used_now) in &history {
                 for day in 1..60i64 {
@@ -359,6 +365,63 @@ fn seed(url: &str, state: &AppState) {
             }
         });
     }
+    approvals_and_requests(state, &agents);
+}
+
+/// The tower's approver is the phone; a few requests in different states.
+fn approvals_and_requests(state: &AppState, agents: &[(DeviceInfo, disktree_agent::AgentState)]) {
+    let transport = UreqTransport::new();
+    let find = |name: &str| agents.iter().find(|(i, _)| i.name.contains(name)).unwrap();
+    let (phone_info, phone) = find("Pixel");
+    let (tower_info, tower) = find("Tower");
+    let mut info = tower_info.clone();
+    info.approver = Some(phone.fingerprint());
+    Client::new(tower, &transport)
+        .report(&Report {
+            info: Some(info),
+            ..Report::default()
+        })
+        .unwrap();
+    let now = disktree_hub::db::now();
+    let requests = [
+        (
+            &tower.device,
+            "Delete backups/pc/2024-full.tar in /mnt/user (85.9 GB)",
+            "done",
+            -7200,
+            "deleted 1 of 1, freeing 85.9 GB",
+            Some(r#"{"by":{"type":"approver","fingerprint":"x"},"minutes":10}"#),
+        ),
+        (
+            &tower.device,
+            "Delete isos/ubuntu-24.04.iso in /mnt/user (5.96 GB)",
+            "needs_approver",
+            -300,
+            "",
+            None,
+        ),
+        (
+            &phone.device,
+            "Uninstall Galaxy Raiders (com.example.game)",
+            "denied",
+            -86_000,
+            "denied on the device",
+            None,
+        ),
+    ];
+    let _ = phone_info;
+    state.db.now(|c| {
+        for (i, (device, summary, st, ago, detail, approval)) in requests.iter().enumerate() {
+            c.execute(
+                "INSERT INTO commands (id, device_id, kind, summary, admin, admin_name, created, expires,
+                                       signed, state, detail, approval, freed, updated)
+                 VALUES (?1, ?2, 'delete', ?3, 'u-admin', 'Robert', ?4, ?5, '{}', ?6, ?7, ?8, ?9, ?4)",
+                params![format!("DEMO{i}"), device, summary, now + ago, now + ago + 86_400, st, detail,
+                        approval, if *st == "done" { 92_200_000_000i64 } else { 0 }],
+            )
+            .unwrap();
+        }
+    });
 }
 
 fn app(package: &str, label: &str, gb: u64, cache: u64, days: Option<i64>) -> AppEntry {

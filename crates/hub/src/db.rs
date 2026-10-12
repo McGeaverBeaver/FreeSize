@@ -127,7 +127,10 @@ const MIGRATIONS: &[&str] = &[
         approval TEXT,
         freed INTEGER NOT NULL DEFAULT 0,
         failed TEXT NOT NULL DEFAULT '[]',
-        updated INTEGER NOT NULL
+        updated INTEGER NOT NULL,
+        -- When it last went to the device, and when its cancellation did.
+        delivered INTEGER,
+        cancel_delivered INTEGER
     );
     CREATE INDEX commands_by_device ON commands (device_id, state);
 

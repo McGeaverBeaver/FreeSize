@@ -157,6 +157,7 @@ function failed(error) {
 
 const NAV = [
   { route: "devices", label: "Devices" },
+  { route: "requests", label: "Requests" },
   { route: "audit", label: "Audit log", admin: true },
   { route: "settings", label: "Settings" },
 ];
@@ -339,7 +340,8 @@ async function pairDialog() {
 // ----- One device ------------------------------------------------------------
 
 const DEVICE_TABS = [
-  ["overview", "Overview"], ["folders", "Folders"], ["files", "Largest files"], ["apps", "Apps"], ["activity", "Activity"],
+  ["overview", "Overview"], ["folders", "Folders"], ["files", "Largest files"], ["apps", "Apps"],
+  ["requests", "Requests"], ["activity", "Activity"],
 ];
 
 PAGES.device = async (id, tab = "overview", ...rest) => {
@@ -353,14 +355,24 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
       h("p", { class: "dim" },
         h("span", { class: device.online ? "dot online" : "dot" }), seenText(device),
         ` · ${info.os || PLATFORMS[device.platform] || device.platform}`,
-        info.app ? ` · ${info.app}` : "", ` · group ${device.group.name}`)),
+        info.app ? ` · ${info.app}` : "", ` · group ${device.group.name}`),
+      h("p", { class: "dim small" },
+        info.attended ? "Requests are approved on the device itself."
+          : info.approver ? ["Nobody is at this device; requests go to its approver, ",
+              device.approver_name ? h("strong", {}, device.approver_name) : "a device", " (key ", h("span", { class: "mono" }, info.approver), ")."]
+          : "Nobody is at this device and it has no approver yet, so it can't be asked to do anything.",
+        (info.grants || []).filter((g) => g.expires * 1000 > Date.now()).map((g) =>
+          h("span", { class: "badge accent", style: "margin-left:8px" }, `${g.admin_name} may ${g.kind === "delete" ? "delete files" : g.kind === "uninstall" ? "uninstall apps" : "clean up"} until ${new Date(g.expires * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)))),
     state.me.admin ? h("div", { class: "row" },
       h("button", { onclick: () => renameDevice(device) }, "Rename"),
       h("button", { onclick: () => moveDevice(device) }, "Change group"),
       h("button", { onclick: () => removeDevice(device) }, "Remove")) : null);
   const nav = h("nav", { class: "tabs" }, tabs.map(([key, label]) =>
     h("a", { href: link(key), class: key === tab ? "active" : "" }, label)));
-  const views = { overview: deviceOverview, folders: deviceFolders, files: deviceFiles, apps: deviceApps, activity: deviceActivity };
+  const views = {
+    overview: deviceOverview, folders: deviceFolders, files: deviceFiles, apps: deviceApps,
+    requests: deviceRequests, activity: deviceActivity,
+  };
   const view = await (views[tab] || deviceOverview)(device, ...rest);
   return [header, nav, view];
 };
@@ -464,16 +476,20 @@ async function deviceFolders(device, scanArg, pathArg = "") {
     crumbs.push(" / ", h("a", { href: `${base}/${encodeURIComponent(target)}` }, part));
   }
   const total = Math.max(1, folder.allocated);
+  const pick = canDo(device, "delete") ? deleteBar(device, folder.scan.root, folder.scan.label || folder.scan.root) : null;
+  const check = (item) => pick ? h("td", { style: "width:28px" }, pick.box(item.path, item.allocated)) : null;
   const rows = [
     ...folder.folders.map((f) => h("tr", { class: "clickable", onclick: () => go(f.path) },
+      check(f),
       h("td", {}, "📁 ", f.name), h("td", { class: "hide-narrow", style: "width:30%" }, bar(f.allocated / total)),
       h("td", { class: "num" }, size(f.allocated)))),
     ...folder.files.map((f) => h("tr", {},
+      check(f),
       h("td", {}, f.name, h("div", { class: "sub" }, f.modified ? `changed ${day(f.modified)}` : "")),
       h("td", { class: "hide-narrow" }, bar(f.allocated / total)), h("td", { class: "num" }, size(f.allocated)))),
   ];
   if (folder.rest > 0) {
-    rows.push(h("tr", {}, h("td", { class: "dim" }, "Smaller files and folders"),
+    rows.push(h("tr", {}, pick ? h("td") : null, h("td", { class: "dim" }, "Smaller files and folders"),
       h("td", { class: "hide-narrow" }, bar(folder.rest / total)), h("td", { class: "num dim" }, size(folder.rest))));
   }
   return h("div", { class: "card" },
@@ -482,7 +498,9 @@ async function deviceFolders(device, scanArg, pathArg = "") {
       scanPicker(device, scanId, (id) => { location.hash = `#/device/${encodeURIComponent(device.id)}/folders/${id}`; })),
     h("p", { class: "dim small" }, `${size(folder.allocated)} on disk (${size(folder.size)} in files) · scanned ${date(folder.scan.taken)}`),
     h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, rows))),
-    h("p", { class: "hint" }, "Devices send the sizes of their biggest folders and files, not every file, so small items are added up."));
+    pick ? pick.bar : null,
+    h("p", { class: "hint" }, "Devices send the sizes of their biggest folders and files, not every file, so small items are added up.",
+      pick ? " Tick items to ask the device to delete them; it asks before doing anything." : ""));
 }
 
 async function deviceFiles(device, scanArg) {
@@ -490,16 +508,19 @@ async function deviceFiles(device, scanArg) {
   if (!roots.length) return h("div", { class: "card empty" }, h("h2", {}, "No scans yet"));
   const scanId = Number(scanArg) || roots[0].scans[0].id;
   const listed = await api(`/api/scans/${scanId}/files`);
+  const pick = canDo(device, "delete") ? deleteBar(device, listed.scan.root, listed.scan.label || listed.scan.root) : null;
   return h("div", { class: "card" },
     h("div", { class: "row", style: "margin-bottom:10px" },
       h("h2", { class: "grow", style: "margin:0" }, "Largest files"),
       scanPicker(device, scanId, (id) => { location.hash = `#/device/${encodeURIComponent(device.id)}/files/${id}`; })),
     h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, h("th", {}, "File"), h("th", { class: "hide-narrow" }, "Changed"), h("th", { class: "num" }, "Size"))),
+      h("thead", {}, h("tr", {}, pick ? h("th") : null, h("th", {}, "File"), h("th", { class: "hide-narrow" }, "Changed"), h("th", { class: "num" }, "Size"))),
       h("tbody", {}, listed.files.map((f) => h("tr", {},
+        pick ? h("td", { style: "width:28px" }, pick.box(f.path, f.allocated)) : null,
         h("td", {}, f.name, h("div", { class: "sub" }, f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : listed.scan.label || listed.scan.root)),
         h("td", { class: "hide-narrow small" }, day(f.modified)),
-        h("td", { class: "num" }, size(f.allocated))))))));
+        h("td", { class: "num" }, size(f.allocated))))))),
+    pick ? pick.bar : null);
 }
 
 function deviceApps(device) {
@@ -522,19 +543,35 @@ function deviceApps(device) {
     parts.push(h("div", { class: "card" }, h("h2", {}, "Space that can go"),
       h("table", {}, h("tbody", {}, report.junk.map((j) => h("tr", {},
         h("td", {}, j.label, h("div", { class: "sub" }, count(j.items, "item", "items"))),
-        h("td", { class: "num" }, size(j.bytes))))))));
+        h("td", { class: "num" }, size(j.bytes)),
+        canDo(device, "clean") ? h("td", { class: "num" }, h("button", { class: "small", onclick: () =>
+          requestDialog(device, { type: "clean_junk", kind: j.kind, label: j.label, bytes: j.bytes },
+            [`Clean up ${j.label}: ${count(j.items, "item", "items")}, ${size(j.bytes)}`]) }, "Clean…")) : null))))));
   }
   const apps = [...report.apps].sort((a, b2) => (b2.code + b2.data) - (a.code + a.data));
   parts.push(h("div", { class: "card table-wrap" },
     h("h2", {}, `Apps (${apps.length})`),
     h("table", {},
-      h("thead", {}, h("tr", {}, h("th", {}, "App"), h("th", { class: "num" }, "Size"), h("th", { class: "num hide-narrow" }, "Cache"), h("th", { class: "hide-narrow" }, "Last used"))),
+      h("thead", {}, h("tr", {}, h("th", {}, "App"), h("th", { class: "num" }, "Size"), h("th", { class: "num hide-narrow" }, "Cache"), h("th", { class: "hide-narrow" }, "Last used"), h("th"))),
       h("tbody", {}, apps.slice(0, 300).map((a) => h("tr", {},
         h("td", {}, a.label, h("div", { class: "sub" }, `${a.package}${a.source ? ` · ${a.source}` : ""}`)),
         h("td", { class: "num" }, size(a.code + a.data)),
         h("td", { class: "num hide-narrow" }, size(a.cache)),
-        h("td", { class: "hide-narrow small" }, a.last_used ? ago(a.last_used) : "–")))))));
+        h("td", { class: "hide-narrow small" }, a.last_used ? ago(a.last_used) : "–"),
+        h("td", { class: "num" }, canDo(device, "uninstall") && a.removable ? h("button", { class: "link", onclick: () =>
+          requestDialog(device, { type: "uninstall", package: a.package, label: a.label },
+            [`Uninstall ${a.label} (${a.package}), ${size(a.code + a.data)}.`, "Android on the phone asks to confirm as well."]) }, "Uninstall…") : null)))))));
   return h("div", { class: "stack" }, parts);
+}
+
+async function deviceRequests(device) {
+  const rows = await api(`/api/commands?device=${encodeURIComponent(device.id)}`);
+  const body = h("div", { class: "card" }, requestTable(rows, false));
+  pageTimer = setInterval(async () => {
+    const fresh = await api(`/api/commands?device=${encodeURIComponent(device.id)}`).catch(() => null);
+    if (fresh) body.replaceChildren(requestTable(fresh, false));
+  }, 5000);
+  return body;
 }
 
 async function deviceActivity(device) {
@@ -649,6 +686,135 @@ PAGES.audit = async () => {
   ];
 };
 
+// ----- Requests ---------------------------------------------------------------
+
+const REQUEST_STATES = {
+  queued: ["waiting to be picked up", ""],
+  delivered: ["sent to the device", "accent"],
+  shown: ["waiting on the device", "warn"],
+  needs_approver: ["waiting for the approver", "warn"],
+  running: ["running", "accent"],
+  done: ["done", "ok"],
+  failed: ["failed", "danger"],
+  denied: ["denied", "danger"],
+  expired: ["expired", ""],
+  cancelled: ["withdrawn", ""],
+};
+const OPEN_STATES = ["queued", "delivered", "shown", "needs_approver"];
+
+function stateBadge(s) {
+  const [label, level] = REQUEST_STATES[s] || [s, ""];
+  return h("span", { class: `badge ${level}` }, label);
+}
+
+function approvalText(a) {
+  if (!a || !a.by) return "";
+  const by = a.by.type === "device" ? "on the device"
+    : a.by.type === "approver" ? "by the approver"
+    : "under a grant";
+  return `approved ${by}${a.minutes ? `, grant for ${a.minutes} min` : ""}`;
+}
+
+function requestTable(rows, showDevice) {
+  if (!rows.length) return h("p", { class: "dim" }, "No requests yet.");
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Asked"), showDevice ? h("th", {}, "Device") : null, h("th", {}, "What"),
+      h("th", { class: "hide-narrow" }, "By"), h("th", {}, "State"), h("th", {}))),
+    h("tbody", {}, rows.map((r) => h("tr", {},
+      h("td", { class: "small" }, ago(r.created)),
+      showDevice ? h("td", {}, h("a", { href: `#/device/${encodeURIComponent(r.device_id)}/requests` }, r.device_name)) : null,
+      h("td", {}, r.summary,
+        r.detail ? h("div", { class: "sub" }, r.detail) : null,
+        r.approval ? h("div", { class: "sub" }, approvalText(r.approval)) : null,
+        r.failed && r.failed.length ? h("div", { class: "sub" }, `Couldn't: ${r.failed.slice(0, 3).join("; ")}`) : null),
+      h("td", { class: "hide-narrow" }, r.admin_name),
+      h("td", {}, stateBadge(r.state)),
+      h("td", { class: "num" }, state.me.admin && OPEN_STATES.includes(r.state)
+        ? h("button", { class: "link", onclick: () => withdraw(r) }, "Withdraw") : null))))));
+}
+
+async function withdraw(r) {
+  try {
+    await api(`/api/commands/${encodeURIComponent(r.id)}/cancel`, { method: "POST" });
+    toast("Withdrawn");
+    render();
+  } catch (e) { toast(e.message, true); }
+}
+
+PAGES.requests = async () => {
+  const rows = await api("/api/commands");
+  const open = rows.filter((r) => OPEN_STATES.includes(r.state));
+  const body = h("div", { class: "card" }, requestTable(rows, true));
+  // Watch the states change while the page is open.
+  pageTimer = setInterval(async () => {
+    const fresh = await api("/api/commands").catch(() => null);
+    if (fresh) body.replaceChildren(requestTable(fresh, true));
+  }, 5000);
+  return [
+    h("div", { class: "page-head" }, h("div", { class: "grow" }, h("h1", {}, "Requests"),
+      h("p", { class: "dim" }, open.length
+        ? `${count(open.length, "request is", "requests are")} waiting. Each device asks its owner, or its approver, before doing anything.`
+        : "What admins asked devices to do, and what came of it. Each device asks its owner, or its approver, before doing anything."))),
+    body,
+  ];
+};
+
+/** Asks a device to do something, after showing exactly what. */
+function requestDialog(device, action, lines) {
+  dialog((close) => {
+    const reason = h("textarea", { maxlength: 500, placeholder: "Optional: shown on the device with the request" });
+    const who = device.info && device.info.attended
+      ? `${device.name} shows the request to whoever is at it.`
+      : `Nobody is at ${device.name}, so its approver's phone gets the request.`;
+    const send = async () => {
+      try {
+        await api(`/api/devices/${encodeURIComponent(device.id)}/commands`, { method: "POST", body: { action, reason: reason.value } });
+        close();
+        toast("Sent. The device will ask before doing it.");
+        location.hash = `#/device/${encodeURIComponent(device.id)}/requests`;
+      } catch (e) { toast(e.message, true); }
+    };
+    return [
+      h("h2", {}, "Ask the device"),
+      h("div", { class: "paths" }, lines.map((l) => h("div", {}, l))),
+      h("p", { class: "callout", style: "margin-top:12px" }, who,
+        " Nothing happens until someone approves it there. The request expires in 24 hours."),
+      h("label", {}, "Reason"), reason,
+      h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: send }, "Send request")),
+    ];
+  });
+}
+
+function canDo(device, kind) {
+  return state.me.admin && (device.info.actions || []).includes(kind);
+}
+
+/** A bar under a list for asking to delete the checked items. */
+function deleteBar(device, root, label) {
+  const chosen = new Map();
+  const summary = h("span", { class: "grow small" });
+  const button = h("button", { class: "danger small", disabled: true }, "Ask to delete…");
+  const bar = h("div", { class: "row callout", style: "margin-top:12px;display:none" }, summary, button);
+  const refresh = () => {
+    const total = [...chosen.values()].reduce((a, b) => a + b, 0);
+    summary.textContent = `${count(chosen.size, "item", "items")} chosen, ${size(total)}`;
+    button.disabled = !chosen.size;
+    bar.style.display = chosen.size ? "flex" : "none";
+  };
+  button.addEventListener("click", () => {
+    const paths = [...chosen.keys()];
+    const total = [...chosen.values()].reduce((a, b) => a + b, 0);
+    requestDialog(device, { type: "delete", root, paths, bytes: total },
+      [`Delete ${count(paths.length, "item", "items")} (${size(total)}) in ${label}:`, ...paths.map((p) => `${root}/${p}`)]);
+  });
+  const box = (path, bytes) => h("input", {
+    type: "checkbox", "aria-label": `Choose ${path}`,
+    onclick: (e) => e.stopPropagation(),
+    onchange: (e) => { if (e.target.checked) chosen.set(path, bytes); else chosen.delete(path); refresh(); },
+  });
+  return { bar, box };
+}
+
 PAGES.settings = async () => {
   const hub = state.me.hub;
   const groups = await api("/api/groups");
@@ -731,9 +897,13 @@ function deleteGroup(group) {
 // ----- Start ----------------------------------------------------------------
 
 let renderId = 0;
+/** A page's refresh timer, stopped when another page shows. */
+let pageTimer = null;
 
 async function render() {
   const id = ++renderId;
+  clearInterval(pageTimer);
+  pageTimer = null;
   if (!state.me) {
     try {
       state.me = await api("/api/me");
