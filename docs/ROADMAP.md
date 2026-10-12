@@ -32,55 +32,55 @@ else that can delete:
   files not changed in a year and a duplicate finder; `--cleanup` and
   `--duplicates` on the command line.
 
-Left over from 2b/2c: old downloads and screen recordings as their own
-groups, and Docker build cache (part of the Docker work in phases 3 and 4).
+- 0.4.1: Open the selected file in its usual app (on Android through
+  MediaStore, so viewers can read it).
+- 0.5 (phase 2d): icons on the treemap (app, game or kind of content),
+  the bubble view with zoom and a tappable path, green outlines on
+  rebuildable folders, app and game icons for folders on every platform
+  (Android packages, Steam, Linux desktop entries, Windows programs, macOS
+  bundles), and app groups as bubbles on Android with each app's parts.
 
-## Phase 2d: see it at a glance (every platform)
+Left over:
+- From 2b/2c: old downloads and screen recordings as their own groups, and
+  Docker build cache (part of the Docker work in phases 3 and 4).
+- From 2d: an Apps bubble view on desktops (an app's install folder plus its
+  AppData/Library/cache folders, gathered across drives); Epic and GOG game
+  artwork; a "since last scan" mode (bubbles that grew get a ring and a
+  "+2.1 GB" badge), which needs the folder history below.
 
-Make the biggest things recognisable before reading a single label.
+## Phase 2e: next on every device
 
-**Icons on the treemap**
-- The largest blocks (those big enough to hold one) show an icon: the app's
-  own icon when the folder belongs to an app, otherwise one for the kind of
-  content (videos, photos, music, archives, disk images, games, code, caches).
-- Icons and labels scale with the block; tiny blocks stay plain.
+Found by comparing with SpaceObServer and TreeSize Professional (JAM
+Software), WizTree, WinDirStat, QDirStat, DaisyDisk, SD Maid SE, Files by
+Google, Scrutiny, Diskover and unBALANCE.
 
-**Bubble view**
-- A second way to draw the same folder: one circle per item, its area
-  proportional to its size, the biggest in the middle, each showing its icon
-  (Steam's icon on the Steam bubble, each game's artwork on the game).
-- Tap or click a bubble to zoom into it: Steam opens into its games,
-  screenshots, shader cache and so on, and those open further, down to files.
-  A breadcrumb trail and Back/Up zoom out again. The zoom animates.
-- Small items are folded into one "Other" bubble so it stays readable.
-- Long-press or hover: size, share of the parent, last change, and the usual
-  actions (open, show in folder, delete after confirming).
-- One toggle switches between Treemap and Bubbles; both follow the folder
-  tree's selection.
-- An **Apps** bubble view on the start screen: every app as one bubble sized
-  by everything it uses. On Android that's code + data + cache + the files it
-  saved; on desktops the install folder plus its data and cache folders
-  (AppData, Library, `~/.cache`, `~/.var/app`), gathered from wherever they
-  are, even across drives. Zooming into an app shows those parts.
-
-**Where icons and owners come from**
-
-| Platform | Apps | Games and other content |
-|---|---|---|
-| Android | `PackageManager` icons; `Android/data`, `media` and `obb` folders by package name | MediaStore file types |
-| Windows | Installed programs from the registry (install folder, `DisplayIcon`); icons from the shell | Steam libraries: each `appmanifest_*.acf` names a game folder, and Steam's library cache has the artwork. Epic and GOG manifests likewise |
-| macOS | `.app` bundles, `~/Library/Containers/<bundle id>` | Steam as on Windows |
-| Linux | `.desktop` files and the icon theme; Flatpak (`~/.var/app/<id>`) and Snap | Steam as on Windows |
-
-Icons are cached on disk after the first load, and only the largest visible
-items load theirs.
-
-**Extras that fit here**
-- Colour or outline by what can go (rebuildable, duplicate, untouched for a
-  year), so the bubbles double as a cleanup map.
-- "Since last scan" mode: bubbles that grew get a ring and a "+2.1 GB" badge.
-- The Hub (phase 3) reuses it: one bubble per device, then its apps and
-  folders.
+- **Folder history and diffs.** Keep folder totals per scan (not every
+  file) and compare any two scans: what grew, what's new, what's gone. Feeds
+  "since last scan" and the Hub's history.
+- **Export** of every list (CSV, JSON, HTML) and `disktree --json`, for
+  spreadsheets, scripts and Home Assistant. Import and export of scan files
+  (an ncdu-compatible JSON), so a box without DiskTree can be scanned with
+  `ncdu -o` and viewed here.
+- **Move instead of delete.** Move or copy a selection elsewhere, keeping
+  its folders, with a manifest to put it back: phone videos to an Unraid
+  share over WireGuard, old PC data to the array. Optionally compress in
+  place (NTFS) instead.
+- **File age and size histograms** (by year modified, by size band), from
+  the scan data already there.
+- **Hidden space**: say how much is in ZFS/btrfs snapshots, Windows shadow
+  copies and restore points, and APFS purgeable space, which explains why
+  files add up to less than the used space.
+- **Windows junk**: `Windows.old`, update and Delivery Optimization caches,
+  hibernation file, browser and shader caches; leftovers of uninstalled
+  programs in AppData (and Library on macOS).
+- **A collect-then-act basket** across views, so a cleanup can be put
+  together from several places and reviewed once.
+- **Android**: a Shizuku mode (an unrooted phone's helper for batch cache
+  clearing and `Android/data`; sideloaded or F-Droid builds only, Play
+  restricts it), similar and blurry photos, old screenshots, chat-app media,
+  and shrinking photos (SD Maid SE's Squeezer).
+- **Fast Windows scans** from the NTFS Master File Table and change journal
+  (as WizTree and SpaceObServer do), an optional admin mode.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 
@@ -102,6 +102,8 @@ One small Rust server with a web UI and SQLite.
 - OAuth 2.0 / OpenID Connect against Authentik (authorization code flow
   with PKCE). Roles from Authentik groups, e.g. `disktree-admins` and
   `disktree-viewers`. Authentik's MFA applies.
+- Scoped viewers: a group can be limited to some devices, so family members
+  see only their own phone and PC.
 
 **Pairing devices**
 - "Add device" shows a one-time code (QR and a short key, valid ~10 minutes)
@@ -137,11 +139,36 @@ One small Rust server with a web UI and SQLite.
 | Windows | Disks, installed programs | `winget` uninstall, delete files, make OneDrive/Nextcloud files online-only |
 | macOS | Disks, apps, Homebrew | Move apps to Trash, `brew uninstall` (needs a Mac to build) |
 
-**Also**
-- Alerts: disk over a threshold, fast growth, forecasted full.
+**History and reports**
+- Every device sends folder totals after each scan (not every file, which
+  SpaceObServer shows costs ~50 MB per 100,000 files), plus the biggest
+  files and what changed. Any two dates can be compared: which folders on
+  the array grew since August, what's new, what's gone.
+- Retention decided up front: daily snapshots for a few months, then weekly
+  and monthly, in SQLite.
+- Search across all devices ("which device has that ISO?"), with saved
+  searches, and tags or "keep" marks that stop suggesting things you've
+  decided to keep.
+- Per-user totals where a device has several users (shares, Nextcloud).
+- Scheduled digest reports and exports (CSV, JSON, HTML).
+
+**Alerts and health**
+- Alerts: disk over a threshold, fast growth, forecasted full, and a
+  mass-change warning (thousands of files rewritten, or a new extension
+  appearing everywhere, as ransomware does).
+- Delivered through ntfy, Gotify, Pushover, email or webhooks.
+- Disk health (SMART, temperature) next to capacity, read from Scrutiny's
+  API where it runs rather than rebuilt.
 - Metrics for Prometheus/Grafana and Home Assistant sensors.
 - An MCP server so an AI assistant can answer "what's filling the array?" and
-  propose actions, which still need the device's approval.
+  propose actions, which still need the device's approval. Read-only unless
+  an admin turns actions on.
+
+**More sources**
+- Agentless: scan a box over SSH (Proxmox, a VPS, a router), or import an
+  `ncdu -o` file, for machines without an agent.
+- Object storage (S3, Backblaze B2, MinIO), whose space costs money every
+  month.
 
 ## Phase 4: Unraid plugin
 
@@ -165,8 +192,19 @@ Answers "what's taking up the array?" and never breaks the server.
 - **VMs:** vdisks in `domains`, ISOs, snapshots.
 - **Protected, never offered:** `/boot`, the `system` share, `docker.img`,
   `libvirt.img`, appdata of configured containers, files open by a process.
-- **Deleting:** preview and browse first, quarantine share with restore,
-  nothing automatic.
+- **Deleting:** preview and browse first, quarantine with restore, nothing
+  automatic. The quarantine lives on the same disk (`/mnt/diskN/.disktree`),
+  or the "instant" move becomes a copy between disks.
+- **What deleting really frees:** files hard-linked elsewhere (the *arr apps
+  do this) and data held by ZFS snapshots free nothing; the estimate has to
+  count links and snapshots.
+- **Scanning `/mnt/diskN` directly**, not `/mnt/user`: the shfs layer is
+  slow and every directory read can wake a disk.
+- **What keeps disks spun up** (as the File Activity plugin shows), and
+  **moving a share between disks** with a plan, a dry run and checksums (as
+  unBALANCE does), for balancing rather than deleting.
+- **Permissions report:** files not owned by `nobody:users` or with odd
+  modes, which break SMB access.
 - Packaging: a `.plg` with a page in the Unraid web UI, using the Linux
   agent (static build) and reporting to the Hub when one is set up.
 
@@ -183,6 +221,12 @@ Answers "what's taking up the array?" and never breaks the server.
 - **Matching** local files to copies on Nextcloud and on other devices:
   name, size and date find candidates, a content hash confirms them. Shown as
   "verified copy" or "likely copy".
+- Nextcloud often leaves its checksum column empty, so the server app
+  hashes files itself and caches the result by file id, size and
+  modification time.
+- **Immich** as another source of copies: its API checks photos by checksum.
+- **Bitrot check** from the same hashes: content changed while the
+  modification time didn't.
 
 Suggestions this enables:
 
@@ -196,6 +240,27 @@ Suggestions this enables:
 - Nextcloud conflict copies, server trash and old versions.
 - Later: OneDrive, Google Drive, Syncthing, and backup tools (restic, Borg,
   Duplicacy) as additional sources of copies.
+
+## Traps to remember
+
+- **Last-access times are unreliable** (Windows stops updating them on big
+  volumes, Linux mounts with relatime or noatime, Android likewise). "Not
+  opened in months" has to come from modification times and app signals,
+  and say so.
+- **Store policy:** Google Play limits All files access, `QUERY_ALL_PACKAGES`
+  and Shizuku-style automation. DiskTree ships as an APK; a Play version
+  would lose features.
+- **Licenses:** code from GPL tools (QDirStat, WinDirStat, Filelight) can't
+  be copied in unless DiskTree is GPL; ncdu, gdu, dua and Scrutiny are MIT.
+  Slint's royalty-free license asks for attribution. DiskTree's own license
+  is still to be chosen.
+- **An agent that runs as root or SYSTEM and can delete** raises the stakes:
+  keep device approvals for every destructive action, and make every remote
+  view read-only by default (JAM made SpaceObServer's web access read-only
+  for the same reason).
+- **Windows Storage Sense** already makes OneDrive files online-only after
+  30 unopened days on C:. The Nextcloud work is worth it for verified copies
+  and other drives, not for that toggle.
 
 ## Ideas that set it apart
 
@@ -215,6 +280,6 @@ Suggestions this enables:
 
 ## Decided
 
-- Phases 2b and 2c come before the Hub (done in 0.4).
+- Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5).
 - Screenless devices use a designated approver who can only be changed on
   the device (see Approvals).

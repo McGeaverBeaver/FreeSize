@@ -9,6 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use disktree_core::{DiskSpace, disk_space};
@@ -17,6 +18,7 @@ use crate::cleanup::{self, Junk, MediaUse};
 use crate::growth::{self, Change};
 use crate::history::{self, Entry, StorageSample};
 use crate::locations;
+use crate::owners::Pixels;
 
 /// Times are seconds since 1970.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -95,6 +97,8 @@ pub struct AppReport {
     pub junk: Vec<Junk>,
     /// Daily samples of how the storage divided up, oldest first.
     pub storage: Vec<StorageSample>,
+    /// App icons by package, for the map and bubble views.
+    pub icons: HashMap<String, Arc<Pixels>>,
     /// When the report was made.
     pub now: u64,
 }
@@ -226,6 +230,20 @@ pub fn collect() -> Result<AppReport, String> {
     report
         .media
         .sort_by_key(|media| std::cmp::Reverse(media.bytes));
+
+    // Icons of the apps worth drawing: anything with an icon in the app
+    // drawer, and anything big.
+    let wanted: Vec<(String, String)> = report
+        .apps
+        .iter()
+        .filter(|app| app.has_launcher || app.size() >= 50 * 1024 * 1024)
+        .map(|app| (app.package.clone(), app.version.clone()))
+        .collect();
+    report.icons = if demo::enabled() {
+        demo::icons(&wanted)
+    } else {
+        platform::app_icons(&wanted)
+    };
     Ok(report)
 }
 
@@ -419,7 +437,7 @@ fn log(message: &str) {
 #[cfg(target_os = "android")]
 mod platform {
     pub use crate::android::{
-        abilities, apk_files, clear_all_cache, collect_app_report as collect,
+        abilities, apk_files, app_icons, clear_all_cache, collect_app_report as collect,
         has_storage_access as storage_access, has_usage_access as has_access, media_rows,
         open_app_settings as open, open_in_store, open_own_app_settings as open_own_settings,
         private_dir, request_usage_access as request_access, search_store, trash, uninstall,
@@ -464,6 +482,12 @@ mod platform {
         None
     }
 
+    pub fn app_icons(
+        _apps: &[(String, String)],
+    ) -> std::collections::HashMap<String, std::sync::Arc<crate::owners::Pixels>> {
+        std::collections::HashMap::new()
+    }
+
     pub fn open(_package: &str) {}
 
     pub fn open_own_settings() {}
@@ -494,12 +518,16 @@ mod demo {
     use std::path::PathBuf;
     use std::sync::Mutex;
 
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
     use disktree_core::disk_space;
 
     use super::{AppReport, AppUsage};
     use crate::cleanup::{Junk, JunkKind, MediaUse};
     use crate::history::{Entry, History, StorageSample};
     use crate::locations;
+    use crate::owners::Pixels;
 
     const DAY: u64 = 24 * 60 * 60;
     const MB: u64 = 1024 * 1024;
@@ -683,6 +711,41 @@ mod demo {
             usage_known: true,
             ..AppReport::default()
         }
+    }
+
+    /// Round icons in a color per app, standing in for real ones.
+    pub fn icons(apps: &[(String, String)]) -> HashMap<String, Arc<Pixels>> {
+        const SIZE: u32 = 48;
+        apps.iter()
+            .map(|(package, _)| {
+                let hash = package.bytes().fold(0x811c_9dc5u32, |h, b| {
+                    (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+                });
+                let (r, g, b) = ((hash >> 16) as u8, (hash >> 8) as u8, hash as u8);
+                let half = SIZE as f32 / 2.0;
+                let rgba = (0..SIZE * SIZE)
+                    .flat_map(|i| {
+                        let (x, y) = ((i % SIZE) as f32 + 0.5, (i / SIZE) as f32 + 0.5);
+                        let d = ((x - half).powi(2) + (y - half).powi(2)).sqrt();
+                        let inner = d < half * 0.45;
+                        let alpha = if d < half { 255 } else { 0 };
+                        if inner {
+                            [255, 255, 255, alpha]
+                        } else {
+                            [r | 0x40, g | 0x40, b | 0x40, alpha]
+                        }
+                    })
+                    .collect();
+                (
+                    package.clone(),
+                    Arc::new(Pixels {
+                        width: SIZE,
+                        height: SIZE,
+                        rgba,
+                    }),
+                )
+            })
+            .collect()
     }
 
     /// A couple of removed apps for the Removed view.

@@ -24,6 +24,43 @@ export struct MapRect {
     text-color: color,
     label: string,
     nested: bool,
+    /// Icon for the kind of content (see Icons.of), shown when `icon-size`
+    /// isn't 0; `app-icon` replaces it when `has-app-icon`.
+    icon: int,
+    app-icon: image,
+    has-app-icon: bool,
+    icon-size: length,
+    /// A tool can rebuild it: drawn with a green outline.
+    ring: bool,
+}
+
+/// One circle of the bubble view. `id` is -1 for the bubble standing for
+/// the smaller items; the start screen's app bubbles use `key` instead.
+export struct BubbleItem {
+    id: int,
+    key: string,
+    x: length,
+    y: length,
+    r: length,
+    color: color,
+    text-color: color,
+    label: string,
+    detail: string,
+    /// 0 for the folder's own items, 1 for items drawn inside them.
+    depth: int,
+    icon: int,
+    app-icon: image,
+    has-app-icon: bool,
+    icon-size: length,
+    ring: bool,
+    /// Its label sits on a dark pill, over the bubbles inside it.
+    pill: bool,
+}
+
+/// One step of the path to the folder shown.
+export struct Crumb {
+    id: int,
+    label: string,
 }
 
 export struct FileRow {
@@ -65,7 +102,7 @@ export struct TypeRow {
 /// One row of the home screen.
 export struct HomeRow {
     /// 0 drive or folder, 1 section heading, 2 storage breakdown, 3 app,
-    /// 4 notice, 5 app group, 6 storage chart.
+    /// 4 notice, 5 app group, 6 storage chart, 7 app bubbles.
     kind: int,
     title: string,
     subtitle: string,
@@ -109,6 +146,30 @@ global Theme {
     out property <color> danger: #d64545;
     out property <color> warn: Palette.color-scheme == ColorScheme.dark ? #f6a35c : #b85c00;
     out property <color> track: Palette.color-scheme == ColorScheme.dark ? #ffffff1f : #0000001a;
+    out property <color> rebuild: #2fbf71;
+}
+
+/// Icons for kinds of content, in the order of `disktree_core::Kind`, then
+/// "can be rebuilt" (12) and "more" (13).
+global Icons {
+    out property <image> folder: @image-url("icons/folder.svg");
+    out property <image> file: @image-url("icons/file.svg");
+    out property <image> video: @image-url("icons/video.svg");
+    out property <image> picture: @image-url("icons/image.svg");
+    out property <image> audio: @image-url("icons/audio.svg");
+    out property <image> archive: @image-url("icons/archive.svg");
+    out property <image> disc: @image-url("icons/disc.svg");
+    out property <image> document: @image-url("icons/document.svg");
+    out property <image> code: @image-url("icons/code.svg");
+    out property <image> program: @image-url("icons/program.svg");
+    out property <image> game: @image-url("icons/game.svg");
+    out property <image> database: @image-url("icons/database.svg");
+    out property <image> rebuild: @image-url("icons/rebuild.svg");
+    out property <image> more: @image-url("icons/more.svg");
+
+    public pure function of(kind: int) -> image {
+        return kind == 1 ? self.file : kind == 2 ? self.video : kind == 3 ? self.picture : kind == 4 ? self.audio : kind == 5 ? self.archive : kind == 6 ? self.disc : kind == 7 ? self.document : kind == 8 ? self.code : kind == 9 ? self.program : kind == 10 ? self.game : kind == 11 ? self.database : kind == 12 ? self.rebuild : kind == 13 ? self.more : self.folder;
+    }
 }
 
 component SizeBar inherits Rectangle {
@@ -258,13 +319,32 @@ component TreemapPane inherits Rectangle {
         width: r.width;
         height: r.height;
         background: r.color;
-        border-width: r.id == root.selected-id ? 2px : 1px;
-        border-color: r.id == root.selected-id ? Palette.foreground : r.color.darker(40%);
+        border-width: r.id == root.selected-id || r.ring ? 2px : 1px;
+        border-color: r.id == root.selected-id ? Palette.foreground : r.ring ? Theme.rebuild : r.color.darker(40%);
 
-        if r.label != "": Text {
-            x: 4px;
+        if r.icon-size > 0 && !r.nested: Image {
+            x: (parent.width - self.width) / 2;
+            // Centred, but below a two-line label.
+            y: max((parent.height - self.height) / 2 + 7px, r.label != "" ? 34px : 0);
+            width: r.icon-size;
+            height: r.icon-size;
+            source: r.has-app-icon ? r.app-icon : Icons.of(r.icon);
+            colorize: r.has-app-icon ? transparent : r.text-color.transparentize(35%);
+            image-fit: contain;
+        }
+        if r.icon-size > 0 && r.nested: Image {
+            x: 3px;
             y: 2px;
-            width: parent.width - 8px;
+            width: 12px;
+            height: 12px;
+            source: r.has-app-icon ? r.app-icon : Icons.of(r.icon);
+            colorize: r.has-app-icon ? transparent : r.text-color;
+            image-fit: contain;
+        }
+        if r.label != "": Text {
+            x: r.nested && r.icon-size > 0 ? 17px : 4px;
+            y: 2px;
+            width: parent.width - self.x - 4px;
             height: r.nested ? 14px : parent.height - 4px;
             text: r.label;
             color: r.text-color;
@@ -276,6 +356,230 @@ component TreemapPane inherits Rectangle {
         TouchArea {
             clicked => {
                 root.select(r.id);
+            }
+        }
+    }
+}
+
+/// The folder's contents as circles sized by space; tapping one zooms into
+/// it (it becomes the shown folder).
+component BubblePane inherits Rectangle {
+    in property <[BubbleItem]> bubbles;
+    in property <int> selected-id;
+    callback select(int, string);
+    callback resized(length, length);
+
+    clip: true;
+    background: Palette.alternate-background;
+
+    init => {
+        root.resized(self.width, self.height);
+    }
+    changed width => {
+        root.resized(self.width, self.height);
+    }
+    changed height => {
+        root.resized(self.width, self.height);
+    }
+
+    // Circles first, then every label above them; labels don't take taps.
+    for b in root.bubbles: Rectangle {
+        // Grows in when the view changes.
+        property <float> grow: 0;
+        init => {
+            self.grow = 1;
+        }
+        animate grow {
+            duration: 260ms;
+            easing: ease-out;
+        }
+        x: b.x - b.r * self.grow;
+        y: b.y - b.r * self.grow;
+        width: b.r * 2 * self.grow;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: b.color;
+        border-width: b.id == root.selected-id || b.ring ? 3px : b.depth == 0 ? 1px : 0;
+        border-color: b.id == root.selected-id ? Palette.foreground : b.ring ? Theme.rebuild : b.color.darker(25%);
+        if b.icon-size > 0 && !b.pill && b.label == "": Image {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: b.icon-size * parent.grow;
+            height: self.width;
+            source: b.has-app-icon ? b.app-icon : Icons.of(b.icon);
+            colorize: b.has-app-icon ? transparent : b.text-color.transparentize(40%);
+            image-fit: contain;
+        }
+        TouchArea {
+            clicked => {
+                if (b.id >= 0 || b.key != "") {
+                    root.select(b.id, b.key);
+                }
+            }
+        }
+    }
+
+    for b in root.bubbles: Rectangle {
+        property <float> shown: 0;
+        init => {
+            self.shown = 1;
+        }
+        animate shown {
+            duration: 400ms;
+            easing: ease-in;
+        }
+        visible: b.label != "";
+        opacity: self.shown;
+        x: b.x - self.width / 2;
+        y: b.y - self.height / 2;
+        width: min(b.r * 1.7, max(name.preferred-width, detail.preferred-width, b.icon-size) + 16px);
+        height: label.preferred-height + 8px;
+        border-radius: 8px;
+        background: b.pill ? #000000a0 : transparent;
+        label := VerticalLayout {
+            padding: 4px;
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 2px;
+            alignment: center;
+            if b.icon-size > 0: Image {
+                height: b.icon-size;
+                width: b.icon-size;
+                x: (parent.width - self.width) / 2;
+                source: b.has-app-icon ? b.app-icon : Icons.of(b.icon);
+                colorize: b.has-app-icon ? transparent : b.pill ? #ffffffd0 : b.text-color.transparentize(25%);
+                image-fit: contain;
+            }
+            name := Text {
+                text: b.label;
+                horizontal-alignment: center;
+                overflow: elide;
+                font-size: b.r > 70px ? 13px : 11px;
+                font-weight: 600;
+                color: b.pill ? #ffffff : b.text-color;
+            }
+
+            detail := Text {
+                visible: b.detail != "";
+                height: b.detail != "" ? self.preferred-height : 0;
+                text: b.detail;
+                horizontal-alignment: center;
+                overflow: elide;
+                font-size: 11px;
+                color: b.pill ? #ffffffd0 : b.text-color.transparentize(20%);
+            }
+        }
+    }
+}
+
+/// Root › … › folder — size. Each step can be tapped to go back to it.
+component Breadcrumb inherits HorizontalLayout {
+    in property <[Crumb]> crumbs;
+    in property <string> size;
+    callback select(int);
+
+    height: 28px;
+    padding-left: 8px;
+    padding-right: 8px;
+    spacing: 4px;
+    alignment: center;
+    for c[i] in root.crumbs: HorizontalLayout {
+        spacing: 4px;
+        if i > 0: Text {
+            text: "›";
+            color: Theme.dim;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            crumb-text := Text {
+                width: 100%;
+                height: 100%;
+                text: c.label;
+                overflow: elide;
+                vertical-alignment: center;
+                font-weight: i == root.crumbs.length - 1 ? 600 : 400;
+                color: i == root.crumbs.length - 1 ? Palette.foreground : crumb-touch.has-hover ? Palette.accent-background : Theme.dim;
+            }
+
+            crumb-touch := TouchArea {
+                clicked => {
+                    root.select(c.id);
+                }
+            }
+        }
+    }
+    Text {
+        text: root.size;
+        color: Theme.dim;
+        vertical-alignment: center;
+    }
+}
+
+/// The treemap or the bubbles, with a switch between them.
+component MapView inherits Rectangle {
+    in property <[MapRect]> rects;
+    in property <[BubbleItem]> bubbles;
+    in property <int> selected-id;
+    in-out property <bool> bubbles-view;
+    callback select(int);
+    callback map-resized(length, length);
+    callback bubbles-resized(length, length);
+    callback view-changed();
+
+    if !root.bubbles-view: TreemapPane {
+        rects: root.rects;
+        selected-id: root.selected-id;
+        select(id) => {
+            root.select(id);
+        }
+        resized(w, h) => {
+            root.map-resized(w, h);
+        }
+    }
+    if root.bubbles-view: BubblePane {
+        bubbles: root.bubbles;
+        selected-id: root.selected-id;
+        select(id, key) => {
+            root.select(id);
+        }
+        resized(w, h) => {
+            root.bubbles-resized(w, h);
+        }
+    }
+
+    Rectangle {
+        x: parent.width - self.width - 8px;
+        y: parent.height - self.height - 8px;
+        width: switch.preferred-width;
+        height: 30px;
+        border-radius: 15px;
+        background: Palette.background.transparentize(8%);
+        border-width: 1px;
+        border-color: Palette.border;
+        switch := HorizontalLayout {
+            padding: 3px;
+            spacing: 2px;
+            for option[i] in ["Treemap", "Bubbles"]: choice := Rectangle {
+                property <bool> on: (i == 1) == root.bubbles-view;
+                border-radius: 12px;
+                background: self.on ? Palette.accent-background : transparent;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    Text {
+                        text: option;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        color: choice.on ? Palette.accent-foreground : Palette.foreground;
+                    }
+                }
+
+                TouchArea {
+                    clicked => {
+                        root.bubbles-view = i == 1;
+                        root.view-changed();
+                    }
+                }
             }
         }
     }
@@ -537,9 +841,12 @@ component Card inherits Rectangle {
 component HomePane inherits Rectangle {
     in property <[HomeRow]> rows;
     in property <length> card-height;
+    in property <[BubbleItem]> bubbles;
     callback choose(string);
     callback open-app(string);
     callback action(string);
+    callback bubble(string);
+    callback bubbles-resized(length, length);
 
     // A plain scrolling layout rather than a ListView: the list view keeps
     // a reused row's old height when its wrapped text changes, so rows would
@@ -608,6 +915,46 @@ component HomePane inherits Rectangle {
                                 font-size: 11px;
                                 color: row.warn ? Theme.warn : Theme.dim;
                                 overflow: elide;
+                            }
+                        }
+                    }
+
+                    if row.kind == 7: VerticalLayout {
+                        spacing: 6px;
+                        if row.title != "": HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: row.title;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+
+                            if row.action != "": Button {
+                                text: row.action;
+                                clicked => {
+                                    root.action(row.key);
+                                }
+                            }
+                        }
+                        Text {
+                            text: row.subtitle;
+                            font-size: 12px;
+                            color: Theme.dim;
+                            wrap: word-wrap;
+                        }
+
+                        BubblePane {
+                            height: min(root.width - 32px, 520px);
+                            border-radius: 8px;
+                            bubbles: root.bubbles;
+                            selected-id: -2;
+                            select(id, key) => {
+                                root.bubble(key);
+                            }
+                            resized(w, h) => {
+                                root.bubbles-resized(w, h);
                             }
                         }
                     }
@@ -988,7 +1335,11 @@ export component AppWindow inherits Window {
     in property <[FileRow]> largest-files;
     in property <[TypeRow]> file-types;
     in property <[CleanRow]> cleanup-rows;
-    in property <string> focus-label;
+    in property <[Crumb]> crumbs;
+    in property <string> focus-size;
+    in property <[BubbleItem]> bubbles;
+    in-out property <bool> bubbles-view;
+    in property <[BubbleItem]> app-bubbles;
     in property <int> selected-id: -1;
     in property <string> selected-title;
     in property <string> selected-detail;
@@ -1031,6 +1382,10 @@ export component AppWindow inherits Window {
     callback toggle-row(int);
     callback select-node(int, bool);
     callback map-resized(length, length);
+    callback bubbles-resized(length, length);
+    callback map-view-changed();
+    callback app-bubble(string);
+    callback app-bubbles-resized(length, length);
     callback size-mode-changed();
     callback go-up();
     callback reveal-selected();
@@ -1193,6 +1548,13 @@ export component AppWindow inherits Window {
                 vertical-stretch: 1;
                 rows: root.home-rows;
                 card-height: root.compact ? 86px : 78px;
+                bubbles: root.app-bubbles;
+                bubble(key) => {
+                    root.app-bubble(key);
+                }
+                bubbles-resized(w, h) => {
+                    root.app-bubbles-resized(w, h);
+                }
                 choose(path) => {
                     root.path = path;
                     root.start-scan(path);
@@ -1228,26 +1590,33 @@ export component AppWindow inherits Window {
 
                 VerticalLayout {
                     horizontal-stretch: 55;
-                    Text {
-                        text: root.focus-label;
-                        overflow: elide;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                        height: 28px;
-                        horizontal-alignment: center;
+                    Breadcrumb {
+                        crumbs: root.crumbs;
+                        size: root.focus-size;
+                        select(id) => {
+                            root.select-node(id, true);
+                        }
                     }
 
                     TabWidget {
                         Tab {
-                            title: "Treemap";
-                            TreemapPane {
+                            title: "Map";
+                            MapView {
                                 rects: root.map-rects;
+                                bubbles: root.bubbles;
                                 selected-id: root.selected-id;
+                                bubbles-view <=> root.bubbles-view;
                                 select(id) => {
                                     root.select-node(id, true);
                                 }
-                                resized(w, h) => {
+                                map-resized(w, h) => {
                                     root.map-resized(w, h);
+                                }
+                                bubbles-resized(w, h) => {
+                                    root.bubbles-resized(w, h);
+                                }
+                                view-changed => {
+                                    root.map-view-changed();
                                 }
                             }
                         }
@@ -1308,23 +1677,30 @@ export component AppWindow inherits Window {
                 Tab {
                     title: "Map";
                     VerticalLayout {
-                        Text {
-                            text: root.focus-label;
-                            overflow: elide;
-                            font-weight: 600;
-                            height: 28px;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
-                        }
-
-                        TreemapPane {
-                            rects: root.map-rects;
-                            selected-id: root.selected-id;
+                        Breadcrumb {
+                            crumbs: root.crumbs;
+                            size: root.focus-size;
                             select(id) => {
                                 root.select-node(id, false);
                             }
-                            resized(w, h) => {
+                        }
+
+                        MapView {
+                            rects: root.map-rects;
+                            bubbles: root.bubbles;
+                            selected-id: root.selected-id;
+                            bubbles-view <=> root.bubbles-view;
+                            select(id) => {
+                                root.select-node(id, false);
+                            }
+                            map-resized(w, h) => {
                                 root.map-resized(w, h);
+                            }
+                            bubbles-resized(w, h) => {
+                                root.bubbles-resized(w, h);
+                            }
+                            view-changed => {
+                                root.map-view-changed();
                             }
                         }
                     }

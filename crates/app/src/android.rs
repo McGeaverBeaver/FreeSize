@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_int};
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use jni::objects::{JObject, JObjectArray, JString, JValue};
 use jni::{Env, JavaVM, jni_sig, jni_str};
@@ -19,6 +19,7 @@ use slint::android::AndroidApp;
 
 use crate::apps::{self, Abilities, AppReport, AppUsage};
 use crate::cleanup::{self, Junk, JunkKind};
+use crate::owners::Pixels;
 
 type JniResult<T> = jni::errors::Result<T>;
 
@@ -1690,4 +1691,139 @@ pub fn open_file(path: &std::path::Path) -> Result<Opened, String> {
     })
     .map(|()| Opened::Shown)
     .map_err(|_| "No app on this phone opens this kind of file.".to_string())
+}
+
+/// Icons are drawn at this size for the map and bubble views.
+const ICON_SIZE: i32 = 72;
+
+/// Drawn icons by package, with the version they were drawn for.
+type IconCache = HashMap<String, (String, Arc<Pixels>)>;
+
+static ICONS: std::sync::Mutex<Option<IconCache>> = std::sync::Mutex::new(None);
+
+/// The icons of `apps` (`(package, version)`), drawing only those not drawn
+/// before for that version.
+pub fn app_icons(apps: &[(String, String)]) -> HashMap<String, Arc<Pixels>> {
+    let mut guard = ICONS.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(HashMap::new);
+    let missing: Vec<&(String, String)> = apps
+        .iter()
+        .filter(|(package, version)| cache.get(package).is_none_or(|(v, _)| v != version))
+        .collect();
+    if !missing.is_empty() {
+        let drawn = with_activity(|env, activity| {
+            let pm = package_manager(env, activity)?;
+            let mut drawn = Vec::new();
+            for (package, version) in missing {
+                // A frame per icon frees its bitmap and canvas references.
+                match env.with_local_frame(16, |env| app_icon(env, &pm, package)) {
+                    Ok(pixels) => drawn.push((package.clone(), version.clone(), pixels)),
+                    Err(_) => env.exception_clear(),
+                }
+            }
+            Ok(drawn)
+        });
+        match drawn {
+            Ok(drawn) => {
+                for (package, version, pixels) in drawn {
+                    cache.insert(package, (version, Arc::new(pixels)));
+                }
+            }
+            Err(err) => log(&format!("could not draw app icons: {err}")),
+        }
+    }
+    apps.iter()
+        .filter_map(|(package, _)| {
+            cache
+                .get(package)
+                .map(|(_, pixels)| (package.clone(), pixels.clone()))
+        })
+        .collect()
+}
+
+/// Draws an app's icon (adaptive icons with the launcher's mask) into
+/// RGBA pixels.
+fn app_icon(env: &mut Env, pm: &JObject, package: &str) -> JniResult<Pixels> {
+    let name = env.new_string(package)?;
+    let drawable = env
+        .call_method(
+            pm,
+            jni_str!("getApplicationIcon"),
+            jni_sig!("(Ljava/lang/String;)Landroid/graphics/drawable/Drawable;"),
+            &[JValue::Object(&name)],
+        )?
+        .l()?;
+    let config = env
+        .get_static_field(
+            jni_str!("android/graphics/Bitmap$Config"),
+            jni_str!("ARGB_8888"),
+            jni_sig!("Landroid/graphics/Bitmap$Config;"),
+        )?
+        .l()?;
+    let bitmap = env
+        .call_static_method(
+            jni_str!("android/graphics/Bitmap"),
+            jni_str!("createBitmap"),
+            jni_sig!("(IILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;"),
+            &[
+                JValue::Int(ICON_SIZE),
+                JValue::Int(ICON_SIZE),
+                JValue::Object(&config),
+            ],
+        )?
+        .l()?;
+    let canvas = env.new_object(
+        jni_str!("android/graphics/Canvas"),
+        jni_sig!("(Landroid/graphics/Bitmap;)V"),
+        &[JValue::Object(&bitmap)],
+    )?;
+    env.call_method(
+        &drawable,
+        jni_str!("setBounds"),
+        jni_sig!("(IIII)V"),
+        &[
+            JValue::Int(0),
+            JValue::Int(0),
+            JValue::Int(ICON_SIZE),
+            JValue::Int(ICON_SIZE),
+        ],
+    )?;
+    env.call_method(
+        &drawable,
+        jni_str!("draw"),
+        jni_sig!("(Landroid/graphics/Canvas;)V"),
+        &[JValue::Object(&canvas)],
+    )?;
+    let count = (ICON_SIZE * ICON_SIZE) as usize;
+    let array = jni::objects::JIntArray::new(env, count)?;
+    env.call_method(
+        &bitmap,
+        jni_str!("getPixels"),
+        jni_sig!("([IIIIIII)V"),
+        &[
+            JValue::Object(&array),
+            JValue::Int(0),
+            JValue::Int(ICON_SIZE),
+            JValue::Int(0),
+            JValue::Int(0),
+            JValue::Int(ICON_SIZE),
+            JValue::Int(ICON_SIZE),
+        ],
+    )?;
+    let mut argb = vec![0i32; count];
+    array.get_region(env, 0, &mut argb)?;
+    env.call_method(&bitmap, jni_str!("recycle"), jni_sig!("()V"), &[])?;
+    // getPixels gives unpremultiplied ARGB, one int per pixel.
+    let rgba = argb
+        .iter()
+        .flat_map(|&p| {
+            let p = p as u32;
+            [(p >> 16) as u8, (p >> 8) as u8, p as u8, (p >> 24) as u8]
+        })
+        .collect();
+    Ok(Pixels {
+        width: ICON_SIZE as u32,
+        height: ICON_SIZE as u32,
+        rgba,
+    })
 }

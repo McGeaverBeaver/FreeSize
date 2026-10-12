@@ -5,6 +5,7 @@ slint::include_modules!();
 mod actions;
 #[cfg(target_os = "android")]
 mod android;
+mod appbubbles;
 mod apps;
 mod cleanup;
 mod controller;
@@ -14,7 +15,10 @@ mod history;
 mod home;
 mod insights;
 mod locations;
+mod owners;
 mod rows;
+#[cfg(windows)]
+mod winicon;
 
 use std::path::PathBuf;
 

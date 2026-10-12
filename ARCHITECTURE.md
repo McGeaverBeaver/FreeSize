@@ -101,6 +101,21 @@ space on the start screen.
   (1500 by default) to keep rendering cheap. Items come out parent-first, so
   drawing them in order puts children on top.
 
+### Kinds and bubbles (`kinds.rs`, `bubbles.rs`)
+
+- `kinds` gives every node a `Kind` for its icon: files by extension, and a
+  folder the kind that makes up at least half of its bytes (else a plain
+  folder). One reverse pass sums bytes per kind into each folder's parent;
+  it runs on the scan thread right after scanning.
+- `bubbles::pack` is front-chain circle packing (Wang et al. 2006, as in
+  d3-hierarchy): each circle goes next to the pair on the outer chain closest
+  to the centre, and is moved along the chain if it would overlap. `fit`
+  scales a packed group's bounding box into the view. `layout` draws a
+  folder's biggest children (40 at most, each at least 0.4 % of the folder),
+  folds the rest into one "more" bubble, and packs the contents of big folder
+  bubbles inside them, fitted to an approximate smallest enclosing circle
+  (Bădoiu–Clarkson iterations).
+
 ### Reclaimable space (`reclaim.rs`)
 
 - `rebuildable` walks folders and matches a table of rules: a folder name,
@@ -138,6 +153,14 @@ and receives callbacks.
   of an empty marker after the last row instead.
 - The storage chart is three filled `Path`s whose SVG commands Rust builds
   (`growth::chart`), drawn over each other so the areas stack.
+- Kind icons are SVGs in `ui/icons`, drawn tinted with `colorize`; the
+  `Icons` global maps a kind number to one. App icons arrive from Rust as
+  images and are drawn as they are.
+- `MapView` holds the treemap or `BubblePane` plus the Treemap/Bubbles
+  switch. Bubbles are rounded rectangles whose size animates from zero when
+  a new layout arrives, so zooming in grows the new bubbles; labels are a
+  second layer that doesn't take taps. `Breadcrumb` shows the path to the
+  shown folder, each step tappable.
 
 ### Controller (`controller.rs`)
 
@@ -188,6 +211,33 @@ Storage volumes come from `/storage`: `emulated/0` is internal storage, and the
 Errors and panics go to logcat under the tag `DiskTree`, since stderr goes
 nowhere on Android. If Slint can't start (it is already set up in this
 process), `android_main` logs the error and returns instead of crashing.
+
+### Icons of apps and games (`owners.rs`, `winicon.rs`)
+
+`Owners` answers "which app does this folder belong to?" for the folders
+that get an icon, and caches the image per path:
+
+- Android: `Android/{data,media,obb}/<package>`, with icons the app report
+  carries. `android::app_icons` draws each app's icon (adaptive icons
+  included) into a 72 px bitmap through `PackageManager.getApplicationIcon`
+  and a `Canvas`, once per package and version.
+- Steam: a folder in `steamapps/common` is matched to its
+  `appmanifest_<id>.acf` by `installdir`; the icon is the hashed `.jpg` in
+  `appcache/librarycache/<id>/` (or the older `<id>_icon.jpg`) of the
+  library's Steam folder or a usual Steam install.
+- Linux: a folder directly in `~/.config`, `~/.cache`, `~/.local/share`,
+  `~/.var/app`, `~/snap`, `/opt`, `/usr/share`, `/usr/lib`, `/var/lib` (or a
+  dot folder in the home folder) is matched by name to `.desktop` entries
+  (file id, the last part of a reverse-DNS id, `StartupWMClass`, `Exec`,
+  `Icon`). Icons come from the hicolor theme or `pixmaps`.
+- Windows: a folder directly in Program Files, AppData or ProgramData gets
+  the icon of the `.exe` inside named most like it (else the biggest, two
+  levels deep, skipping uninstallers and updaters). `winicon` extracts it at
+  64 px with `SHDefExtractIconW`, `GetIconInfo` and `GetDIBits`, using the
+  icon mask when there's no alpha channel.
+- macOS: `.app` bundles, and folders in `~/Library` (Application Support,
+  Caches, Containers, …) matched to installed apps by bundle id or name;
+  the icon is decoded from the bundle's `.icns` (`plist`, `icns` crates).
 
 ### App and system storage (`apps.rs`, `home.rs`)
 
@@ -283,7 +333,9 @@ used space once a day in `drive-history.json` in DiskTree's data folder
 private storage on Android). Samples taken when the drive had another size
 are ignored, so a replaced disk starts a new history.
 
-`home.rs` turns all of this into the home screen's rows (drives, the breakdown
+`appbubbles.rs` lays out an app group as bubbles sized by what the group
+ranks apps by (size, cache, growth, saved files), and an app's parts when
+zoomed in. `home.rs` turns all of this into the home screen's rows (drives, the breakdown
 bar, the Free up space cards, the groups, then the selected group's apps) and
 into the app sheet: the facts and buttons shown when an app is tapped.
 
@@ -385,8 +437,7 @@ script only publishes a clean checkout that matches GitHub, and lets
 
 ## Possible next steps
 
-See [docs/ROADMAP.md](docs/ROADMAP.md): icons on the treemap and a bubble
-view, the DiskTree Hub dashboard with device-confirmed actions, an Unraid plugin, and Nextcloud
-integration. The Windows MFT reader (reading the NTFS Master File Table
+See [docs/ROADMAP.md](docs/ROADMAP.md): the DiskTree Hub dashboard with
+device-confirmed actions, an Unraid plugin, and Nextcloud integration. The Windows MFT reader (reading the NTFS Master File Table
 directly, as WizTree does, for a whole-drive scan in seconds) would be an
 optional fast path for admins.

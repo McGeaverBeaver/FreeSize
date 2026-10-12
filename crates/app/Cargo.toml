@@ -29,6 +29,13 @@ trash = "5.2.9"
 slint = { version = "1.18.1", features = ["backend-android-activity-06"] }
 jni = "0.22.4"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+icns = "0.5.0"
+plist = "1.10.1"
+
 [build-dependencies]
 slint-build = "1.18.1"
 

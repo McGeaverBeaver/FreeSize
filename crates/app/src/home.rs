@@ -26,6 +26,10 @@ pub const VIEW_PREFIX: &str = "view:";
 pub const REMOVED_PREFIX: &str = "removed:";
 /// Prefix of the action ids that delete a kind of junk (see `JunkKind::id`).
 pub const CLEAN_PREFIX: &str = "clean:";
+/// Switches the app group between a list and bubbles.
+pub const TOGGLE_BUBBLES: &str = "toggle-bubbles";
+/// Leaves the app the bubbles zoomed into.
+pub const ZOOM_OUT: &str = "zoom-out";
 
 /// Junk and app media smaller than this isn't worth a row.
 const WORTH_SHOWING: u64 = 1024 * 1024;
@@ -52,11 +56,14 @@ const APP: i32 = 3;
 const NOTICE: i32 = 4;
 const GROUP: i32 = 5;
 const CHART: i32 = 6;
+const BUBBLES: i32 = 7;
 
 /// Android keeps roughly this much usage history.
 const USAGE_HISTORY: u64 = 2 * 365 * 24 * 60 * 60;
 
-/// What is known about app storage.
+/// What is known about app storage. Only one exists, so the size of the
+/// report doesn't matter.
+#[allow(clippy::large_enum_variant)]
 pub enum AppsState {
     /// The platform can't report it.
     Unsupported,
@@ -83,6 +90,9 @@ pub struct Options<'a> {
     pub cache_freed: Option<u64>,
     /// Past sizes of the drives, for their trends.
     pub drives: Option<&'a DriveLog>,
+    /// Show the app group as bubbles, zoomed into this app if set.
+    pub bubbles: bool,
+    pub zoom: Option<&'a str>,
 }
 
 pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
@@ -144,9 +154,44 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
                     .filter_map(|view| group_row(report, view, options.view)),
             );
             let view = options.view;
-            rows.push(heading(view.title(), &explanation(view, options), None));
+            let toggle = if view == View::Removed {
+                None
+            } else if options.bubbles {
+                Some(("List", TOGGLE_BUBBLES))
+            } else {
+                Some(("Bubbles", TOGGLE_BUBBLES))
+            };
+            rows.push(heading(view.title(), &explanation(view, options), toggle));
             let before = rows.len();
-            if view == View::Removed {
+            if options.bubbles && view != View::Removed {
+                // The bubbles themselves come from `appbubbles`; this row
+                // holds them, with the app zoomed into above them.
+                let zoomed = options
+                    .zoom
+                    .and_then(|p| report.apps.iter().find(|a| a.package == p));
+                rows.push(HomeRow {
+                    kind: BUBBLES,
+                    title: zoomed
+                        .map(|app| {
+                            let name = if app.label.is_empty() {
+                                &app.package
+                            } else {
+                                &app.label
+                            };
+                            format!("{name} · {}", format_size(app.size()))
+                        })
+                        .unwrap_or_default()
+                        .into(),
+                    subtitle: if zoomed.is_some() {
+                        "Tap a part for the app's details; Saved files opens them.".into()
+                    } else {
+                        "Tap an app to see what its space is made of.".into()
+                    },
+                    action: if zoomed.is_some() { "Back" } else { "" }.into(),
+                    key: ZOOM_OUT.into(),
+                    ..Default::default()
+                });
+            } else if view == View::Removed {
                 rows.extend(report.removed.iter().map(|e| removed_row(e, report.now)));
             } else if view == View::Cache {
                 let mut apps: Vec<&AppUsage> = report

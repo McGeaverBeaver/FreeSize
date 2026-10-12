@@ -14,7 +14,9 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
+pub mod bubbles;
 mod format;
+mod kinds;
 mod platform;
 mod reclaim;
 mod scan;
@@ -24,6 +26,7 @@ mod tree;
 pub mod treemap;
 
 pub use format::{format_count, format_size};
+pub use kinds::{Kind, kinds};
 pub use reclaim::{
     DuplicateCandidates, DuplicateGroup, DuplicateProgress, Rebuildable, duplicate_candidates,
     find_duplicates, old_files, rebuildable,

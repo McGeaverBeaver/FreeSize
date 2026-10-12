@@ -19,7 +19,20 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 - **Folder tree** sorted by size, with percentage bars. Folders expand in place,
   and very large folders fold their smallest items into one row.
 - **Treemap** of the selected folder, three levels deep. Click a block to zoom
-  in, and use **Up** to zoom out.
+  in, and use **Up** or the path above the map to zoom out. The bigger blocks
+  carry an icon: the app or game a folder belongs to, or the kind of content
+  (videos, photos, music, archives, disk images, games, code, programs).
+  Folders a tool can rebuild get a green outline.
+- **Bubbles**, the switch in the map's corner: the same folder as circles
+  sized by space, the biggest in the middle, each showing what's inside it.
+  Tap one to zoom in. Small items share one "more" bubble.
+- **App and game icons** for folders: Android apps' folders in
+  `Android/media`, `data` and `obb`; Steam games (named by Steam's manifests,
+  with the icon from Steam's library cache) on every platform; on Linux,
+  folders in `~/.config`, `~/.cache`, `~/.local/share`, `~/.var/app`, `/opt`
+  and similar matched to installed apps; on Windows, folders in Program Files
+  and AppData by the program inside; on macOS, `.app` bundles and their
+  folders in `~/Library`.
 - **Largest files** and **file types** (size by extension) for the selected folder.
 - **Clean up** tab for the scanned folder: folders that tools rebuild
   (`node_modules`, Rust `target`, `.gradle`, Python virtual environments,
@@ -52,6 +65,9 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 - **Growth (Android)**: a chart of the phone's storage over time with a
   forecast of when it fills up, and a *Growing fast* group of apps that grew
   by 100 MB or more in a month.
+- **Apps as bubbles (Android)**: any app group can be shown as bubbles of
+  app icons, sized the way the group ranks them. Tap an app to see what its
+  space is made of: the app, its data, its cache and the files it saved.
 - **Command-line tool** (`disktree`) sharing the same core.
 
 ## Platform notes

@@ -1,6 +1,7 @@
 //! Application state and the logic behind every UI callback.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::io;
 use std::path::{MAIN_SEPARATOR_STR, PathBuf};
 use std::rc::{Rc, Weak};
@@ -8,24 +9,34 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use disktree_core::bubbles::{self, BubbleOptions};
 use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
-    DuplicateGroup, DuplicateProgress, NO_NODE, NodeId, ScanOptions, ScanProgress, ScanResult,
-    SizeMode, Tree, disk_space, duplicate_candidates, extension_stats, format_count, format_size,
-    largest_files, scan,
+    DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
+    ScanResult, SizeMode, Tree, disk_space, duplicate_candidates, extension_stats, format_count,
+    format_size, kinds, largest_files, rebuildable, scan,
 };
-use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{
+    Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel,
+};
 
+use crate::appbubbles;
 use crate::apps::{self, AppReport};
 use crate::cleanup::JunkKind;
 use crate::filecleanup::{self, Duplicates};
 use crate::growth::{self, DriveLog};
 use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
+use crate::owners::Owners;
 use crate::rows::{self, TreeRows};
 use crate::{
-    AppWindow, CleanRow, FileRow, HomeRow, MapRect, SheetAction, TypeRow, actions, locations,
+    AppWindow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction, TypeRow,
+    actions, locations,
 };
+
+/// Icons beyond the kinds of content (see `Icons.of` in the UI).
+const ICON_REBUILD: i32 = 12;
+const ICON_MORE: i32 = 13;
 
 /// Result handed from a worker thread to the UI thread.
 type Slot<T> = Arc<Mutex<Option<T>>>;
@@ -41,7 +52,7 @@ fn put<T>(slot: &Slot<T>, value: T) {
 struct RunningScan {
     path: PathBuf,
     progress: Arc<ScanProgress>,
-    result: Slot<io::Result<ScanResult>>,
+    result: Slot<io::Result<(ScanResult, Vec<Kind>)>>,
 }
 
 struct RunningDelete {
@@ -94,6 +105,18 @@ pub struct Controller {
     /// The folder shown in the treemap and the file lists.
     focus: NodeId,
     map_size: (f32, f32),
+    bubble_size: (f32, f32),
+    /// What each node mostly holds, for icons.
+    kinds: Vec<Kind>,
+    /// Folders a tool can rebuild, outlined in the map views.
+    rebuildable: HashSet<NodeId>,
+    /// Which app or game a folder belongs to, for its icon.
+    owners: Owners,
+    /// The app group shown as bubbles, zoomed into an app if set.
+    app_bubbles: bool,
+    app_zoom: Option<String>,
+    app_bubble_size: (f32, f32),
+    app_bubble_rows: Rc<VecModel<BubbleItem>>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
     deletion: Option<RunningDelete>,
@@ -158,6 +181,14 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             selected: 0,
             focus: 0,
             map_size: (0.0, 0.0),
+            bubble_size: (0.0, 0.0),
+            kinds: Vec::new(),
+            rebuildable: HashSet::new(),
+            owners: Owners::default(),
+            app_bubbles: false,
+            app_zoom: None,
+            app_bubble_size: (0.0, 0.0),
+            app_bubble_rows: Rc::new(VecModel::default()),
             summary: None,
             scan: None,
             deletion: None,
@@ -185,6 +216,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     ui.set_tree_rows(ModelRc::from(ctl.borrow().rows.clone()));
     ui.set_home_rows(ModelRc::from(ctl.borrow().home_rows.clone()));
     ui.set_cleanup_rows(ModelRc::from(ctl.borrow().cleanup_rows.clone()));
+    ui.set_app_bubbles(ModelRc::from(ctl.borrow().app_bubble_rows.clone()));
     let start = initial.clone().unwrap_or_else(locations::default_path);
     ui.set_path(start.to_string_lossy().as_ref().into());
     ui.set_can_browse(actions::CAN_BROWSE);
@@ -201,6 +233,12 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_select_node, weak, |c, id, reveal| c
         .select(id, reveal));
     on!(ui, on_map_resized, weak, |c, w, h| c.map_resized(w, h));
+    on!(ui, on_bubbles_resized, weak, |c, w, h| c
+        .bubbles_resized(w, h));
+    on!(ui, on_map_view_changed, weak, |c| c.update_map());
+    on!(ui, on_app_bubble, weak, |c, key| c.app_bubble(key.as_str()));
+    on!(ui, on_app_bubbles_resized, weak, |c, w, h| c
+        .app_bubbles_resized(w, h));
     on!(ui, on_size_mode_changed, weak, |c| c.size_mode_changed());
     on!(ui, on_go_up, weak, |c| c.go_up());
     on!(ui, on_reveal_selected, weak, |c| c.reveal_selected());
@@ -345,6 +383,11 @@ impl Controller {
                 Ok(report) => AppsState::Ready(report),
                 Err(err) => AppsState::Failed(err),
             };
+            if let AppsState::Ready(report) = &self.apps {
+                // Folders of apps in Android/media and the like get their icons.
+                self.owners.set_android_icons(report.icons.clone());
+                self.update_map();
+            }
             if self.remeasure {
                 self.remeasure = false;
                 self.start_apps_job();
@@ -486,12 +529,20 @@ impl Controller {
 
         let root = PathBuf::from(&path);
         let progress = Arc::new(ScanProgress::new());
-        let result: Slot<io::Result<ScanResult>> = Arc::default();
+        let result: Slot<io::Result<(ScanResult, Vec<Kind>)>> = Arc::default();
         let spawned = {
             let (root, progress, result) = (root.clone(), progress.clone(), result.clone());
             std::thread::Builder::new()
                 .name("disktree-scan".into())
-                .spawn(move || put(&result, scan(&root, &ScanOptions::default(), &progress)))
+                .spawn(move || {
+                    // Kinds take a pass over the whole tree; do it here
+                    // rather than on the UI thread.
+                    let scanned = scan(&root, &ScanOptions::default(), &progress).map(|r| {
+                        let kinds = kinds(&r.tree);
+                        (r, kinds)
+                    });
+                    put(&result, scanned)
+                })
         };
         if let Err(err) = spawned {
             ui.set_status(format!("Could not start scanning: {err}").into());
@@ -539,13 +590,16 @@ impl Controller {
         ui.set_scan_current(snap.current.to_string_lossy().as_ref().into());
     }
 
-    fn finish_scan(&mut self, path: PathBuf, result: io::Result<ScanResult>) {
+    fn finish_scan(&mut self, path: PathBuf, result: io::Result<(ScanResult, Vec<Kind>)>) {
         let Some(ui) = self.ui() else {
             return;
         };
         ui.set_scanning(false);
         let result = match result {
-            Ok(result) => result,
+            Ok((result, kinds)) => {
+                self.kinds = kinds;
+                result
+            }
             Err(err) => {
                 ui.set_status(format!("Could not scan {}: {err}", path.display()).into());
                 return;
@@ -557,7 +611,12 @@ impl Controller {
             errors: result.errors,
             cancelled: result.cancelled,
         });
+        self.owners.clear();
         let tree = self.tree.insert(result.tree);
+        self.rebuildable = rebuildable(tree, tree.root())
+            .into_iter()
+            .map(|r| r.node)
+            .collect();
         self.selected = tree.root();
         self.focus = tree.root();
         self.rows.rebuild(tree, self.mode, &[tree.root()]);
@@ -603,8 +662,110 @@ impl Controller {
             abilities: apps::abilities(),
             cache_freed: self.cache_freed,
             drives: Some(&self.drive_log),
+            bubbles: self.app_bubbles,
+            zoom: self.app_zoom.as_deref(),
         };
         sync_model(&self.home_rows, home::rows(&self.apps, options));
+        self.update_app_bubbles(false);
+    }
+
+    fn app_bubbles_resized(&mut self, width: f32, height: f32) {
+        if (width, height) != self.app_bubble_size {
+            self.app_bubble_size = (width, height);
+            self.update_app_bubbles(true);
+        }
+    }
+
+    /// Fills the start screen's app bubbles. `fresh` starts them over, so
+    /// they grow in, as after zooming; otherwise only changes are applied.
+    fn update_app_bubbles(&self, fresh: bool) {
+        let (width, height) = self.app_bubble_size;
+        let Some(report) = self.report().filter(|_| self.app_bubbles) else {
+            self.app_bubble_rows.clear();
+            return;
+        };
+        if width < 40.0 || height < 40.0 {
+            return;
+        }
+        let items: Vec<BubbleItem> =
+            appbubbles::bubbles(report, self.view, self.app_zoom.as_deref(), width, height)
+                .into_iter()
+                .map(|b| {
+                    let r = b.circle.r;
+                    let (color, text_color) = if b.color == u16::MAX {
+                        (
+                            Color::from_rgb_u8(0x9e, 0xa3, 0xab),
+                            Color::from_rgb_u8(0x1b, 0x1b, 0x1f),
+                        )
+                    } else {
+                        block_color(b.color, 0, true)
+                    };
+                    let (icon, app_icon) = match &b.icon {
+                        appbubbles::Icon::App(package) => (0, self.owners.app_icon(package)),
+                        appbubbles::Icon::Kind(kind) => (*kind, None),
+                    };
+                    // App icons are the point here: drawn bigger than kind icons.
+                    let labelled = r >= 30.0;
+                    let icon_size = match (&app_icon, labelled) {
+                        (Some(_), true) => (r * 0.55).min(72.0),
+                        (Some(_), false) => r * 1.3,
+                        (None, true) => (r * 0.36).min(52.0),
+                        (None, false) if r >= 12.0 => r,
+                        _ => 0.0,
+                    };
+                    BubbleItem {
+                        id: -1,
+                        key: b.key.into(),
+                        x: b.circle.x,
+                        y: b.circle.y,
+                        r,
+                        color,
+                        text_color,
+                        label: if labelled { b.label } else { String::new() }.into(),
+                        detail: if r >= 42.0 { b.detail } else { String::new() }.into(),
+                        depth: 0,
+                        icon,
+                        has_app_icon: app_icon.is_some(),
+                        app_icon: app_icon.unwrap_or_default(),
+                        icon_size,
+                        ring: false,
+                        pill: false,
+                    }
+                })
+                .collect();
+        if fresh {
+            self.app_bubble_rows.set_vec(items);
+        } else {
+            sync_model(&self.app_bubble_rows, items);
+        }
+    }
+
+    /// A tap on one of the start screen's app bubbles.
+    fn app_bubble(&mut self, key: &str) {
+        if key == appbubbles::MORE {
+            // The smallest apps are easier to read as a list.
+            self.app_bubbles = false;
+            self.refresh_home();
+            return;
+        }
+        if let Some(part) = key.strip_prefix(appbubbles::PART_PREFIX) {
+            let (what, package) = part.split_once(':').unwrap_or((part, ""));
+            if what == appbubbles::FILES {
+                let folder = self
+                    .report()
+                    .and_then(|r| r.media.iter().find(|m| m.package == package))
+                    .map(|m| m.folder.to_string_lossy().into_owned());
+                if let Some(folder) = folder {
+                    self.start_scan(folder);
+                }
+            } else {
+                self.open_app(package);
+            }
+            return;
+        }
+        self.app_zoom = Some(key.to_string());
+        self.refresh_home();
+        self.update_app_bubbles(true);
     }
 
     /// Adds today's size of each drive to the drive history.
@@ -675,10 +836,23 @@ impl Controller {
                 }
             }
             home::GRANT_STORAGE => self.grant_permission(),
+            home::TOGGLE_BUBBLES => {
+                self.app_bubbles = !self.app_bubbles;
+                self.app_zoom = None;
+                self.refresh_home();
+                self.update_app_bubbles(true);
+            }
+            home::ZOOM_OUT => {
+                self.app_zoom = None;
+                self.refresh_home();
+                self.update_app_bubbles(true);
+            }
             _ => {
                 if let Some(view) = id.strip_prefix(home::VIEW_PREFIX).and_then(View::from_id) {
                     self.view = view;
+                    self.app_zoom = None;
                     self.refresh_home();
+                    self.update_app_bubbles(true);
                 } else if let Some(kind) = id
                     .strip_prefix(home::CLEAN_PREFIX)
                     .and_then(JunkKind::from_id)
@@ -1160,19 +1334,167 @@ impl Controller {
         }
     }
 
+    fn bubbles_resized(&mut self, width: f32, height: f32) {
+        if (width, height) != self.bubble_size {
+            self.bubble_size = (width, height);
+            self.update_bubbles();
+        }
+    }
+
     fn refresh_focus_views(&self) {
         let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
             return;
         };
         let focus = tree.node(self.focus);
-        let label = if self.focus == tree.root() {
-            tree.path(self.focus).to_string_lossy().into_owned()
-        } else {
-            relative_path(tree, tree.root(), self.focus)
-        };
-        ui.set_focus_label(format!("{label} — {}", format_size(focus.size_in(self.mode))).into());
-        self.update_treemap();
+        ui.set_crumbs(ModelRc::new(VecModel::from(self.crumbs(tree))));
+        ui.set_focus_size(format_size(focus.size_in(self.mode)).into());
+        self.update_map();
         self.update_lists();
+    }
+
+    /// Draws whichever of the treemap and the bubbles is showing.
+    fn update_map(&self) {
+        match self.ui() {
+            Some(ui) if ui.get_bubbles_view() => self.update_bubbles(),
+            Some(_) => self.update_treemap(),
+            None => {}
+        }
+    }
+
+    /// The path from the scanned folder to the shown one. Deep paths keep the
+    /// first step and the last two, with "…" standing for the ones between.
+    fn crumbs(&self, tree: &Tree) -> Vec<Crumb> {
+        let mut chain: Vec<NodeId> = tree.ancestors(self.focus).collect();
+        chain.reverse();
+        let root = tree.root();
+        let root_path = tree.path(root);
+        let root_label = locations::list()
+            .into_iter()
+            .find(|l| l.path == root_path)
+            .map(|l| l.label)
+            .or_else(|| {
+                root_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| root_path.display().to_string());
+        let crumb = |id: NodeId, label: Option<&str>| Crumb {
+            id: id as i32,
+            label: match label {
+                Some(label) => label.into(),
+                None if id == root => root_label.as_str().into(),
+                None => tree.name(id).as_ref().into(),
+            },
+        };
+        if chain.len() <= 4 {
+            return chain.iter().map(|&id| crumb(id, None)).collect();
+        }
+        let n = chain.len();
+        vec![
+            crumb(chain[0], None),
+            crumb(chain[n - 3], Some("…")),
+            crumb(chain[n - 2], None),
+            crumb(chain[n - 1], None),
+        ]
+    }
+
+    /// The icon for a node: the app or game it belongs to, "can be
+    /// rebuilt", or the kind of content.
+    fn icon_of(&self, tree: &Tree, id: NodeId) -> (i32, Option<Image>) {
+        let app = tree
+            .node(id)
+            .is_dir()
+            .then(|| self.owners.icon(&tree.path(id)))
+            .flatten();
+        if self.rebuildable.contains(&id) {
+            return (ICON_REBUILD, app);
+        }
+        let kind = self.kinds.get(id as usize).copied().unwrap_or_default();
+        (kind as i32, app)
+    }
+
+    fn update_bubbles(&self) {
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        let (width, height) = self.bubble_size;
+        if width < 40.0 || height < 40.0 || !ui.get_bubbles_view() {
+            return;
+        }
+        let items = bubbles::layout(
+            tree,
+            self.focus,
+            self.mode,
+            width,
+            height,
+            &BubbleOptions::default(),
+        );
+        let out: Vec<BubbleItem> = items
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                let r = b.circle.r;
+                let pill = b.depth == 0
+                    && items
+                        .get(i + 1)
+                        .is_some_and(|next| next.depth == 1 && next.group == b.group);
+                let (color, text_color) = match b.node {
+                    Some(id) => block_color(b.group, b.depth * 2, tree.node(id).is_dir()),
+                    None => (
+                        Color::from_rgb_u8(0x9e, 0xa3, 0xab),
+                        Color::from_rgb_u8(0x1b, 0x1b, 0x1f),
+                    ),
+                };
+                let (label, detail, icon_size) = if b.depth == 0 {
+                    let name = match b.node {
+                        Some(id) => tree.name(id).into_owned(),
+                        None => format!("{} more", format_count(u64::from(b.count))),
+                    };
+                    if r >= 26.0 {
+                        let detail = if r >= 38.0 {
+                            format_size(b.size)
+                        } else {
+                            String::new()
+                        };
+                        let icon = if r >= 46.0 { (r * 0.36).min(52.0) } else { 0.0 };
+                        (name, detail, icon)
+                    } else {
+                        (
+                            String::new(),
+                            String::new(),
+                            if r >= 12.0 { r } else { 0.0 },
+                        )
+                    }
+                } else {
+                    let icon = if r >= 12.0 { (r * 0.9).min(26.0) } else { 0.0 };
+                    (String::new(), String::new(), icon)
+                };
+                let (icon, app_icon) = match b.node {
+                    Some(id) if icon_size > 0.0 => self.icon_of(tree, id),
+                    Some(_) => (0, None),
+                    None => (ICON_MORE, None),
+                };
+                BubbleItem {
+                    id: b.node.map_or(-1, |id| id as i32),
+                    key: SharedString::new(),
+                    x: b.circle.x,
+                    y: b.circle.y,
+                    r,
+                    color,
+                    text_color,
+                    label: label.into(),
+                    detail: detail.into(),
+                    depth: i32::from(b.depth),
+                    icon,
+                    has_app_icon: app_icon.is_some(),
+                    app_icon: app_icon.unwrap_or_default(),
+                    icon_size,
+                    ring: b.node.is_some_and(|id| self.rebuildable.contains(&id)),
+                    pill,
+                }
+            })
+            .collect();
+        ui.set_bubbles(ModelRc::new(VecModel::from(out)));
     }
 
     fn update_treemap(&self) {
@@ -1182,6 +1504,9 @@ impl Controller {
         let (width, height) = self.map_size;
         if width < 20.0 || height < 20.0 {
             ui.set_map_rects(ModelRc::default());
+            return;
+        }
+        if ui.get_bubbles_view() {
             return;
         }
         let items = treemap::layout(
@@ -1208,6 +1533,19 @@ impl Controller {
                 } else {
                     name.into_owned()
                 };
+                // Icons on the bigger blocks, and beside folder names.
+                let icon_size = if item.nested {
+                    if label.is_empty() { 0.0 } else { 12.0 }
+                } else if r.w >= 56.0 && r.h >= 72.0 {
+                    (r.w.min(r.h) * 0.4).min(48.0)
+                } else {
+                    0.0
+                };
+                let (icon, app_icon) = if icon_size > 0.0 {
+                    self.icon_of(tree, item.node)
+                } else {
+                    (0, None)
+                };
                 MapRect {
                     id: item.node as i32,
                     x: r.x,
@@ -1218,6 +1556,11 @@ impl Controller {
                     text_color,
                     label: label.into(),
                     nested: item.nested,
+                    icon,
+                    has_app_icon: app_icon.is_some(),
+                    app_icon: app_icon.unwrap_or_default(),
+                    icon_size,
+                    ring: self.rebuildable.contains(&item.node),
                 }
             })
             .collect();
