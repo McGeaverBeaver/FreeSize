@@ -126,6 +126,13 @@ const RULES: &[Rule] = &[
         what: "Cargo download cache",
         how: "cargo downloads crates again when needed",
     },
+    Rule {
+        name: "shadercache",
+        sibling: &[],
+        parent: Some("steamapps"),
+        what: "Steam shader cache",
+        how: "Steam downloads or builds it again; first launches may stutter",
+    },
 ];
 
 /// A folder holding a Python virtual environment.
@@ -517,5 +524,408 @@ mod tests {
         let progress = DuplicateProgress::new();
         progress.cancel();
         assert!(find_duplicates(&tree, tree.root(), 1, &progress).is_empty());
+    }
+}
+
+/// How a system or app cache should be removed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Safety {
+    /// Delete it; what uses it makes it again.
+    Safe,
+    /// Probably not needed, but look first.
+    CheckFirst,
+    /// Remove it with the tool named in `how`, not by deleting it.
+    UseTool,
+}
+
+/// A known place where the system or an app keeps space it can do without.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpotRule {
+    /// Absolute path; `*` stands for any one name.
+    pub pattern: String,
+    pub what: &'static str,
+    pub how: &'static str,
+    pub safety: Safety,
+}
+
+/// A system or app cache found in a scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spot {
+    pub node: NodeId,
+    pub what: &'static str,
+    pub how: &'static str,
+    pub safety: Safety,
+}
+
+/// The places `rules` describe that lie inside `tree`, biggest first.
+/// Names compare without regard to case when `ignore_case` (Windows, macOS).
+pub fn system_spots(tree: &Tree, rules: &[SpotRule], ignore_case: bool) -> Vec<Spot> {
+    let root = tree.root();
+    let root_path = tree.path(root);
+    let mut found: Vec<Spot> = Vec::new();
+    for rule in rules {
+        let pattern = Path::new(&rule.pattern);
+        let rest = if ignore_case {
+            strip_prefix_ignore_case(pattern, &root_path)
+        } else {
+            pattern.strip_prefix(&root_path).ok().map(Path::to_path_buf)
+        };
+        let Some(rest) = rest else {
+            continue;
+        };
+        let names: Vec<String> = rest
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let mut matches = Vec::new();
+        walk_pattern(tree, root, &names, ignore_case, &mut matches);
+        for node in matches {
+            if tree.node(node).allocated > 0 && !found.iter().any(|s| s.node == node) {
+                found.push(Spot {
+                    node,
+                    what: rule.what,
+                    how: rule.how,
+                    safety: rule.safety,
+                });
+            }
+        }
+    }
+    found.sort_by_key(|s| std::cmp::Reverse(tree.node(s.node).allocated));
+    found
+}
+
+fn strip_prefix_ignore_case(path: &Path, prefix: &Path) -> Option<PathBuf> {
+    let mut path_parts = path.components();
+    for want in prefix.components() {
+        let got = path_parts.next()?;
+        if !got
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&want.as_os_str().to_string_lossy())
+        {
+            return None;
+        }
+    }
+    Some(path_parts.as_path().to_path_buf())
+}
+
+fn walk_pattern(
+    tree: &Tree,
+    at: NodeId,
+    names: &[String],
+    ignore_case: bool,
+    out: &mut Vec<NodeId>,
+) {
+    let Some((first, rest)) = names.split_first() else {
+        out.push(at);
+        return;
+    };
+    for child in tree.children(at) {
+        let name = tree.name(child);
+        let matches = first == "*"
+            || if ignore_case {
+                name.eq_ignore_ascii_case(first)
+            } else {
+                name == first.as_str()
+            };
+        if matches && (rest.is_empty() || tree.node(child).is_dir()) {
+            walk_pattern(tree, child, rest, ignore_case, out);
+        }
+    }
+}
+
+/// The usual places of this platform's system and app caches, from the
+/// environment (home folder, `%LOCALAPPDATA%`, `%windir%`).
+pub fn default_spot_rules() -> Vec<SpotRule> {
+    let mut rules = Vec::new();
+    let mut add = |pattern: PathBuf, what, how, safety| {
+        rules.push(SpotRule {
+            pattern: pattern.to_string_lossy().into_owned(),
+            what,
+            how,
+            safety,
+        });
+    };
+    let env = |name: &str| std::env::var_os(name).map(PathBuf::from);
+
+    if cfg!(windows) {
+        // "C:" names the drive; "C:\\" its top folder.
+        let drive = env("SystemDrive").map_or_else(
+            || PathBuf::from("C:\\"),
+            |d| PathBuf::from(format!("{}\\", d.to_string_lossy())),
+        );
+        let windows = env("windir").unwrap_or_else(|| drive.join("Windows"));
+        add(
+            drive.join("Windows.old"),
+            "Previous Windows installation",
+            "Settings → System → Storage → Temporary files → Previous Windows installation(s)",
+            Safety::UseTool,
+        );
+        for name in ["$WINDOWS.~BT", "$Windows.~WS"] {
+            add(
+                drive.join(name),
+                "Windows upgrade files",
+                "Settings → System → Storage → Temporary files",
+                Safety::UseTool,
+            );
+        }
+        add(
+            windows.join("SoftwareDistribution").join("Download"),
+            "Windows Update downloads",
+            "Settings → System → Storage → Temporary files → Windows Update Cleanup",
+            Safety::UseTool,
+        );
+        add(
+            windows.join("ServiceProfiles/NetworkService/AppData/Local/Microsoft/Windows/DeliveryOptimization/Cache"),
+            "Delivery Optimization cache",
+            "Settings → System → Storage → Temporary files → Delivery Optimization Files",
+            Safety::UseTool,
+        );
+        add(
+            windows.join("Temp"),
+            "Windows temporary files",
+            "files in use stay; the rest can go",
+            Safety::Safe,
+        );
+        add(
+            windows.join("Minidump"),
+            "Crash dumps",
+            "only needed to report a crash",
+            Safety::Safe,
+        );
+        add(
+            windows.join("MEMORY.DMP"),
+            "Crash dump",
+            "only needed to report a crash",
+            Safety::Safe,
+        );
+        add(
+            drive.join("hiberfil.sys"),
+            "Hibernation file",
+            "run `powercfg /h off` as administrator if you don't use hibernation or Fast Startup",
+            Safety::UseTool,
+        );
+        if let Some(local) = env("LOCALAPPDATA") {
+            add(
+                local.join("Temp"),
+                "Your temporary files",
+                "files in use stay; the rest can go",
+                Safety::Safe,
+            );
+            add(
+                local.join("CrashDumps"),
+                "Crash dumps",
+                "only needed to report a crash",
+                Safety::Safe,
+            );
+            add(
+                local.join("Microsoft/Windows/INetCache"),
+                "Internet cache",
+                "rebuilt as needed",
+                Safety::Safe,
+            );
+            for (browser, dir) in [
+                ("Chrome", "Google/Chrome/User Data"),
+                ("Edge", "Microsoft/Edge/User Data"),
+                ("Brave", "BraveSoftware/Brave-Browser/User Data"),
+            ] {
+                let what = match browser {
+                    "Chrome" => "Chrome cache",
+                    "Edge" => "Edge cache",
+                    _ => "Brave cache",
+                };
+                for cache in ["Cache", "Code Cache", "GPUCache"] {
+                    add(
+                        local.join(dir).join("*").join(cache),
+                        what,
+                        "close the browser first; it makes it again",
+                        Safety::Safe,
+                    );
+                }
+            }
+            add(
+                local.join("Mozilla/Firefox/Profiles/*/cache2"),
+                "Firefox cache",
+                "close Firefox first; it makes it again",
+                Safety::Safe,
+            );
+            for dir in [
+                "NVIDIA/DXCache",
+                "NVIDIA/GLCache",
+                "AMD/DxCache",
+                "D3DSCache",
+            ] {
+                add(
+                    local.join(dir),
+                    "Graphics shader cache",
+                    "drivers make it again; first game launches may stutter",
+                    Safety::Safe,
+                );
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        if let Some(home) = env("HOME") {
+            add(
+                home.join(".Trash"),
+                "Trash",
+                "empty it in Finder",
+                Safety::Safe,
+            );
+            add(
+                home.join("Library/Logs"),
+                "App logs",
+                "old logs are rarely needed",
+                Safety::CheckFirst,
+            );
+            add(
+                home.join("Library/Application Support/MobileSync/Backup"),
+                "iPhone and iPad backups",
+                "Finder → your device → Manage Backups; keep the latest",
+                Safety::CheckFirst,
+            );
+            add(
+                home.join("Library/Developer/Xcode/Archives"),
+                "Xcode archives",
+                "old app builds; keep the ones you may need to debug",
+                Safety::CheckFirst,
+            );
+            add(
+                home.join("Library/Developer/Xcode/iOS DeviceSupport"),
+                "Xcode device support",
+                "Xcode downloads it again for a connected device",
+                Safety::Safe,
+            );
+            add(
+                home.join("Library/Developer/CoreSimulator/Devices"),
+                "iOS simulators",
+                "run `xcrun simctl delete unavailable`",
+                Safety::UseTool,
+            );
+        }
+        add(
+            PathBuf::from("/Library/Updates"),
+            "Downloaded macOS updates",
+            "System Settings → General → Software Update",
+            Safety::UseTool,
+        );
+    } else if cfg!(target_os = "linux") && !cfg!(target_os = "android") {
+        if let Some(home) = env("HOME") {
+            add(
+                home.join(".cache/thumbnails"),
+                "Thumbnail cache",
+                "file managers make it again",
+                Safety::Safe,
+            );
+            add(
+                home.join(".local/share/Trash"),
+                "Trash",
+                "empty it in the file manager",
+                Safety::Safe,
+            );
+            add(
+                home.join(".var/app/*/cache"),
+                "Flatpak app caches",
+                "apps make them again; close them first",
+                Safety::Safe,
+            );
+        }
+        add(
+            PathBuf::from("/var/cache/apt/archives"),
+            "Downloaded packages",
+            "run `sudo apt clean`",
+            Safety::UseTool,
+        );
+        add(
+            PathBuf::from("/var/cache/dnf"),
+            "Downloaded packages",
+            "run `sudo dnf clean all`",
+            Safety::UseTool,
+        );
+        add(
+            PathBuf::from("/var/cache/pacman/pkg"),
+            "Downloaded packages",
+            "run `sudo paccache -r`",
+            Safety::UseTool,
+        );
+        add(
+            PathBuf::from("/var/log/journal"),
+            "System journal",
+            "run `sudo journalctl --vacuum-size=200M`",
+            Safety::UseTool,
+        );
+    }
+    rules
+}
+
+#[cfg(test)]
+mod spot_tests {
+    use std::fs;
+
+    use super::*;
+    use crate::{ScanOptions, ScanProgress, scan};
+
+    #[test]
+    fn finds_known_places_inside_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (path, bytes) in [
+            ("Users/me/AppData/Local/Temp/a.tmp", 3000),
+            (
+                "Users/me/AppData/Local/Google/Chrome/User Data/Default/Cache/x",
+                5000,
+            ),
+            (
+                "Users/me/AppData/Local/Google/Chrome/User Data/Profile 1/Cache/y",
+                1000,
+            ),
+            ("Users/me/Documents/keep.txt", 100),
+        ] {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, vec![1u8; bytes]).unwrap();
+        }
+        let local = root.join("Users/me/AppData/Local");
+        let rule = |pattern: PathBuf, what| SpotRule {
+            pattern: pattern.to_string_lossy().into_owned(),
+            what,
+            how: "",
+            safety: Safety::Safe,
+        };
+        let rules = [
+            rule(local.join("temp"), "temp"),
+            rule(local.join("Google/Chrome/User Data/*/Cache"), "chrome"),
+            rule(root.join("Elsewhere/Cache"), "missing"),
+            rule(PathBuf::from("/not/in/the/scan"), "outside"),
+        ];
+        let tree = scan(root, &ScanOptions::default(), &ScanProgress::new())
+            .unwrap()
+            .tree;
+        let found: Vec<(&str, String)> = system_spots(&tree, &rules, true)
+            .iter()
+            .map(|s| (s.what, tree.name(s.node).into_owned()))
+            .collect();
+        assert_eq!(found.len(), 3);
+        assert!(found.contains(&("temp", "Temp".to_string())));
+        assert_eq!(found.iter().filter(|(w, _)| *w == "chrome").count(), 2);
+        // Case matters where the platform says so.
+        assert_eq!(system_spots(&tree, &rules[..1], false).len(), 0);
+        let steam = rebuildable_names(&["steamapps/shadercache/1/x"]);
+        assert_eq!(steam, ["shadercache"]);
+    }
+
+    fn rebuildable_names(paths: &[&str]) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        for path in paths {
+            let path = dir.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"x").unwrap();
+        }
+        let tree = scan(dir.path(), &ScanOptions::default(), &ScanProgress::new())
+            .unwrap()
+            .tree;
+        rebuildable(&tree, tree.root())
+            .iter()
+            .map(|r| tree.name(r.node).into_owned())
+            .collect()
     }
 }

@@ -29,8 +29,9 @@ pub mod treemap;
 pub use format::{format_count, format_size};
 pub use kinds::{Kind, kinds};
 pub use reclaim::{
-    DuplicateCandidates, DuplicateGroup, DuplicateProgress, Rebuildable, duplicate_candidates,
-    find_duplicates, old_files, rebuildable,
+    DuplicateCandidates, DuplicateGroup, DuplicateProgress, Rebuildable, Safety, Spot, SpotRule,
+    default_spot_rules, duplicate_candidates, find_duplicates, old_files, rebuildable,
+    system_spots,
 };
 pub use scan::{ProgressSnapshot, ScanOptions, ScanProgress, ScanResult, scan};
 pub use space::{DiskSpace, disk_space};

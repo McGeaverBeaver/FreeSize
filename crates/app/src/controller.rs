@@ -14,9 +14,9 @@ use disktree_core::snapshot::{self, Snapshot};
 use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
     Bin, DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
-    ScanResult, SizeMode, Tree, age_bins, disk_space, duplicate_candidates, extension_stats,
-    format_count, format_size, has_extension, kinds, largest_files, largest_files_where,
-    rebuildable, scan, size_bins,
+    ScanResult, SizeMode, Spot, Tree, age_bins, default_spot_rules, disk_space,
+    duplicate_candidates, extension_stats, format_count, format_size, has_extension, kinds,
+    largest_files, largest_files_where, rebuildable, scan, size_bins, system_spots,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel,
@@ -26,8 +26,9 @@ use crate::appbubbles;
 use crate::apps::{self, AppReport};
 use crate::changes;
 use crate::cleanup::JunkKind;
-use crate::filecleanup::{self, Duplicates};
+use crate::filecleanup::{self, Duplicates, Hidden};
 use crate::growth::{self, DriveLog};
+use crate::hidden;
 use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
 use crate::owners::Owners;
@@ -94,6 +95,9 @@ struct Scanned {
     kinds: Vec<Kind>,
     /// Folder sizes from earlier scans of the same folder, oldest first.
     earlier: Vec<Snapshot>,
+    /// For a whole drive: its used space and what the system says about
+    /// space outside the files.
+    hidden: Option<Hidden>,
 }
 
 struct RunningDelete {
@@ -166,6 +170,8 @@ pub struct Controller {
     /// and the one the Changes tab compares with.
     earlier: Vec<Snapshot>,
     compare: Option<usize>,
+    /// Space no file accounts for, when a whole drive was scanned.
+    hidden: Option<Hidden>,
     change_rows: Rc<VecModel<CleanRow>>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
@@ -243,6 +249,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             bins: RefCell::default(),
             earlier: Vec::new(),
             compare: None,
+            hidden: None,
             change_rows: Rc::new(VecModel::default()),
             summary: None,
             scan: None,
@@ -608,10 +615,18 @@ impl Controller {
                             let taken = snapshot::take(&r.tree, now, scans::MAX_FOLDERS);
                             scans::record(&root, &taken)
                         };
+                        let hidden = (!r.cancelled && hidden::is_drive_root(&root))
+                            .then(|| disk_space(&root))
+                            .flatten()
+                            .map(|space| Hidden {
+                                used: space.used(),
+                                notes: hidden::probe(&root),
+                            });
                         Scanned {
                             result: r,
                             kinds,
                             earlier,
+                            hidden,
                         }
                     });
                     put(&result, scanned)
@@ -672,6 +687,7 @@ impl Controller {
             Ok(scanned) => {
                 self.kinds = scanned.kinds;
                 self.earlier = scanned.earlier;
+                self.hidden = scanned.hidden;
                 self.compare = self.earlier.len().checked_sub(1);
                 scanned.result
             }
@@ -1415,7 +1431,23 @@ impl Controller {
         let Some(tree) = &self.tree else {
             return;
         };
-        self.cleanup_found = filecleanup::found_rows(tree, self.mode, apps::now() as i64);
+        // System caches, except inside folders already listed as rebuildable.
+        let ignore_case = cfg!(windows) || cfg!(target_os = "macos");
+        let spots: Vec<Spot> = system_spots(tree, &default_spot_rules(), ignore_case)
+            .into_iter()
+            .filter(|s| {
+                !tree
+                    .ancestors(s.node)
+                    .any(|a| self.rebuildable.contains(&a))
+            })
+            .collect();
+        self.cleanup_found = filecleanup::found_rows(
+            tree,
+            self.mode,
+            apps::now() as i64,
+            &spots,
+            self.hidden.as_ref(),
+        );
         self.show_cleanup();
         self.refresh_changes();
     }

@@ -12,6 +12,7 @@ mod cleanup;
 mod controller;
 mod filecleanup;
 mod growth;
+mod hidden;
 mod history;
 mod home;
 mod insights;

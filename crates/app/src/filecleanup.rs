@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use disktree_core::{
-    DuplicateGroup, NodeId, SizeMode, Tree, flags, format_count, format_size, old_files,
-    rebuildable,
+    DuplicateGroup, NodeId, Safety, SizeMode, Spot, Tree, flags, format_count, format_size,
+    old_files, rebuildable,
 };
 
 use crate::CleanRow;
@@ -31,20 +31,101 @@ pub enum Duplicates<'a> {
     Found(&'a [DuplicateGroup]),
 }
 
+/// Space no file accounts for on a scanned drive: the drive's used space
+/// when it was scanned, and what the system said about it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Hidden {
+    pub used: u64,
+    pub notes: Vec<String>,
+}
+
 /// Every row of the tab.
 #[cfg(test)]
 pub fn rows(tree: &Tree, mode: SizeMode, now: i64, duplicates: Duplicates) -> Vec<CleanRow> {
-    let mut rows = found_rows(tree, mode, now);
+    let mut rows = found_rows(tree, mode, now, &[], None);
     rows.extend(duplicate_rows(tree, duplicates));
     rows
 }
 
 /// Rebuildable folders and old files. These walk the whole tree, so the
 /// controller keeps them while the duplicate search updates its progress.
-pub fn found_rows(tree: &Tree, mode: SizeMode, now: i64) -> Vec<CleanRow> {
+pub fn found_rows(
+    tree: &Tree,
+    mode: SizeMode,
+    now: i64,
+    spots: &[Spot],
+    hidden: Option<&Hidden>,
+) -> Vec<CleanRow> {
     let root = tree.root();
     let root_path = tree.path(root);
     let mut rows = Vec::new();
+
+    if !spots.is_empty() {
+        let total: u64 = spots.iter().map(|s| tree.node(s.node).size_in(mode)).sum();
+        rows.push(heading(
+            "System and app caches",
+            &format!(
+                "{} where the system and apps keep files they can do without. Each says how to \
+                 remove it; some should go through the system's own cleanup.",
+                format_size(total)
+            ),
+            "",
+        ));
+        rows.extend(spots.iter().take(MAX_ROWS).map(|spot| {
+            let advice = match spot.safety {
+                Safety::Safe => spot.how.to_string(),
+                Safety::CheckFirst => format!("check first: {}", spot.how),
+                Safety::UseTool => format!("don't delete: {}", spot.how),
+            };
+            CleanRow {
+                kind: ITEM,
+                id: spot.node as i32,
+                title: {
+                    let name = tree.name(spot.node);
+                    if name.eq_ignore_ascii_case(spot.what) {
+                        name.into_owned()
+                    } else {
+                        format!("{name} · {}", spot.what)
+                    }
+                }
+                .into(),
+                subtitle: format!("{} · {advice}", place(tree, &root_path, spot.node)).into(),
+                detail: format_size(tree.node(spot.node).size_in(mode)).into(),
+                ..Default::default()
+            }
+        }));
+    }
+
+    if let Some(hidden) = hidden {
+        let scanned = tree.node(root).allocated;
+        let gap = hidden.used.saturating_sub(scanned);
+        if gap >= (hidden.used / 50).max(1024 * 1024 * 1024) {
+            let unreadable = std::iter::once(root)
+                .chain(tree.descendants(root))
+                .filter(|&id| tree.node(id).has(flags::ERROR))
+                .count();
+            let mut text = hidden.notes.join(" ");
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(
+                "The rest is space the file system reserves or uses for its own records, and \
+                 other users' files",
+            );
+            if unreadable > 0 {
+                text.push_str(&format!(
+                    ", and {unreadable} folder{} DiskTree couldn't read",
+                    if unreadable == 1 { "" } else { "s" }
+                ));
+            }
+            text.push('.');
+            rows.push(heading(
+                &format!("{} not in any file", format_size(gap)),
+                &text,
+                "",
+            ));
+        }
+    }
 
     let mut folders: Vec<_> = rebuildable(tree, root)
         .into_iter()
