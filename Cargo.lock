@@ -1046,7 +1046,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "disktree-core",
  "jni 0.22.4",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "disktree-core",
@@ -1068,12 +1068,13 @@ dependencies = [
 
 [[package]]
 name = "disktree-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "libc",
  "tempfile",
  "windows-sys 0.61.2",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -5987,6 +5988,12 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
 
 [[package]]
 name = "yazi"

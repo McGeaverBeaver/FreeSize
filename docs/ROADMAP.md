@@ -1,6 +1,6 @@
 # Roadmap
 
-What's planned, in rough order. Nothing here is built yet unless marked done.
+What's planned, in rough order. Nothing here is built yet unless listed under Done.
 
 ## Ground rules for every part
 
@@ -27,21 +27,60 @@ else that can delete:
 - 0.3: Free up space (trash, old installers, thumbnails, leftovers), files
   saved by apps with Browse, biggest caches, daily size recording, the
   usage-history fix.
+- 0.4 (phases 2b and 2c): storage chart with a forecast, Growing fast apps,
+  drive trends on every platform; the Clean up tab with rebuildable folders,
+  files not changed in a year and a duplicate finder; `--cleanup` and
+  `--duplicates` on the command line.
 
-## Phase 2b: growth (phone and desktop)
+Left over from 2b/2c: old downloads and screen recordings as their own
+groups, and Docker build cache (part of the Docker work in phases 3 and 4).
 
-- "Grew 1.2 GB in 30 days" tags and a Growing fast group, from the size
-  samples the app history already records.
-- A storage chart (apps, files, system, free over time).
-- Forecast: "at this rate the disk is full in about 3 weeks".
+## Phase 2d: see it at a glance (every platform)
 
-## Phase 2c: files (every platform)
+Make the biggest things recognisable before reading a single label.
 
-- Duplicate finder: group by size, then a partial hash, then a full hash.
-- Big and old files, old downloads, screen recordings.
-- Developer and package junk on desktops: `target/`, `node_modules/`,
-  `.gradle`, virtualenvs, package manager caches, Docker build cache. Shown
-  with how to rebuild them.
+**Icons on the treemap**
+- The largest blocks (those big enough to hold one) show an icon: the app's
+  own icon when the folder belongs to an app, otherwise one for the kind of
+  content (videos, photos, music, archives, disk images, games, code, caches).
+- Icons and labels scale with the block; tiny blocks stay plain.
+
+**Bubble view**
+- A second way to draw the same folder: one circle per item, its area
+  proportional to its size, the biggest in the middle, each showing its icon
+  (Steam's icon on the Steam bubble, each game's artwork on the game).
+- Tap or click a bubble to zoom into it: Steam opens into its games,
+  screenshots, shader cache and so on, and those open further, down to files.
+  A breadcrumb trail and Back/Up zoom out again. The zoom animates.
+- Small items are folded into one "Other" bubble so it stays readable.
+- Long-press or hover: size, share of the parent, last change, and the usual
+  actions (open, show in folder, delete after confirming).
+- One toggle switches between Treemap and Bubbles; both follow the folder
+  tree's selection.
+- An **Apps** bubble view on the start screen: every app as one bubble sized
+  by everything it uses. On Android that's code + data + cache + the files it
+  saved; on desktops the install folder plus its data and cache folders
+  (AppData, Library, `~/.cache`, `~/.var/app`), gathered from wherever they
+  are, even across drives. Zooming into an app shows those parts.
+
+**Where icons and owners come from**
+
+| Platform | Apps | Games and other content |
+|---|---|---|
+| Android | `PackageManager` icons; `Android/data`, `media` and `obb` folders by package name | MediaStore file types |
+| Windows | Installed programs from the registry (install folder, `DisplayIcon`); icons from the shell | Steam libraries: each `appmanifest_*.acf` names a game folder, and Steam's library cache has the artwork. Epic and GOG manifests likewise |
+| macOS | `.app` bundles, `~/Library/Containers/<bundle id>` | Steam as on Windows |
+| Linux | `.desktop` files and the icon theme; Flatpak (`~/.var/app/<id>`) and Snap | Steam as on Windows |
+
+Icons are cached on disk after the first load, and only the largest visible
+items load theirs.
+
+**Extras that fit here**
+- Colour or outline by what can go (rebuildable, duplicate, untouched for a
+  year), so the bubbles double as a cleanup map.
+- "Since last scan" mode: bubbles that grew get a ring and a "+2.1 GB" badge.
+- The Hub (phase 3) reuses it: one bubble per device, then its apps and
+  folders.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 
@@ -176,6 +215,6 @@ Suggestions this enables:
 
 ## Decided
 
-- Phases 2b and 2c come before the Hub.
+- Phases 2b and 2c come before the Hub (done in 0.4).
 - Screenless devices use a designated approver who can only be changed on
   the device (see Approvals).

@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 crossbeam-channel = "0.5.17"
+# Pure Rust, so nothing extra to compile for Android or Windows.
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

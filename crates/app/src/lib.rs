@@ -8,6 +8,8 @@ mod android;
 mod apps;
 mod cleanup;
 mod controller;
+mod filecleanup;
+mod growth;
 mod history;
 mod home;
 mod insights;

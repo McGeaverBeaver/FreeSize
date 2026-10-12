@@ -11,6 +11,8 @@ pub const UNUSED_AFTER: u64 = 90 * DAY;
 const GRACE: u64 = 14 * DAY;
 /// Smaller caches aren't worth clearing by hand.
 const CACHE_WORTH_LISTING: u64 = 10 * 1024 * 1024;
+/// Apps that grew this much in a month are growing fast.
+pub const GROWING: u64 = 100 * 1024 * 1024;
 
 /// Where an app was installed from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,17 +102,20 @@ pub enum View {
     Media,
     /// Apps by cache size.
     Cache,
+    /// Apps by how much they grew over the last month.
+    Growing,
     Removed,
 }
 
 impl View {
-    pub const ALL: [View; 7] = [
+    pub const ALL: [View; 8] = [
         View::All,
         View::Unused,
         View::NeverOpened,
         View::NotFromStore,
         View::Media,
         View::Cache,
+        View::Growing,
         View::Removed,
     ];
 
@@ -122,6 +127,7 @@ impl View {
             View::NotFromStore => "not-from-store",
             View::Media => "media",
             View::Cache => "cache",
+            View::Growing => "growing",
             View::Removed => "removed",
         }
     }
@@ -138,6 +144,7 @@ impl View {
             View::NotFromStore => "Not from an app store",
             View::Media => "Files saved by apps",
             View::Cache => "Biggest caches",
+            View::Growing => "Growing fast",
             View::Removed => "Removed apps",
         }
     }
@@ -165,10 +172,16 @@ impl View {
             }
             View::NotFromStore => !app.own && !Source::of(app).reinstallable() && !app.system,
             View::Cache => app.cache_bytes >= CACHE_WORTH_LISTING,
+            View::Growing => growing(app),
             // Listed from the report's media and history, not per app.
             View::Media | View::Removed => false,
         }
     }
+}
+
+/// Grew by [`GROWING`] or more over the last month.
+pub fn growing(app: &AppUsage) -> bool {
+    app.growth.is_some_and(|g| g.bytes >= GROWING as i64)
 }
 
 /// What to know about a few well-known apps before clearing or removing them.

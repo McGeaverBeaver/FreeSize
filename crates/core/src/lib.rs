@@ -16,6 +16,7 @@
 
 mod format;
 mod platform;
+mod reclaim;
 mod scan;
 mod space;
 mod stats;
@@ -23,6 +24,10 @@ mod tree;
 pub mod treemap;
 
 pub use format::{format_count, format_size};
+pub use reclaim::{
+    DuplicateCandidates, DuplicateGroup, DuplicateProgress, Rebuildable, duplicate_candidates,
+    find_duplicates, old_files, rebuildable,
+};
 pub use scan::{ProgressSnapshot, ScanOptions, ScanProgress, ScanResult, scan};
 pub use space::{DiskSpace, disk_space};
 pub use stats::{ExtensionStat, extension_stats, largest_files};

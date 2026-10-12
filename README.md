@@ -21,6 +21,15 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 - **Treemap** of the selected folder, three levels deep. Click a block to zoom
   in, and use **Up** to zoom out.
 - **Largest files** and **file types** (size by extension) for the selected folder.
+- **Clean up** tab for the scanned folder: folders that tools rebuild
+  (`node_modules`, Rust `target`, `.gradle`, Python virtual environments,
+  package manager caches, …) with how to get each back, large files nobody has
+  changed in over a year, and a duplicate file finder. Select one and use
+  Delete; nothing is deleted without asking. See [Clean up tab](#clean-up-tab).
+- **Drive trends** on the start screen: how much each drive grew over the last
+  30 days and, at that rate, when it will be full. DiskTree records each
+  drive's used space once a day it's opened, so trends appear after a few
+  days.
 - **Size on disk vs. file size**, switchable. Compressed, sparse and cloud-only
   files differ a lot between the two.
 - **Delete**: moves to the Recycle Bin or Trash on desktop, and permanently
@@ -38,6 +47,9 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   app to see when you last used it and where it came from, then uninstall,
   archive, save its APK or clear its cache. See
   [Cleaning up apps](#cleaning-up-apps).
+- **Growth (Android)**: a chart of the phone's storage over time with a
+  forecast of when it fills up, and a *Growing fast* group of apps that grew
+  by 100 MB or more in a month.
 - **Command-line tool** (`disktree`) sharing the same core.
 
 ## Platform notes
@@ -96,7 +108,30 @@ Total: 4.31 GB (4.53 GB size on disk)
 ```
 
 Run `disktree --help` for all options (`--apparent` for file sizes,
-`--cross-filesystems`, `--min-percent`, …).
+`--cross-filesystems`, `--min-percent`, …). `--cleanup` adds rebuildable
+folders and files not changed in a year, and `--duplicates` finds duplicate
+files of 1 MB or more (it reads them, so it takes a while). Both only list;
+the command line tool never deletes anything.
+
+### Clean up tab
+
+After a scan, the **Clean up** tab (**Clean** on phones) lists:
+
+- **Rebuildable folders**: build output, installed packages and caches that a
+  tool makes again when needed, each with the command that does it, for
+  example *node_modules · npm install puts them back*. Folders are matched by
+  name and, where the name is common, by what sits next to them: `target`
+  only next to a `Cargo.toml`, `build` only next to a Gradle file.
+- **Not changed in over a year**: the largest files (10 MB and up) whose
+  modification date is more than a year ago.
+- **Duplicate files**: press *Find duplicates* to compare files of 1 MB or
+  more. Files are grouped by size, then by a quick hash of their first and
+  last 64 KB, and only then hashed in full, so most files are never read
+  completely. Hard links to the same file aren't duplicates. Cloud-only
+  files are skipped so nothing is downloaded.
+
+Tap an entry to select it in the tree, then use Delete. On desktops that
+moves it to the Recycle Bin or Trash.
 
 ### Android
 
@@ -219,6 +254,7 @@ back is easy to find:
 | Not from an app store | Apps installed from a downloaded file or a computer. No store can give them back, so save the APK first. |
 | Files saved by apps | Photos, videos, downloads and other files each app saved to your storage, with where most of them are. |
 | Biggest caches | Apps by cache size, to clear the big ones in their info pages. |
+| Growing fast | Apps that grew by 100 MB or more over the last month, fastest first. |
 | Removed apps | Apps DiskTree has seen before that are gone, so you can find one again by name. |
 
 Apps that work without being opened are never suggested for removal:
@@ -259,6 +295,12 @@ files access:
 - **Delete leftovers of removed apps**: their folders in `Android/media`.
 
 DiskTree asks before deleting anything, then measures again.
+
+**Storage over time** charts apps, your files and the system day by day,
+under the storage breakdown. It says how much used space grew over the last
+30 days and, when it's growing, about when the storage will be full at that
+rate. DiskTree records a sample each day it measures the apps, so the chart
+starts with the first two days and the growth figures need a few days.
 
 After you come back from uninstalling an app or from its info page, DiskTree
 measures the apps again.

@@ -8,6 +8,7 @@ use std::path::Path;
 
 use crate::apps::{Abilities, AppReport, AppUsage};
 use crate::cleanup::{Junk, JunkKind, MediaUse, SAVED_APKS};
+use crate::growth::{self, DriveLog};
 use crate::history::Entry;
 use crate::insights::{self, Source, View, ago, date, duration};
 use crate::{HomeRow, locations};
@@ -50,6 +51,7 @@ const BREAKDOWN: i32 = 2;
 const APP: i32 = 3;
 const NOTICE: i32 = 4;
 const GROUP: i32 = 5;
+const CHART: i32 = 6;
 
 /// Android keeps roughly this much usage history.
 const USAGE_HISTORY: u64 = 2 * 365 * 24 * 60 * 60;
@@ -70,7 +72,7 @@ pub enum AppsState {
 
 /// Everything besides the app data that changes the home screen.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Options {
+pub struct Options<'a> {
     /// Which group of apps the list shows.
     pub view: View,
     /// A new measurement is running; the previous one stays on screen.
@@ -79,11 +81,17 @@ pub struct Options {
     pub abilities: Abilities,
     /// What Android's clear-cache dialog freed the last time it was used.
     pub cache_freed: Option<u64>,
+    /// Past sizes of the drives, for their trends.
+    pub drives: Option<&'a DriveLog>,
 }
 
-pub fn rows(apps: &AppsState, options: Options) -> Vec<HomeRow> {
+pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
     let mut rows = vec![heading("Choose a drive or folder to analyze", "", None)];
-    rows.extend(locations::list().iter().map(drive_row));
+    rows.extend(
+        locations::list()
+            .iter()
+            .map(|location| drive_row(location, options.drives)),
+    );
     let title = "Apps & system";
     match apps {
         AppsState::Unsupported => {}
@@ -128,6 +136,7 @@ pub fn rows(apps: &AppsState, options: Options) -> Vec<HomeRow> {
             if let Some(space) = disk_space(&locations::default_path()) {
                 rows.push(breakdown_row(report, space));
             }
+            rows.extend(chart_row(report));
             rows.extend(free_up_rows(report, options));
             rows.extend(
                 View::ALL
@@ -151,6 +160,21 @@ pub fn rows(apps: &AppsState, options: Options) -> Vec<HomeRow> {
                     let mut row = app_row(app, largest, report);
                     row.detail = format_size(app.cache_bytes).into();
                     row.fraction = share(app.cache_bytes, largest);
+                    row
+                }));
+            } else if view == View::Growing {
+                let mut apps: Vec<(&AppUsage, u64)> = report
+                    .apps
+                    .iter()
+                    .filter(|app| in_view(report, app, view))
+                    .map(|app| (app, grown(app)))
+                    .collect();
+                apps.sort_by_key(|&(_, grew)| std::cmp::Reverse(grew));
+                let largest = apps.first().map_or(1, |&(_, grew)| grew.max(1));
+                rows.extend(apps.into_iter().map(|(app, grew)| {
+                    let mut row = app_row(app, largest, report);
+                    row.detail = format!("+{}", format_size(grew)).into();
+                    row.fraction = share(grew, largest);
                     row
                 }));
             } else if view == View::Media {
@@ -186,9 +210,11 @@ fn share(part: u64, total: u64) -> f32 {
     }
 }
 
-fn drive_row(location: &locations::Location) -> HomeRow {
-    let (detail, fraction) = match disk_space(&location.path) {
-        Some(space) if space.total > 0 => (
+fn drive_row(location: &locations::Location, drives: Option<&DriveLog>) -> HomeRow {
+    let path = location.path.to_string_lossy();
+    let space = disk_space(&location.path).filter(|space| space.total > 0);
+    let (detail, fraction) = match space {
+        Some(space) => (
             format!(
                 "{} free of {}",
                 format_size(space.free),
@@ -196,9 +222,12 @@ fn drive_row(location: &locations::Location) -> HomeRow {
             ),
             share(space.used(), space.total),
         ),
-        _ => (String::new(), 0.0),
+        None => (String::new(), 0.0),
     };
-    let path = location.path.to_string_lossy();
+    let (tags, warn) = space
+        .zip(drives)
+        .and_then(|(space, drives)| drives.trend(&path, space.free))
+        .unwrap_or_default();
     HomeRow {
         kind: DRIVE,
         title: location.label.as_str().into(),
@@ -206,8 +235,15 @@ fn drive_row(location: &locations::Location) -> HomeRow {
         detail: detail.into(),
         fraction,
         key: path.as_ref().into(),
+        tags: tags.into(),
+        warn,
         ..Default::default()
     }
+}
+
+/// How much an app grew over the last month; 0 if it didn't.
+fn grown(app: &AppUsage) -> u64 {
+    app.growth.map_or(0, |g| g.bytes.max(0) as u64)
 }
 
 fn heading(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
@@ -240,7 +276,7 @@ fn in_view(report: &AppReport, app: &AppUsage, view: View) -> bool {
 
 /// The "Free up space" section: clearing every app's cache, the trash, old
 /// installers, the thumbnail cache and leftovers of removed apps.
-fn free_up_rows(report: &AppReport, options: Options) -> Vec<HomeRow> {
+fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
     const CACHE_WORTH_IT: u64 = 50 * 1024 * 1024;
     let title = "Free up space";
     if !options.storage_access {
@@ -445,6 +481,12 @@ fn group_row(report: &AppReport, view: View, selected: View) -> Option<HomeRow> 
             .iter()
             .filter(|app| in_view(report, app, view))
             .fold((0, 0), |(n, b), app| (n + 1, b + app.cache_bytes))
+    } else if view == View::Growing {
+        report
+            .apps
+            .iter()
+            .filter(|app| in_view(report, app, view))
+            .fold((0, 0), |(n, b), app| (n + 1, b + grown(app)))
     } else {
         report
             .apps
@@ -456,7 +498,9 @@ fn group_row(report: &AppReport, view: View, selected: View) -> Option<HomeRow> 
         return None;
     }
     let apps = if count == 1 { "app" } else { "apps" };
-    let detail = if bytes > 0 {
+    let detail = if bytes > 0 && view == View::Growing {
+        format!("{count} {apps} · +{}", format_size(bytes))
+    } else if bytes > 0 {
         format!("{count} {apps} · {}", format_size(bytes))
     } else {
         format!("{count} {apps}")
@@ -471,7 +515,7 @@ fn group_row(report: &AppReport, view: View, selected: View) -> Option<HomeRow> 
     })
 }
 
-fn explanation(view: View, options: Options) -> String {
+fn explanation(view: View, options: Options<'_>) -> String {
     match view {
         View::All => "Biggest first. Tap an app to see when you last used it, and to \
                       uninstall it, archive it or clear its cache."
@@ -504,6 +548,10 @@ fn explanation(view: View, options: Options) -> String {
                         safe to clear. Tap an app, choose App info, then Storage & cache → \
                         Clear cache."
             .into(),
+        View::Growing => "Apps that grew by 100 MB or more over the last month, fastest \
+                          first. It's usually downloads, offline music and videos, or cache \
+                          piling up. DiskTree measures apps each day it's opened."
+            .into(),
         View::Removed => "Apps DiskTree has seen that are no longer installed. Tap one to \
                           find it again."
             .into(),
@@ -524,6 +572,13 @@ fn tags(app: &AppUsage, report: &AppReport) -> String {
             Some(t) => format!("opened {}", ago(report.now, t)),
             None => never_opened(app, report.now).into(),
         });
+    }
+    if let Some(growth) = app.growth.filter(|_| insights::growing(app)) {
+        tags.push(format!(
+            "+{} in {} days",
+            format_size(growth.bytes.unsigned_abs()),
+            growth.days
+        ));
     }
     if let Some(media) = media_of(report, &app.package).filter(|m| m.bytes >= MEDIA_TAG) {
         tags.push(format!("{} of files", format_size(media.bytes)));
@@ -607,6 +662,22 @@ fn breakdown_row(report: &AppReport, space: DiskSpace) -> HomeRow {
         free_label: format!("Free {}", format_size(b.free)).into(),
         ..Default::default()
     }
+}
+
+/// Storage over time, once there are samples from two days.
+fn chart_row(report: &AppReport) -> Option<HomeRow> {
+    let chart = growth::chart(&report.storage)?;
+    Some(HomeRow {
+        kind: CHART,
+        title: "Storage over time".into(),
+        subtitle: growth::storage_summary(&report.storage).into(),
+        chart_used: chart.used.into(),
+        chart_files: chart.files.into(),
+        chart_apps: chart.apps.into(),
+        chart_start: chart.start.into(),
+        chart_end: chart.end.into(),
+        ..Default::default()
+    })
 }
 
 fn app_row(app: &AppUsage, largest: u64, report: &AppReport) -> HomeRow {
@@ -723,6 +794,17 @@ pub fn app_sheet(app: &AppUsage, report: &AppReport, abilities: Abilities) -> Sh
                 folder_name(&media.folder)
             )
         });
+    }
+    if let Some(growth) = app
+        .growth
+        .filter(|g| g.bytes.unsigned_abs() >= WORTH_SHOWING)
+    {
+        let verb = if growth.bytes < 0 { "Shrank" } else { "Grew" };
+        facts.push(format!(
+            "{verb} {} over the last {} days.",
+            format_size(growth.bytes.unsigned_abs()),
+            growth.days
+        ));
     }
     if let Some(category) = insights::category(app.category) {
         facts.push(format!("Category: {category}."));
@@ -888,7 +970,7 @@ mod tests {
         }
     }
 
-    fn options(view: View) -> Options {
+    fn options(view: View) -> Options<'static> {
         Options {
             view,
             storage_access: true,
@@ -1139,6 +1221,50 @@ mod tests {
             card.subtitle
                 .starts_with("Android's cache cleaner only freed 2.00 MB")
         );
+    }
+
+    #[test]
+    fn growing_apps_and_storage_chart() {
+        use crate::growth::Change;
+        use crate::history::StorageSample;
+        const MB: u64 = 1024 * 1024;
+        let mut report = report();
+        report.apps[0].growth = Some(Change {
+            bytes: 300 * MB as i64,
+            days: 30,
+        });
+        report.apps[1].growth = Some(Change {
+            bytes: 20 * MB as i64,
+            days: 30,
+        });
+        let home = rows(&AppsState::Ready(report.clone()), options(View::Growing));
+        let group = home.iter().find(|r| r.kind == GROUP && r.selected).unwrap();
+        assert_eq!(group.detail, "1 app · +300 MB");
+        let apps = of_kind(&home, APP);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].detail, "+300 MB");
+        assert!(apps[0].tags.contains("+300 MB in 30 days"));
+        let sheet = app_sheet(&report.apps[0], &report, Abilities::default());
+        assert!(
+            sheet
+                .facts
+                .contains(&"Grew 300 MB over the last 30 days.".to_string())
+        );
+        assert!(of_kind(&home, CHART).is_empty());
+
+        let sample = |day: u64| StorageSample {
+            day,
+            total: 1000 * MB,
+            free: 500 * MB,
+            apps: 200 * MB,
+            files: 100 * MB,
+        };
+        report.storage = vec![sample(20_000), sample(20_010)];
+        let home = rows(&AppsState::Ready(report), options(View::All));
+        let chart = of_kind(&home, CHART);
+        assert_eq!(chart.len(), 1);
+        assert_eq!(chart[0].subtitle, "Used space hardly changed in 10 days.");
+        assert!(chart[0].chart_used.starts_with("M 0 100 L 0.0 50.0"));
     }
 
     #[test]

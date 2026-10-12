@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use clap::Parser;
 use disktree_core::{
-    NodeId, ScanOptions, ScanProgress, SizeMode, SortKey, Tree, extension_stats, flags,
-    format_count, format_size, largest_files, scan,
+    DuplicateProgress, NodeId, ScanOptions, ScanProgress, SizeMode, SortKey, Tree,
+    duplicate_candidates, extension_stats, flags, format_count, format_size, largest_files,
+    old_files, rebuildable, scan,
 };
 
 /// Shows what is using space on a drive or in a folder.
@@ -44,6 +45,16 @@ struct Args {
     /// Scanner threads (0 = automatic).
     #[arg(short = 'j', long, default_value_t = 0)]
     threads: usize,
+
+    /// Also list folders that tools rebuild (node_modules, target, caches…)
+    /// and large files not changed in over a year. Nothing is deleted.
+    #[arg(short, long)]
+    cleanup: bool,
+
+    /// Also find duplicate files of 1 MB or more. Reads the files, so it
+    /// takes a while. Nothing is deleted.
+    #[arg(long)]
+    duplicates: bool,
 }
 
 fn main() -> ExitCode {
@@ -147,10 +158,90 @@ fn main() -> ExitCode {
         }
     }
 
+    if args.cleanup {
+        print_cleanup(tree, mode);
+    }
+    if args.duplicates {
+        print_duplicates(tree, show_progress);
+    }
+
     if result.cancelled {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+const MB: u64 = 1024 * 1024;
+const YEAR: i64 = 365 * 24 * 60 * 60;
+
+fn print_cleanup(tree: &Tree, mode: SizeMode) {
+    let mut folders: Vec<_> = rebuildable(tree, tree.root())
+        .into_iter()
+        .filter(|r| tree.node(r.node).size_in(mode) >= MB)
+        .collect();
+    folders.sort_by_key(|r| std::cmp::Reverse(tree.node(r.node).size_in(mode)));
+    let total: u64 = folders
+        .iter()
+        .map(|r| tree.node(r.node).size_in(mode))
+        .sum();
+    println!("\nRebuildable folders: {}", format_size(total));
+    for r in &folders {
+        println!(
+            "  {:>9}  {}  ({}; {})",
+            format_size(tree.node(r.node).size_in(mode)),
+            tree.path(r.node).display(),
+            r.what,
+            r.how
+        );
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    println!("\nNot changed in over a year");
+    for id in old_files(tree, tree.root(), mode, now - YEAR, 20) {
+        let size = tree.node(id).size_in(mode);
+        if size >= 10 * MB {
+            println!("  {:>9}  {}", format_size(size), tree.path(id).display());
+        }
+    }
+}
+
+fn print_duplicates(tree: &Tree, show_progress: bool) {
+    let candidates = duplicate_candidates(tree, tree.root(), MB);
+    let progress = DuplicateProgress::new();
+    let groups = std::thread::scope(|s| {
+        let handle = s.spawn(|| candidates.find(&progress));
+        while show_progress && !handle.is_finished() {
+            eprint!(
+                "\r\x1b[2KComparing files… {} of {}",
+                format_count(progress.done.load(std::sync::atomic::Ordering::Relaxed)),
+                format_count(progress.files.load(std::sync::atomic::Ordering::Relaxed))
+            );
+            let _ = std::io::stderr().flush();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if show_progress {
+            eprint!("\r\x1b[2K");
+        }
+        handle.join().expect("duplicate finder panicked")
+    });
+    let wasted: u64 = groups.iter().map(|g| g.wasted()).sum();
+    println!(
+        "\nDuplicate files: {} sets, {} in extra copies",
+        format_count(groups.len() as u64),
+        format_size(wasted)
+    );
+    for group in &groups {
+        println!(
+            "  {} copies of {}",
+            group.nodes.len(),
+            format_size(group.size)
+        );
+        for &id in &group.nodes {
+            println!("    {}", tree.path(id).display());
+        }
     }
 }
 

@@ -101,23 +101,43 @@ space on the start screen.
   (1500 by default) to keep rendering cheap. Items come out parent-first, so
   drawing them in order puts children on top.
 
+### Reclaimable space (`reclaim.rs`)
+
+- `rebuildable` walks folders and matches a table of rules: a folder name,
+  optionally a parent name (`Caches` under `Library`) and sibling files that
+  must exist (`target` next to `Cargo.toml`). A folder holding `pyvenv.cfg`
+  is a virtual environment. Matched folders aren't searched further.
+- `old_files` is the largest files modified before a cut-off date.
+- `duplicate_candidates` collects files of at least a minimum size, skipping
+  hard-link duplicates, cloud placeholders and unreadable entries, and groups
+  them by size. It owns plain paths so it can move to a worker thread.
+  `DuplicateCandidates::find` then hashes 64 KB from each end of every file
+  with the same size (xxh3-128), and only files that still match get a full
+  hash. Progress and cancellation go through `DuplicateProgress` atomics.
+
 ## App
 
 ### UI (`ui/app.slint`)
 
 The whole interface is one Slint file. Rust feeds it plain structs
-(`TreeRow`, `MapRect`, `FileRow`, `TypeRow`, `HomeRow`, `SheetAction`) and receives
-callbacks.
+(`TreeRow`, `MapRect`, `FileRow`, `TypeRow`, `HomeRow`, `CleanRow`, `SheetAction`)
+and receives callbacks.
 
-- **Wide layout** (≥ 760 px): folder tree on the left; treemap, largest files
-  and file types in tabs on the right.
-- **Compact layout** (phones, narrow windows): four tabs, larger touch rows, no
+- **Wide layout** (≥ 760 px): folder tree on the left; treemap, largest files,
+  file types and Clean up in tabs on the right.
+- **Compact layout** (phones, narrow windows): five tabs, larger touch rows, no
   percent column.
 - `compact` is set from a `changed width` handler rather than bound to
   `width`. A binding would make the window's size depend on itself through the
   layout.
 - The treemap is a list of absolutely positioned rectangles computed in Rust.
   Its size is reported back through `map-resized` whenever the pane changes.
+- The home screen and the Clean up tab are scrolling layouts, not list
+  views. Slint measures wrapped text as a single line when it computes a
+  layout's preferred height, so their scroll height comes from the position
+  of an empty marker after the last row instead.
+- The storage chart is three filled `Path`s whose SVG commands Rust builds
+  (`growth::chart`), drawn over each other so the areas stack.
 
 ### Controller (`controller.rs`)
 
@@ -128,7 +148,8 @@ shared as `Rc<RefCell<Controller>>`. UI callbacks borrow it through
 updating the UI), the job is retried on the next event loop turn instead of
 panicking.
 
-Long-running work (scanning, deleting) runs on a plain thread and writes its
+Long-running work (scanning, deleting, measuring apps, the duplicate
+search) runs on a plain thread and writes its
 result into an `Arc<Mutex<Option<T>>>`. A 100 ms Slint timer polls those
 results and the scan progress, and stops itself when nothing is pending. That
 keeps all UI updates on the UI thread with no `Send` requirements on UI state.
@@ -247,8 +268,20 @@ and picks the folder holding most of them for the Browse button. Deleting
 runs on a worker thread after the shared confirmation dialog.
 
 The history also keeps a daily size sample per app (about four months) and a
-daily snapshot of the storage breakdown (a year), for showing growth later.
-It is written as compact JSON.
+daily snapshot of the storage breakdown (a year). It is written as compact
+JSON.
+
+`growth.rs` reads growth from those samples: `change` compares the newest
+sample with the newest one at least 30 days older (or the oldest, with less
+history), and `forecast` fits a least-squares line through the last 30 days
+of used space and divides the free space by its slope. Forecasts need a
+week of history and are shown only up to about two years out. The same code
+gives drives their trends: `record_drives` stores each start-screen drive's
+used space once a day in `drive-history.json` in DiskTree's data folder
+(`%LOCALAPPDATA%\DiskTree`, `~/Library/Application Support/DiskTree`,
+`$XDG_DATA_HOME/disktree` or `~/.local/share/disktree`, and the app's
+private storage on Android). Samples taken when the drive had another size
+are ignored, so a replaced disk starts a new history.
 
 `home.rs` turns all of this into the home screen's rows (drives, the breakdown
 bar, the Free up space cards, the groups, then the selected group's apps) and
@@ -345,8 +378,8 @@ script only publishes a clean checkout that matches GitHub, and lets
 
 ## Possible next steps
 
-See [docs/ROADMAP.md](docs/ROADMAP.md): growth and file cleanup, the DiskTree
-Hub dashboard with device-confirmed actions, an Unraid plugin, and Nextcloud
+See [docs/ROADMAP.md](docs/ROADMAP.md): icons on the treemap and a bubble
+view, the DiskTree Hub dashboard with device-confirmed actions, an Unraid plugin, and Nextcloud
 integration. The Windows MFT reader (reading the NTFS Master File Table
 directly, as WizTree does, for a whole-drive scan in seconds) would be an
 optional fast path for admins.

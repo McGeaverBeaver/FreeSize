@@ -34,6 +34,19 @@ export struct FileRow {
     fraction: float,
 }
 
+/// One row of the scan view's Clean up tab.
+export struct CleanRow {
+    /// 0 section heading, 1 file or folder, 2 duplicate group label.
+    kind: int,
+    /// Node to select, for files and folders.
+    id: int,
+    title: string,
+    subtitle: string,
+    detail: string,
+    /// Button text for headings; empty for none.
+    action: string,
+}
+
 /// A button of the app sheet.
 export struct SheetAction {
     id: string,
@@ -52,7 +65,7 @@ export struct TypeRow {
 /// One row of the home screen.
 export struct HomeRow {
     /// 0 drive or folder, 1 section heading, 2 storage breakdown, 3 app,
-    /// 4 notice, 5 app group.
+    /// 4 notice, 5 app group, 6 storage chart.
     kind: int,
     title: string,
     subtitle: string,
@@ -63,9 +76,11 @@ export struct HomeRow {
     key: string,
     /// Button text for headings and notices; empty for none.
     action: string,
-    /// Apps: where it came from and when it was last used.
+    /// Apps: where it came from and when it was last used. Drives: how
+    /// fast they fill up.
     tags: string,
     /// Apps: shown in the warning color (no store can reinstall it).
+    /// Drives: full within a month at this rate.
     warn: bool,
     /// Groups: the one the list shows.
     selected: bool,
@@ -77,6 +92,13 @@ export struct HomeRow {
     files-label: string,
     system-label: string,
     free-label: string,
+    /// Storage chart: SVG paths of the stacked areas in a 1000 × 100 box,
+    /// and the dates at either end.
+    chart-used: string,
+    chart-files: string,
+    chart-apps: string,
+    chart-start: string,
+    chart-end: string,
 }
 
 global Theme {
@@ -317,6 +339,113 @@ component LargestPane inherits Rectangle {
     }
 }
 
+/// Folders tools rebuild, old large files and duplicates. Selecting a row
+/// selects the item in the tree, where the selection bar can delete it.
+component CleanupPane inherits Rectangle {
+    in property <[CleanRow]> rows;
+    in property <int> selected-id;
+    callback select(int);
+    callback action();
+
+    // Sized like the home screen's list; see HomePane.
+    scroll := ScrollView {
+        content-width: self.visible-width;
+        content-height: max(column.preferred-height, end.y + 10px);
+        column := VerticalLayout {
+            y: 0;
+            width: scroll.visible-width;
+            height: self.preferred-height * 2 + 1000px;
+            alignment: start;
+            padding: 10px;
+            for row in root.rows: VerticalLayout {
+                if row.kind == 0: VerticalLayout {
+                    padding-top: 10px;
+                    padding-bottom: 6px;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: row.title;
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            wrap: word-wrap;
+                        }
+
+                        if row.action != "": Button {
+                            text: row.action;
+                            clicked => {
+                                root.action();
+                            }
+                        }
+                    }
+
+                    if row.subtitle != "": Text {
+                        text: row.subtitle;
+                        font-size: 12px;
+                        color: Theme.dim;
+                        wrap: word-wrap;
+                    }
+                }
+
+                if row.kind == 1: Rectangle {
+                    property <bool> selected: row.id == root.selected-id;
+                    height: 46px;
+                    border-radius: 6px;
+                    background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
+                    touch := TouchArea {
+                        clicked => {
+                            root.select(row.id);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: row.title;
+                                overflow: elide;
+                                color: selected ? Palette.selection-foreground : Palette.foreground;
+                            }
+
+                            Text {
+                                text: row.subtitle;
+                                overflow: elide;
+                                font-size: 11px;
+                                color: selected ? Palette.selection-foreground : Theme.dim;
+                            }
+                        }
+
+                        if row.detail != "": Text {
+                            text: row.detail;
+                            vertical-alignment: center;
+                            color: selected ? Palette.selection-foreground : Palette.foreground;
+                        }
+                    }
+                }
+
+                if row.kind == 2: Text {
+                    text: row.title;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.dim;
+                    height: 26px;
+                    vertical-alignment: bottom;
+                }
+            }
+
+            end := Rectangle {
+                height: 0px;
+            }
+        }
+    }
+}
+
 component TypesPane inherits Rectangle {
     in property <[TypeRow]> types;
 
@@ -415,11 +544,19 @@ component HomePane inherits Rectangle {
     // A plain scrolling layout rather than a ListView: the list view keeps
     // a reused row's old height when its wrapped text changes, so rows would
     // overlap. The home screen has at most a few hundred rows.
+    //
+    // The scroll height comes from where the empty `end` marker lands, not
+    // from the layout's preferred height: Slint measures wrapped text as one
+    // line there, which left the last rows out of reach. The layout itself
+    // gets room to spare and keeps its rows at the top.
     scroll := ScrollView {
         content-width: self.visible-width;
-        content-height: column.preferred-height;
+        content-height: max(column.preferred-height, end.y + 12px);
         column := VerticalLayout {
+            y: 0;
             width: scroll.visible-width;
+            height: self.preferred-height * 2 + 1000px;
+            alignment: start;
             padding: 16px;
             padding-bottom: 0;
             for row in root.rows: Rectangle {
@@ -427,7 +564,7 @@ component HomePane inherits Rectangle {
                     padding-bottom: row.kind == 3 || row.kind == 5 ? 2px : 10px;
 
                     if row.kind == 0: Card {
-                        height: root.card-height;
+                        height: root.card-height + (row.tags != "" ? 16px : 0);
                         background: drive-touch.has-hover ? Palette.alternate-background : Palette.control-background;
                         drive-touch := TouchArea {
                             clicked => {
@@ -464,6 +601,80 @@ component HomePane inherits Rectangle {
                                 font-size: 11px;
                                 color: Theme.dim;
                                 overflow: elide;
+                            }
+
+                            if row.tags != "": Text {
+                                text: row.tags;
+                                font-size: 11px;
+                                color: row.warn ? Theme.warn : Theme.dim;
+                                overflow: elide;
+                            }
+                        }
+                    }
+
+                    if row.kind == 6: Card {
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 6px;
+                            Text {
+                                text: row.title;
+                                font-weight: 600;
+                            }
+
+                            Rectangle {
+                                height: 90px;
+                                border-radius: 4px;
+                                background: Theme.track;
+                                clip: true;
+                                Path {
+                                    width: 100%;
+                                    height: 100%;
+                                    viewbox-width: 1000;
+                                    viewbox-height: 100;
+                                    commands: row.chart-used;
+                                    fill: Theme.system;
+                                }
+
+                                Path {
+                                    width: 100%;
+                                    height: 100%;
+                                    viewbox-width: 1000;
+                                    viewbox-height: 100;
+                                    commands: row.chart-files;
+                                    fill: Theme.files;
+                                }
+
+                                Path {
+                                    width: 100%;
+                                    height: 100%;
+                                    viewbox-width: 1000;
+                                    viewbox-height: 100;
+                                    commands: row.chart-apps;
+                                    fill: Theme.apps;
+                                }
+                            }
+
+                            HorizontalLayout {
+                                Text {
+                                    text: row.chart-start;
+                                    font-size: 11px;
+                                    color: Theme.dim;
+                                }
+
+                                Text {
+                                    text: row.chart-end;
+                                    font-size: 11px;
+                                    color: Theme.dim;
+                                    horizontal-alignment: right;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+
+                            Text {
+                                text: row.subtitle;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
                             }
                         }
                     }
@@ -695,6 +906,10 @@ component HomePane inherits Rectangle {
                     }
                 }
             }
+
+            end := Rectangle {
+                height: 0px;
+            }
         }
     }
 }
@@ -772,6 +987,7 @@ export component AppWindow inherits Window {
     in property <[MapRect]> map-rects;
     in property <[FileRow]> largest-files;
     in property <[TypeRow]> file-types;
+    in property <[CleanRow]> cleanup-rows;
     in property <string> focus-label;
     in property <int> selected-id: -1;
     in property <string> selected-title;
@@ -822,6 +1038,7 @@ export component AppWindow inherits Window {
     callback delete-cancelled();
     callback grant-permission();
     callback sheet-action(string);
+    callback cleanup-action();
 
     forward-focus: keys;
 
@@ -1050,6 +1267,20 @@ export component AppWindow inherits Window {
                                 types: root.file-types;
                             }
                         }
+
+                        Tab {
+                            title: "Clean up";
+                            CleanupPane {
+                                rows: root.cleanup-rows;
+                                selected-id: root.selected-id;
+                                select(id) => {
+                                    root.select-node(id, true);
+                                }
+                                action => {
+                                    root.cleanup-action();
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1112,6 +1343,20 @@ export component AppWindow inherits Window {
                     title: "Types";
                     TypesPane {
                         types: root.file-types;
+                    }
+                }
+
+                Tab {
+                    title: "Clean";
+                    CleanupPane {
+                        rows: root.cleanup-rows;
+                        selected-id: root.selected-id;
+                        select(id) => {
+                            root.select-node(id, true);
+                        }
+                        action => {
+                            root.cleanup-action();
+                        }
                     }
                 }
             }

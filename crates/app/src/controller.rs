@@ -4,22 +4,28 @@ use std::cell::RefCell;
 use std::io;
 use std::path::{MAIN_SEPARATOR_STR, PathBuf};
 use std::rc::{Rc, Weak};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
-    NO_NODE, NodeId, ScanOptions, ScanProgress, ScanResult, SizeMode, Tree, extension_stats,
-    format_count, format_size, largest_files, scan,
+    DuplicateGroup, DuplicateProgress, NO_NODE, NodeId, ScanOptions, ScanProgress, ScanResult,
+    SizeMode, Tree, disk_space, duplicate_candidates, extension_stats, format_count, format_size,
+    largest_files, scan,
 };
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::apps::{self, AppReport};
 use crate::cleanup::JunkKind;
+use crate::filecleanup::{self, Duplicates};
+use crate::growth::{self, DriveLog};
 use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
 use crate::rows::{self, TreeRows};
-use crate::{AppWindow, FileRow, HomeRow, MapRect, SheetAction, TypeRow, actions, locations};
+use crate::{
+    AppWindow, CleanRow, FileRow, HomeRow, MapRect, SheetAction, TypeRow, actions, locations,
+};
 
 /// Result handed from a worker thread to the UI thread.
 type Slot<T> = Arc<Mutex<Option<T>>>;
@@ -58,6 +64,16 @@ struct ReturnWatch {
     ticks: u64,
 }
 
+/// The duplicate search in the scanned folder.
+enum DupeSearch {
+    Idle,
+    Running {
+        progress: Arc<DuplicateProgress>,
+        result: Slot<Vec<DuplicateGroup>>,
+    },
+    Done(Vec<DuplicateGroup>),
+}
+
 struct ScanSummary {
     seconds: f64,
     errors: u64,
@@ -70,6 +86,9 @@ pub struct Controller {
     tree: Option<Tree>,
     rows: Rc<TreeRows>,
     home_rows: Rc<VecModel<HomeRow>>,
+    cleanup_rows: Rc<VecModel<CleanRow>>,
+    /// The Clean up tab's rows above the duplicates.
+    cleanup_found: Vec<CleanRow>,
     mode: SizeMode,
     selected: NodeId,
     /// The folder shown in the treemap and the file lists.
@@ -101,6 +120,9 @@ pub struct Controller {
     /// Measure the apps again when the running measurement ends, because it
     /// started before something changed.
     remeasure: bool,
+    dupes: DupeSearch,
+    /// Past sizes of the drives on the start screen.
+    drive_log: DriveLog,
     timer: Timer,
     ticks: u64,
 }
@@ -127,6 +149,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             tree: None,
             rows: Rc::new(TreeRows::default()),
             home_rows: Rc::new(VecModel::default()),
+            cleanup_rows: Rc::new(VecModel::default()),
+            cleanup_found: Vec::new(),
             mode: SizeMode::Allocated,
             selected: 0,
             focus: 0,
@@ -147,6 +171,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             cache_check: None,
             cache_freed: None,
             remeasure: false,
+            dupes: DupeSearch::Idle,
+            drive_log: DriveLog::default(),
             timer: Timer::default(),
             ticks: 0,
         })
@@ -154,6 +180,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
 
     ui.set_tree_rows(ModelRc::from(ctl.borrow().rows.clone()));
     ui.set_home_rows(ModelRc::from(ctl.borrow().home_rows.clone()));
+    ui.set_cleanup_rows(ModelRc::from(ctl.borrow().cleanup_rows.clone()));
     let start = initial.clone().unwrap_or_else(locations::default_path);
     ui.set_path(start.to_string_lossy().as_ref().into());
     ui.set_can_browse(actions::CAN_BROWSE);
@@ -182,6 +209,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
     on!(ui, on_sheet_action, weak, |c, id| c
         .sheet_action(id.as_str()));
+    on!(ui, on_cleanup_action, weak, |c| c.cleanup_action());
 
     // The folder picker is modal, so run it without holding the controller.
     let ui_weak = ui.as_weak();
@@ -208,6 +236,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
 
     {
         let mut c = ctl.borrow_mut();
+        c.record_drives();
         if apps::supported() {
             if apps::has_access() {
                 c.start_apps_job();
@@ -373,6 +402,15 @@ impl Controller {
             self.start_apps_job();
         }
 
+        if let DupeSearch::Running { result, .. } = &self.dupes {
+            if let Some(groups) = take(result) {
+                self.dupes = DupeSearch::Done(groups);
+                self.show_cleanup();
+            } else if self.ticks.is_multiple_of(5) {
+                self.show_cleanup();
+            }
+        }
+
         if let Some(job) = &self.apk_job
             && let Some(result) = take(job)
         {
@@ -389,7 +427,8 @@ impl Controller {
             || self.awaiting_usage_access
             || self.return_watch.is_some()
             || self.apk_job.is_some()
-            || self.cleanup_job.is_some();
+            || self.cleanup_job.is_some()
+            || matches!(self.dupes, DupeSearch::Running { .. });
         if !busy {
             self.timer.stop();
         }
@@ -429,6 +468,7 @@ impl Controller {
             return;
         }
 
+        self.stop_duplicates();
         self.scan = Some(RunningScan {
             path: root,
             progress,
@@ -496,24 +536,29 @@ impl Controller {
         self.refresh_focus_views();
         self.refresh_selection();
         self.refresh_status();
+        self.refresh_cleanup();
     }
 
     fn show_locations(&mut self) {
         let Some(ui) = self.ui() else {
             return;
         };
+        self.stop_duplicates();
         self.tree = None;
         self.summary = None;
         self.rows.clear();
         ui.set_map_rects(ModelRc::default());
         ui.set_largest_files(ModelRc::default());
         ui.set_file_types(ModelRc::default());
+        self.cleanup_found.clear();
+        self.cleanup_rows.clear();
         ui.set_has_tree(false);
         ui.set_status("Pick a drive or folder, or type a path and press Scan.".into());
         // Free space and app sizes may have changed since the last visit.
         if matches!(self.apps, AppsState::Ready(_) | AppsState::Failed(_)) {
             self.start_apps_job();
         }
+        self.record_drives();
         self.refresh_home();
     }
 
@@ -527,19 +572,18 @@ impl Controller {
             storage_access: storage_access(),
             abilities: apps::abilities(),
             cache_freed: self.cache_freed,
+            drives: Some(&self.drive_log),
         };
-        let rows = home::rows(&self.apps, options);
-        let model = &self.home_rows;
-        for (i, row) in rows.iter().enumerate() {
-            if i >= model.row_count() {
-                model.push(row.clone());
-            } else if model.row_data(i).as_ref() != Some(row) {
-                model.set_row_data(i, row.clone());
-            }
-        }
-        while model.row_count() > rows.len() {
-            model.remove(model.row_count() - 1);
-        }
+        sync_model(&self.home_rows, home::rows(&self.apps, options));
+    }
+
+    /// Adds today's size of each drive to the drive history.
+    fn record_drives(&mut self) {
+        let drives: Vec<_> = locations::list()
+            .into_iter()
+            .filter_map(|l| Some((l.path.to_string_lossy().into_owned(), disk_space(&l.path)?)))
+            .collect();
+        self.drive_log = growth::record_drives(&drives, apps::now());
     }
 
     // ----- Apps -----------------------------------------------------------
@@ -957,6 +1001,7 @@ impl Controller {
         self.refresh_focus_views();
         self.refresh_selection();
         self.refresh_status();
+        self.refresh_cleanup();
     }
 
     fn refresh_selection(&self) {
@@ -1003,6 +1048,75 @@ impl Controller {
         ui.set_selected_detail(parts.join(" · ").into());
         ui.set_can_delete(id != tree.root() && self.deletion.is_none());
         ui.set_can_go_up(self.focus != tree.root());
+    }
+
+    // ----- Clean up tab ---------------------------------------------------
+
+    /// Finds rebuildable folders and old files again, then shows the tab.
+    fn refresh_cleanup(&mut self) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        self.cleanup_found = filecleanup::found_rows(tree, self.mode, apps::now() as i64);
+        self.show_cleanup();
+    }
+
+    fn show_cleanup(&self) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        let duplicates = match &self.dupes {
+            DupeSearch::Idle => Duplicates::NotSearched,
+            DupeSearch::Running { progress, .. } => Duplicates::Searching {
+                done: progress.done.load(Ordering::Relaxed),
+                files: progress.files.load(Ordering::Relaxed),
+            },
+            DupeSearch::Done(groups) => Duplicates::Found(groups),
+        };
+        let mut rows = self.cleanup_found.clone();
+        rows.extend(filecleanup::duplicate_rows(tree, duplicates));
+        sync_model(&self.cleanup_rows, rows);
+    }
+
+    /// The Duplicate files button: starts the search, or stops it while it
+    /// runs.
+    fn cleanup_action(&mut self) {
+        if matches!(self.dupes, DupeSearch::Running { .. }) {
+            self.stop_duplicates();
+            self.show_cleanup();
+            return;
+        }
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        let candidates = duplicate_candidates(tree, tree.root(), filecleanup::MIN_DUPLICATE);
+        if candidates.files() == 0 {
+            self.dupes = DupeSearch::Done(Vec::new());
+            self.show_cleanup();
+            return;
+        }
+        let progress = Arc::new(DuplicateProgress::new());
+        let result: Slot<Vec<DuplicateGroup>> = Arc::default();
+        let spawned = {
+            let (progress, result) = (progress.clone(), result.clone());
+            std::thread::Builder::new()
+                .name("disktree-duplicates".into())
+                .spawn(move || put(&result, candidates.find(&progress)))
+        };
+        if let Err(err) = spawned {
+            ui.set_status(format!("Could not start the duplicate search: {err}").into());
+            return;
+        }
+        self.dupes = DupeSearch::Running { progress, result };
+        self.show_cleanup();
+        self.ensure_ticking();
+    }
+
+    fn stop_duplicates(&mut self) {
+        if let DupeSearch::Running { progress, .. } = &self.dupes {
+            progress.cancel();
+        }
+        self.dupes = DupeSearch::Idle;
     }
 
     // ----- Treemap and lists ----------------------------------------------
@@ -1230,6 +1344,7 @@ impl Controller {
         // Show the folder the item was deleted from.
         self.focus = NO_NODE;
         self.select(parent as i32, false);
+        self.refresh_cleanup();
         ui.set_status(
             format!(
                 "Deleted {} and freed {}",
@@ -1249,6 +1364,21 @@ impl Controller {
             }
             self.ensure_ticking();
         }
+    }
+}
+
+/// Makes `model` hold `rows`, changing only the rows that differ so lists
+/// keep their scroll position.
+fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>) {
+    for (i, row) in rows.iter().enumerate() {
+        if i >= model.row_count() {
+            model.push(row.clone());
+        } else if model.row_data(i).as_ref() != Some(row) {
+            model.set_row_data(i, row.clone());
+        }
+    }
+    while model.row_count() > rows.len() {
+        model.remove(model.row_count() - 1);
     }
 }
 

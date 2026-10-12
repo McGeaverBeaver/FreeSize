@@ -208,7 +208,7 @@ pub fn save(history: &History, paths: &[PathBuf]) -> Result<(), String> {
 }
 
 /// Writes to a temporary file first, so a crash never leaves half a file.
-fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }

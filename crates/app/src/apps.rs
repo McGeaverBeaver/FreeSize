@@ -14,7 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use disktree_core::{DiskSpace, disk_space};
 
 use crate::cleanup::{self, Junk, MediaUse};
-use crate::history::{self, Entry};
+use crate::growth::{self, Change};
+use crate::history::{self, Entry, StorageSample};
 use crate::locations;
 
 /// Times are seconds since 1970.
@@ -54,6 +55,9 @@ pub struct AppUsage {
     pub category: i32,
     /// DiskTree itself.
     pub own: bool,
+    /// How its size changed over about the last month, from the app
+    /// history; `None` until there are a few days of it.
+    pub growth: Option<Change>,
 }
 
 impl AppUsage {
@@ -89,6 +93,8 @@ pub struct AppReport {
     pub media: Vec<MediaUse>,
     /// Trash, old installers and other files that can go.
     pub junk: Vec<Junk>,
+    /// Daily samples of how the storage divided up, oldest first.
+    pub storage: Vec<StorageSample>,
     /// When the report was made.
     pub now: u64,
 }
@@ -183,6 +189,18 @@ pub fn collect() -> Result<AppReport, String> {
         log(&format!("could not save the app history: {err}"));
     }
     report.removed = history.removed();
+    report.storage = history.storage.clone();
+    let sizes: HashMap<&str, &[[u64; 2]]> = history
+        .apps
+        .iter()
+        .map(|entry| (entry.package.as_str(), entry.sizes.as_slice()))
+        .collect();
+    for app in &mut report.apps {
+        if let Some(samples) = sizes.get(app.package.as_str()) {
+            let samples: Vec<(u64, u64)> = samples.iter().map(|s| (s[0], s[1])).collect();
+            app.growth = growth::change(&samples);
+        }
+    }
 
     // Media and junk are in shared storage, which needs All files access.
     if demo::enabled() {
@@ -227,6 +245,11 @@ pub fn forget(package: &str) -> Result<(), String> {
     let mut history = history::load(&paths);
     history.forget(package);
     history::save(&history, &paths)
+}
+
+/// Fake apps for trying the app screens on a desktop (debug builds only).
+pub fn demo_enabled() -> bool {
+    demo::enabled()
 }
 
 /// Where the app history is kept, most durable first.
@@ -471,9 +494,11 @@ mod demo {
     use std::path::PathBuf;
     use std::sync::Mutex;
 
+    use disktree_core::disk_space;
+
     use super::{AppReport, AppUsage};
     use crate::cleanup::{Junk, JunkKind, MediaUse};
-    use crate::history::{Entry, History};
+    use crate::history::{Entry, History, StorageSample};
     use crate::locations;
 
     const DAY: u64 = 24 * 60 * 60;
@@ -674,6 +699,42 @@ mod demo {
             size: 850 * MB,
             sizes: Vec::new(),
         };
+        // Two months of daily sizes for apps that keep growing.
+        let today = now / DAY;
+        let growing = |label: &str, package: &str, size: u64, per_month: u64| Entry {
+            package: package.into(),
+            label: label.into(),
+            installer: Some("com.android.vending".into()),
+            first_seen: now - 60 * DAY,
+            last_seen: now - DAY,
+            sizes: (1..=60)
+                .rev()
+                .map(|ago| [today - ago, (size - per_month * ago / 30) * MB])
+                .collect(),
+            ..Entry::default()
+        };
+        // Used space creeping up by about 10 GB a month, with a clean-up
+        // three weeks ago.
+        let space = disk_space(&locations::default_path());
+        let total = space.map_or(128 * 1024 * MB, |s| s.total);
+        let used_now = space.map_or(90 * 1024 * MB, |s| s.used());
+        let storage = (1..=60)
+            .rev()
+            .map(|ago: u64| {
+                let mut used = used_now.saturating_sub(ago * 340 * MB);
+                if ago > 21 {
+                    used += 3 * 1024 * MB;
+                }
+                let used = used.min(total);
+                StorageSample {
+                    day: today - ago,
+                    total,
+                    free: total - used,
+                    apps: (57 * 1024 + (60 - ago) * 60) * MB,
+                    files: 4_400 * MB,
+                }
+            })
+            .collect();
         History {
             apps: vec![
                 entry(
@@ -688,8 +749,11 @@ mod demo {
                     "com.google.android.packageinstaller",
                     95,
                 ),
+                growing("WhatsApp", "com.whatsapp", 18_520, 1_400),
+                growing("Spotify", "com.spotify.music", 9_960, 2_600),
+                growing("Chrome", "com.android.chrome", 3_510, 40),
             ],
-            ..History::default()
+            storage,
         }
     }
 }
