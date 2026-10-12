@@ -1,0 +1,32 @@
+[package]
+name = "disktree-hub"
+description = "DiskTree Hub: one dashboard for all your devices' storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "disktree-hub"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.9"
+base64 = "0.23.1"
+clap = { version = "4.6.7", features = ["derive", "env"] }
+disktree-core.workspace = true
+disktree-proto.workspace = true
+flate2 = "1.1.10"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.0"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+ureq = { version = "3.4.2", features = ["json"] }
+
+[dev-dependencies]
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto", "use_pem"] }
