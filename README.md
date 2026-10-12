@@ -404,10 +404,13 @@ Signal's storage deletes your messages). Its buttons:
 **Free up space** lists what can go without touching any app. It needs All
 files access:
 
-- **Clear every app's cache** (Android 11+) opens Android's own cache cleaner.
-  Android decides how much it clears, and on some phones that's very little;
-  the card says what it freed last time. To clear more, use *Biggest caches*
-  and each app's info page. No app can clear other apps' cache directly.
+- **App caches** shows how much cache apps keep and what can actually clear
+  it. Android doesn't let one app clear another's cache, and clears caches by
+  itself when space runs low. Its cache cleaner (Android 11+), which the card
+  opens, only empties the cache folders in shared storage
+  (`Android/data/<app>/cache`), usually a small part; the card says how much
+  that is (Android 12+) and only offers it when it's worth it. For the rest,
+  use *Biggest caches* and Clear cache on each app's info page.
 - **Empty the trash** (Android 11+): photos and videos deleted in the last 30
   days still take space until Android removes them for good.
 - **Delete old app installers**: `.apk` files in Download. APKs saved with

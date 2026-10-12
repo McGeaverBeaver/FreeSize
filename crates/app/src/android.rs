@@ -388,6 +388,8 @@ pub fn abilities() -> Abilities {
         archive: sdk >= 35,
         // StorageManager.ACTION_CLEAR_APP_CACHE.
         clear_cache: sdk >= 30,
+        // StorageStats.getExternalCacheBytes.
+        shared_cache_known: sdk >= 31,
         save_apk: true,
     }
 }
@@ -493,9 +495,10 @@ pub fn search_store(query: &str) {
     );
 }
 
-/// Shows Android's dialog that clears every app's cache (Android 11+, for
-/// apps with All files access). Falls back to the Storage settings screen
-/// and returns false.
+/// Shows Android's dialog that empties every app's cache folder in shared
+/// storage (`Android/data/*/cache`; Android 11+, for apps with All files
+/// access). It can't touch the cache in apps' private storage, usually most
+/// of it. Falls back to the Storage settings screen and returns false.
 pub fn clear_all_cache() -> bool {
     let result = with_activity(|env, activity| {
         let action = env.new_string("android.os.storage.action.CLEAR_APP_CACHE")?;
@@ -1438,6 +1441,16 @@ fn app_usage(
     let label = label_of(env, lookup.packages, &info)?;
 
     let sdk = lookup.sdk;
+    // Android 12+: the part in shared storage, the only part Android's
+    // cache cleaner can empty.
+    let external_cache_bytes = if sdk >= 31 {
+        optional(env, |env| {
+            long_method(env, &usage, jni_str!("getExternalCacheBytes"))
+        })
+        .unwrap_or(0)
+    } else {
+        0
+    };
     let category = if sdk >= 26 {
         env.get_field(&info, jni_str!("category"), jni_sig!("I"))?
             .i()?
@@ -1503,6 +1516,7 @@ fn app_usage(
             code_bytes,
             data_bytes,
             cache_bytes,
+            external_cache_bytes,
             system_image: system && flags & FLAG_UPDATED_SYSTEM_APP == 0,
             system,
             installer,

@@ -430,9 +430,14 @@ zoomed in. `home.rs` turns all of this into the home screen's rows (drives, the 
 bar, the Free up space cards, the groups, then the selected group's apps) and
 into the app sheet: the facts and buttons shown when an app is tapped.
 
-Android's clear-cache dialog decides itself how much to clear, so the
-controller notes the total cache before opening it and compares after the
-user comes back; the card then says what was freed.
+Android's clear-cache dialog (MediaProvider's) only empties
+`Android/data/*/cache` in shared storage, never the cache in apps' private
+storage, and it closes without showing anything for an app without All
+files access. So the card shows the shared part
+(`StorageStats.getExternalCacheBytes`, Android 12+) and offers the dialog
+only when that's worth it; the controller checks All files access first,
+says so if the dialog doesn't appear within 3 seconds, and otherwise
+compares the shared cache before and after and says what was freed.
 
 Open hands a file to another app as its MediaStore entry
 (`content://media/external/...`, from a query on `_data`) with
@@ -444,8 +449,8 @@ seconds.
 The actions go through intents: `ACTION_DELETE` to uninstall (needs
 `REQUEST_DELETE_PACKAGES`), `market://` links for the store, the app's info
 page for archiving and clearing its cache, and
-`StorageManager.ACTION_CLEAR_APP_CACHE` for every app's cache. No app can clear
-another app's cache directly. "Save APK" copies `ApplicationInfo.sourceDir`
+`StorageManager.ACTION_CLEAR_APP_CACHE` for every app's cache folder in shared
+storage. No app can clear another app's private cache. "Save APK" copies `ApplicationInfo.sourceDir`
 and any split APKs to `Download/DiskTree`. While a system screen is open,
 DiskTree's window loses focus; the controller polls `hasWindowFocus` and
 measures the apps again when the user comes back.

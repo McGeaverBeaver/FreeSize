@@ -149,6 +149,8 @@ const REVIEW_IDS: [&str; 8] = [
 struct ReturnWatch {
     left: bool,
     ticks: u64,
+    /// Seconds until giving up if the screen never opened.
+    patience: u64,
 }
 
 /// What a basket job does with every item.
@@ -682,14 +684,17 @@ impl Controller {
                 self.remeasure = false;
                 self.start_apps_job();
             } else if let (Some((before, true)), Some(report)) = (self.cache_check, self.report()) {
-                let after: u64 = report.apps.iter().map(|a| a.cache_bytes).sum();
+                let after = home::clearable_cache(report, apps::abilities());
                 let freed = before.saturating_sub(after);
                 self.cache_check = None;
                 self.cache_freed = Some(freed);
-                self.set_status(&format!(
-                    "Android's cache cleaner freed {}.",
-                    format_size(freed)
-                ));
+                self.set_status(&if freed == 0 {
+                    "Android's cache cleaner freed nothing: the caches in shared storage were \
+                     already empty, or it was cancelled. The rest only clears app by app."
+                        .to_string()
+                } else {
+                    format!("Android's cache cleaner freed {}.", format_size(freed))
+                });
             }
             self.refresh_home();
         }
@@ -706,9 +711,19 @@ impl Controller {
                 let back = watch.left && focused;
                 watch.left |= !focused;
                 // Give up if the screen never opened, or after 10 minutes.
-                let expired = (!watch.left && watch.ticks > 300) || watch.ticks > 6000;
+                let never_opened = !watch.left && watch.ticks > watch.patience * 10;
+                let expired = never_opened || watch.ticks > 6000;
                 if back || expired {
                     self.return_watch = None;
+                }
+                // Android's cache cleaner closes without a word when it
+                // won't run for DiskTree.
+                if never_opened && self.cache_check.take().is_some() {
+                    self.set_status(
+                        "Android didn't open its cache cleaner, so nothing was cleared. Check \
+                         that DiskTree has All files access, or clear the apps under Biggest \
+                         caches one by one.",
+                    );
                 }
                 if back {
                     if let Some((_, back_from_cache)) = &mut self.cache_check {
@@ -1245,12 +1260,23 @@ impl Controller {
             }
             home::REFRESH_APPS => self.start_apps_job(),
             home::CLEAR_CACHE => {
-                let before: u64 = self
+                // The cleaner only opens for apps with All files access, and
+                // closes unseen otherwise.
+                if !storage_access() {
+                    self.set_status(
+                        "Android's cache cleaner only opens for apps with All files access. \
+                         Turn it on for DiskTree, then try again.",
+                    );
+                    self.grant_permission();
+                    return;
+                }
+                let before = self
                     .report()
-                    .map_or(0, |r| r.apps.iter().map(|a| a.cache_bytes).sum());
+                    .map_or(0, |r| home::clearable_cache(r, apps::abilities()));
                 if apps::clear_all_cache() {
                     self.cache_check = Some((before, false));
-                    self.watch_return();
+                    // It shows at once, or not at all.
+                    self.watch_return_within(3);
                 } else {
                     self.set_status(
                         "This phone has no clear-all option, so Storage settings opened instead.",
@@ -1913,9 +1939,16 @@ impl Controller {
     }
 
     fn watch_return(&mut self) {
+        self.watch_return_within(30);
+    }
+
+    /// Notices the user coming back from a system screen, giving up if it
+    /// hasn't opened within `seconds`.
+    fn watch_return_within(&mut self, seconds: u64) {
         self.return_watch = Some(ReturnWatch {
             left: false,
             ticks: 0,
+            patience: seconds,
         });
         self.ensure_ticking();
     }

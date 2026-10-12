@@ -31,6 +31,9 @@ pub struct AppUsage {
     pub data_bytes: u64,
     /// The part of `data_bytes` that is cache, which the app can rebuild.
     pub cache_bytes: u64,
+    /// The part of `cache_bytes` in shared storage (`Android/data/<app>/cache`,
+    /// Android 12+), the only part Android's cache cleaner empties.
+    pub external_cache_bytes: u64,
     /// Preinstalled and never updated, so its code lives on the system
     /// partition rather than in user storage.
     pub system_image: bool,
@@ -299,8 +302,12 @@ pub struct Abilities {
     pub uninstall: bool,
     /// Android 15+ archives apps, from their info page.
     pub archive: bool,
-    /// Android 11+ clears every app's cache in one system dialog.
+    /// Android 11+ empties every app's cache folder in shared storage in
+    /// one system dialog. The rest of an app's cache only the app itself,
+    /// its info page or Android (when space runs low) can clear.
     pub clear_cache: bool,
+    /// Android 12+ tells how much of each app's cache is in shared storage.
+    pub shared_cache_known: bool,
     pub save_apk: bool,
 }
 
@@ -310,6 +317,7 @@ pub fn abilities() -> Abilities {
             uninstall: true,
             archive: true,
             clear_cache: true,
+            shared_cache_known: true,
             save_apk: true,
         };
     }
@@ -342,8 +350,9 @@ pub fn search_store(query: &str) {
     platform::search_store(query);
 }
 
-/// Shows Android's dialog for clearing every app's cache. Returns false if
-/// the device has none, in which case storage settings open instead.
+/// Shows Android's dialog that empties every app's cache folder in shared
+/// storage. Returns false if the device has none, in which case storage
+/// settings open instead.
 pub fn clear_all_cache() -> bool {
     platform::clear_all_cache()
 }
@@ -675,6 +684,7 @@ mod demo {
                 code_bytes: code * MB,
                 data_bytes: data * MB,
                 cache_bytes: cache * MB,
+                external_cache_bytes: cache * MB / 8,
                 installer: Some("com.android.vending".into()),
                 installed_at: Some(now - 500 * DAY),
                 version: "1.0".into(),

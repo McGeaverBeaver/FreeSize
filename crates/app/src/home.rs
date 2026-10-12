@@ -340,6 +340,78 @@ fn notice(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
     }
 }
 
+/// The cache Android's cache cleaner can reach: only the folders in shared
+/// storage (`Android/data/<app>/cache`). Where Android doesn't say how much
+/// that is (before 12), all of it, as the most it could be.
+pub fn clearable_cache(report: &AppReport, abilities: Abilities) -> u64 {
+    report
+        .apps
+        .iter()
+        .map(|a| {
+            if abilities.shared_cache_known {
+                a.external_cache_bytes
+            } else {
+                a.cache_bytes
+            }
+        })
+        .sum()
+}
+
+/// App caches, and honestly what can clear them: Android doesn't let one app
+/// clear another's private cache, so its cache cleaner only empties the
+/// part in shared storage. The rest goes when Android needs the space, or
+/// app by app from their info pages.
+fn cache_card(report: &AppReport, options: &Options<'_>, cache: u64) -> HomeRow {
+    const WORTH_CLEARING: u64 = 50 * 1024 * 1024;
+    let abilities = options.abilities;
+    let shared = abilities
+        .shared_cache_known
+        .then(|| clearable_cache(report, abilities));
+    let can_clear = abilities.clear_cache && shared.is_none_or(|bytes| bytes >= WORTH_CLEARING);
+    let mut text = String::new();
+    if let Some(freed) = options.cache_freed {
+        text.push_str(&format!(
+            "Android's cache cleaner freed {} last time. ",
+            format_size(freed)
+        ));
+    }
+    text.push_str(
+        "Android clears caches by itself when space runs low, and doesn't let other apps \
+         clear them. ",
+    );
+    text.push_str(&match (shared, can_clear) {
+        (Some(bytes), true) => format!(
+            "Its cache cleaner can only empty the {} in shared storage; for the rest, \
+             clear the apps under Biggest caches one by one.",
+            format_size(bytes)
+        ),
+        (Some(bytes), false) => format!(
+            "Only {} is in shared storage, where its cache cleaner works; to free more \
+             now, clear the apps under Biggest caches one by one.",
+            format_size(bytes)
+        ),
+        (None, true) => "Its cache cleaner only empties the part in shared storage, usually \
+                         small; for the rest, clear the apps under Biggest caches one by one."
+            .into(),
+        (None, false) => "To free it now, clear the apps under Biggest caches one by one.".into(),
+    });
+    let clear_label = match shared {
+        Some(bytes) => format!("Clear {}", format_size(bytes)),
+        None => "Clear shared cache".into(),
+    };
+    let biggest = format!("{VIEW_PREFIX}{}", View::Cache.id());
+    let action = if can_clear {
+        (clear_label.as_str(), CLEAR_CACHE)
+    } else {
+        ("Biggest caches", biggest.as_str())
+    };
+    notice(
+        &format!("App caches: {}", format_size(cache)),
+        &text,
+        Some(action),
+    )
+}
+
 fn in_view(report: &AppReport, app: &AppUsage, view: View) -> bool {
     view.contains(app, report.usage_known, report.now)
 }
@@ -362,28 +434,8 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
     }
     let mut cards = Vec::new();
     let cache: u64 = report.apps.iter().map(|a| a.cache_bytes).sum();
-    if options.abilities.clear_cache && cache >= CACHE_WORTH_IT {
-        let text = match options.cache_freed {
-            // Android decides how much to clear and may leave most of it.
-            Some(freed) if freed < cache / 10 => format!(
-                "Android's cache cleaner only freed {} last time: it decides how much to \
-                 clear. To clear more, open the apps under Biggest caches below and use \
-                 Clear cache on their info pages.",
-                format_size(freed)
-            ),
-            Some(freed) => format!(
-                "Android cleared {} last time. Apps rebuild some cache as they run.",
-                format_size(freed)
-            ),
-            None => "Android's own cache cleaner; it asks you to confirm first and decides \
-                     how much to clear. Apps rebuild their cache as they need it."
-                .into(),
-        };
-        cards.push(notice(
-            &format!("Clear every app's cache: {}", format_size(cache)),
-            &text,
-            Some(("Clear cache", CLEAR_CACHE)),
-        ));
+    if cache >= CACHE_WORTH_IT {
+        cards.push(cache_card(report, &options, cache));
     }
     for kind in JunkKind::ALL {
         if let Some(junk) = report
@@ -1237,6 +1289,7 @@ mod tests {
                 uninstall: true,
                 archive: true,
                 clear_cache: true,
+                shared_cache_known: true,
                 save_apk: true,
             },
             ..Options::default()
@@ -1317,14 +1370,38 @@ mod tests {
     }
 
     #[test]
-    fn clear_cache_needs_the_ability_and_enough_cache() {
+    fn clear_cache_only_offers_what_android_can_clear() {
+        const MB: u64 = 1024 * 1024;
         let mut report = report();
         let rows_now = rows(&AppsState::Ready(report.clone()), options(View::All));
-        assert!(!rows_now.iter().any(|r| r.key == CLEAR_CACHE));
-        report.apps[0].cache_bytes = 100 * 1024 * 1024;
-        report.apps[0].data_bytes = 200 * 1024 * 1024;
+        assert!(!rows_now.iter().any(|r| r.title.starts_with("App caches")));
+        report.apps[0].cache_bytes = 100 * MB;
+        report.apps[0].data_bytes = 200 * MB;
+        // All of it private: Android's cleaner can't reach it, so the card
+        // points to clearing app by app.
         let rows_now = rows(&AppsState::Ready(report.clone()), options(View::All));
-        assert!(rows_now.iter().any(|r| r.key == CLEAR_CACHE));
+        let card = rows_now
+            .iter()
+            .find(|r| r.title == "App caches: 100 MB")
+            .unwrap();
+        assert_eq!(card.key, "view:cache");
+        assert!(card.subtitle.contains("Only 0 B is in shared storage"));
+        // Enough in shared storage: the cleaner, for that much.
+        report.apps[0].external_cache_bytes = 60 * MB;
+        let rows_now = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let card = rows_now.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
+        assert_eq!(card.action, "Clear 60.0 MB");
+        assert_eq!(
+            clearable_cache(&report, options(View::All).abilities),
+            60 * MB
+        );
+        // Before Android 12 the split is unknown: offered, with the caveat.
+        let mut old = options(View::All);
+        old.abilities.shared_cache_known = false;
+        let rows_now = rows(&AppsState::Ready(report.clone()), old);
+        let card = rows_now.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
+        assert_eq!(card.action, "Clear shared cache");
+        assert!(card.subtitle.contains("usually small"));
         let mut no_access = options(View::All);
         no_access.storage_access = false;
         let rows_now = rows(&AppsState::Ready(report), no_access);
@@ -1530,10 +1607,13 @@ mod tests {
         let mut cleared = options(View::All);
         cleared.cache_freed = Some(2 * MB);
         let home = rows(&AppsState::Ready(report), cleared);
-        let card = home.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
+        let card = home
+            .iter()
+            .find(|r| r.title.starts_with("App caches"))
+            .unwrap();
         assert!(
             card.subtitle
-                .starts_with("Android's cache cleaner only freed 2.00 MB")
+                .starts_with("Android's cache cleaner freed 2.00 MB last time.")
         );
     }
 
