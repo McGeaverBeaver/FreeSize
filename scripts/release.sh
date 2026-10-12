@@ -22,8 +22,9 @@
 #
 # The Docker image is what a GitHub Actions workflow would publish, built
 # here instead so it costs no Actions minutes: ghcr.io/<owner>/disktree-hub,
-# a package of the GitHub repository, tagged <version> and, once the release
-# is public, latest (the tag Unraid's template pulls). It holds the Hub built
+# a package of the GitHub repository, tagged <version> and latest (the tag
+# Unraid's template pulls), drafts too: the owner publishes drafts on GitHub's
+# website, which can't move the tag. It holds the Hub built
 # above, for amd64 and arm64, rather than compiling it again inside Docker.
 # The GitHub CLI's token logs in to the registry (it needs the
 # write:packages scope) in a throwaway Docker config, so the token isn't
@@ -38,11 +39,11 @@
 # Usage: scripts/release.sh [--draft] [--build-only] [--no-image]
 #        scripts/release.sh --publish [--no-image]
 #   --draft       publish as a draft, to check before making it public; the
-#                 image gets only its version tag
+#                 image is pushed and tagged latest all the same
 #   --build-only  build everything (the image too) without publishing
 #   --no-image    leave out the Docker image
-#   --publish     make this version's draft public and point the image's
-#                 latest tag at it; builds nothing
+#   --publish     make this version's draft public (if it isn't already)
+#                 and point the image's latest tag at it; builds nothing
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -184,8 +185,9 @@ if $publish; then
 fi
 
 if $promote; then
-    if [ "$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null)" != true ]; then
-        echo "error: there's no draft of $tag to publish" >&2
+    is_draft="$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null || true)"
+    if [ -z "$is_draft" ]; then
+        echo "error: there's no release $tag to publish" >&2
         exit 1
     fi
     if [ -n "$image" ]; then
@@ -196,8 +198,12 @@ if $promote; then
         fi
         tag_latest
     fi
-    echo "==> Publishing $tag on GitHub"
-    gh release edit "$tag" --draft=false --latest
+    if [ "$is_draft" = true ]; then
+        echo "==> Publishing $tag on GitHub"
+        gh release edit "$tag" --draft=false --latest
+    else
+        echo "    $tag is public already"
+    fi
     if [ -n "$image" ]; then
         check_visibility
     fi
@@ -364,10 +370,6 @@ gh release create "$tag" "$dist"/* \
     "${draft[@]}"
 
 if [ -n "$image" ]; then
-    if [ ${#draft[@]} -eq 0 ]; then
-        tag_latest
-    else
-        echo "    $image:latest stays where it was until scripts/release.sh --publish"
-    fi
+    tag_latest
     check_visibility
 fi

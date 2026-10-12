@@ -932,10 +932,11 @@ can pull it without logging in; the script reminds you while it's private.
 `DISKTREE_IMAGE` names another image, and `--no-image` leaves it out.
 
 The script refuses to publish uncommitted or unpushed code, or a version
-that's already released. `--draft` publishes a draft to check first, with
-the image tagged only `<version>`; `scripts/release.sh --publish` then
-makes the draft public and points the image's `latest` tag (the one Unraid
-pulls) at it. `--build-only` just builds into `dist/` (and builds the image
+that's already released. The image is tagged `<version>` and `latest` (the
+one Unraid pulls) on every release, drafts included, so publishing a draft
+on GitHub's website needs nothing more. `--draft` publishes a draft to
+check first; `scripts/release.sh --publish` makes it public and points
+`latest` at it again, also when it was made public on the website. `--build-only` just builds into `dist/` (and builds the image
 without pushing it). macOS builds need a Mac, so releases have none.
 
 The GitHub Actions CI workflow (`.github/workflows/ci.yml`) no longer runs on

@@ -53,8 +53,10 @@ or commit them. The release needs `musl-tools` (for the Unraid plugin) since
 0.8.0, and since 0.8.2 Docker with buildx (bobby in the `docker` group;
 `sg docker -c '...'` works before logging in again) and
 `gcc-aarch64-linux-gnu` for the Hub's Docker image, which it pushes to
-ghcr.io with the GitHub CLI's token. `--publish` makes a draft public and
-moves the image's `latest` tag. Docker's storage is on the small root disk
+ghcr.io with the GitHub CLI's token, tagged `<version>` and `latest` on
+every release, drafts too: the owner publishes drafts on GitHub's website.
+`--publish` makes a draft public (or finds it public already) and points
+`latest` at it again. Docker's storage is on the small root disk
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
@@ -78,11 +80,10 @@ compiling inside Docker.
   Moving between disks: a folder picker, several source disks, and a
   queue in the daemon so moves run one at a time.
 - Not yet done:
-  1. Build 0.8.3 with `scripts/release.sh --draft`, have the owner make the
-     ghcr.io package public once (Unraid pulls without logging in), then
-     `scripts/release.sh --publish`. Claude Code runs as Remote Control in
-     a tmux session; it only reaches Docker if that tmux was started from a
-     login made after bobby joined the `docker` group.
+  1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
+     and linked to the repository. Claude Code runs as Remote Control in
+     a tmux session; it only reaches Docker if that tmux was started from
+     a login made after bobby joined the `docker` group.
   2. The owner installed the plugin (0.8.2) on their server on
      2026-10-12: the tabs and Docker's findings showed. Still to check
      there: `/var/log/disktree.log`, `disktree unraid status`, and 0.8.3's

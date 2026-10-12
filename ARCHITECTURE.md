@@ -772,8 +772,9 @@ release built (a named build context), so Docker compiles nothing: the
 build machine's big disk is a 9p share Docker can't keep layers on, and
 the root disk has little room. Those Hubs link to the build machine's
 glibc, so the script checks they need no newer one than the image's Debian
-has. A draft gets only the `<version>` tag; `--publish` makes the draft
-public and moves `latest`. The script only publishes a clean checkout that
+has. Every release, drafts too, is tagged `<version>` and `latest`, since
+drafts are often made public on GitHub's website, which can't move the
+tag; `--publish` makes a draft public and points `latest` at it again. The script only publishes a clean checkout that
 matches GitHub, and lets `gh release create --target` create the tag for
 that commit.
 
