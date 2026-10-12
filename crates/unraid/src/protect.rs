@@ -26,6 +26,9 @@ pub struct Rule {
     pub why: String,
     /// Everything inside it too, not just the path itself.
     pub all: bool,
+    /// A disk or share as a whole: kept from deleting, but what's inside
+    /// may be moved between disks.
+    pub whole: bool,
 }
 
 fn rule(path: &str, why: &str, all: bool) -> Rule {
@@ -33,6 +36,14 @@ fn rule(path: &str, why: &str, all: bool) -> Rule {
         path: user_path(path.trim_end_matches('/')),
         why: why.into(),
         all,
+        whole: false,
+    }
+}
+
+fn whole(path: &str, why: &str) -> Rule {
+    Rule {
+        whole: true,
+        ..rule(path, why, false)
     }
 }
 
@@ -61,8 +72,8 @@ pub fn rules(
             "another machine's storage, mounted here",
             true,
         ),
-        rule("/mnt/user", "all the shares", false),
-        rule("/mnt/user0", "all the shares", false),
+        whole("/mnt/user", "all the shares"),
+        whole("/mnt/user0", "all the shares"),
     ];
     for disk in &array.disks {
         if let Some(mount) = &disk.path {
@@ -70,14 +81,14 @@ pub fn rules(
                 path: mount.clone(),
                 why: format!("all of {}", disk.name),
                 all: false,
+                whole: true,
             });
         }
     }
     for share in shares {
-        rules.push(rule(
+        rules.push(whole(
             &format!("/mnt/user/{share}"),
             "a whole share; delete what's inside it instead",
-            false,
         ));
     }
     for (path, why, all) in docker::protected_paths(docker.0, docker.1) {
@@ -177,6 +188,12 @@ impl Places for UnraidPlaces {
             return Err(format!("{server}: not on a disk or pool"));
         }
         Ok(places)
+    }
+
+    fn shown(&self, path: &Path) -> String {
+        self.system
+            .unraid_path(path)
+            .unwrap_or_else(|| path.to_string_lossy().into_owned())
     }
 
     fn roots(&self) -> Vec<PathBuf> {

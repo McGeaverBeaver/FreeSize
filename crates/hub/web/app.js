@@ -415,14 +415,18 @@ function uploadDialog(device) {
 // ----- One device ------------------------------------------------------------
 
 const DEVICE_TABS = [
-  ["overview", "Overview"], ["folders", "Folders"], ["files", "Largest files"], ["changes", "Changes"],
-  ["apps", "Apps"], ["requests", "Requests"], ["activity", "Activity"],
+  ["overview", "Overview"], ["unraid", "Unraid"], ["folders", "Folders"], ["files", "Largest files"],
+  ["changes", "Changes"], ["apps", "Apps"], ["quarantine", "Quarantine"], ["requests", "Requests"],
+  ["activity", "Activity"],
 ];
 
 PAGES.device = async (id, tab = "overview", ...rest) => {
   const device = await api(`/api/devices/${encodeURIComponent(id)}`);
   const info = device.info || {};
-  const tabs = DEVICE_TABS.filter(([key]) => (key !== "apps" || device.apps) && (key !== "requests" || !device.agentless));
+  const tabs = DEVICE_TABS.filter(([key]) => (key !== "apps" || device.apps)
+    && (key !== "requests" || !device.agentless)
+    && (key !== "unraid" || device.unraid)
+    && (key !== "quarantine" || device.quarantine));
   const link = (key) => `#/device/${encodeURIComponent(id)}/${key}`;
   const header = h("div", { class: "page-head" },
     h("div", { class: "grow" },
@@ -450,7 +454,8 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
   const nav = h("nav", { class: "tabs" }, tabs.map(([key, label]) =>
     h("a", { href: link(key), class: key === tab ? "active" : "" }, label)));
   const views = {
-    overview: deviceOverview, folders: deviceFolders, files: deviceFiles, changes: deviceChanges, apps: deviceApps,
+    overview: deviceOverview, unraid: deviceUnraid, quarantine: deviceQuarantine,
+    folders: deviceFolders, files: deviceFiles, changes: deviceChanges, apps: deviceApps,
     requests: deviceRequests, activity: deviceActivity,
   };
   const view = await (views[tab] || deviceOverview)(device, ...rest);
@@ -686,6 +691,170 @@ async function deviceChanges(device, toArg, fromArg) {
       h("thead", {}, h("tr", {}, h("th", {}), h("th", {}, "Folder"), h("th", { class: "num hide-narrow" }, "Before"),
         h("th", { class: "num hide-narrow" }, "After"), h("th", { class: "num" }, "Change"))),
       tbody)));
+}
+
+// ----- Unraid ---------------------------------------------------------------
+
+const SAFETY = {
+  safe: ["safe to remove", "ok"],
+  check: ["check first", "warn"],
+  protected: ["in use", ""],
+};
+const DISK_KINDS = { parity: "parity", pool: "pool", flash: "flash" };
+
+function bytesAgo(secs) {
+  return secs ? ago(secs) : "never";
+}
+
+/** A finding's row, with what can be asked of it. */
+function findingRow(device, f) {
+  const [label, tone] = SAFETY[f.safety] || ["", ""];
+  let ask = null;
+  if (canDo(device, "clean") && f.safety !== "protected" && ["image", "dangling_image", "build_cache"].includes(f.kind)) {
+    ask = h("button", { class: "small", onclick: () => requestDialog(device,
+      { type: "docker_cleanup", items: [f.id], labels: [f.label], bytes: f.bytes },
+      [`Remove ${f.label} from Docker (${size(f.bytes)})`, f.reason]) }, "Remove…");
+  } else if (canDo(device, "delete") && f.safety === "check" && f.path && f.path.startsWith("/mnt/user/")) {
+    ask = h("button", { class: "small", onclick: () => requestDialog(device,
+      { type: "delete", root: "/mnt/user", paths: [f.path.slice("/mnt/user/".length)], bytes: f.bytes },
+      [`Move to the quarantine: ${f.path} (${size(f.bytes)})`, f.reason,
+       "It can be put back until the quarantine is emptied."]) }, "Quarantine…");
+  }
+  return h("tr", {},
+    h("td", { style: "width:110px" }, h("span", { class: `badge ${tone}` }, label)),
+    h("td", {}, f.label, h("div", { class: "sub" }, f.reason)),
+    h("td", { class: "num" }, f.bytes ? size(f.bytes) : "–"),
+    h("td", { class: "num", style: "width:110px" }, ask));
+}
+
+function findingsTable(device, findings) {
+  if (!findings.length) return h("p", { class: "dim" }, "Nothing found.");
+  return h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, findings.map((f) => findingRow(device, f)))));
+}
+
+function deviceUnraid(device) {
+  const u = device.unraid;
+  const diskIndex = new Map(u.disks.filter((d) => d.kind !== "parity").map((d, i) => [d.name, i % 8]));
+  const array = h("div", { class: "card table-wrap" },
+    h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Array"),
+      h("span", { class: `badge ${u.started ? "ok" : "warn"}` }, u.started ? "started" : "stopped"),
+      h("span", { class: "dim small" }, `Unraid ${u.version} · looked ${ago(u.taken)}`)),
+    h("table", { style: "margin-top:8px" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Disk"), h("th", { class: "hide-narrow" }, "Used"),
+        h("th", { class: "num" }, "Free"), h("th", { class: "num hide-narrow" }, "Temp"), h("th", { class: "hide-narrow" }, "Scanned"))),
+      h("tbody", {}, u.disks.map((d) => {
+        const fraction = d.size ? (d.size - d.free) / d.size : 0;
+        return h("tr", {},
+          h("td", {}, diskIndex.has(d.name) && d.kind !== "flash" ? h("span", { class: `swatch seg-${diskIndex.get(d.name)}` }) : h("span", { class: "swatch" }), d.name,
+            DISK_KINDS[d.kind] ? h("span", { class: "badge", style: "margin-left:6px" }, DISK_KINDS[d.kind]) : null,
+            d.asleep ? h("span", { class: "badge accent", style: "margin-left:6px" }, "asleep") : null,
+            h("div", { class: "sub" }, [d.device, d.fs, d.pool ? `in ${d.pool}` : null].filter(Boolean).join(" · "))),
+          h("td", { class: "hide-narrow", style: "width:30%" }, d.kind === "parity" ? h("span", { class: "dim small" }, size(d.size)) : bar(fraction, usageLevel(fraction))),
+          h("td", { class: "num" }, d.kind === "parity" ? "–" : size(d.free)),
+          h("td", { class: "num hide-narrow" }, d.temp != null ? `${d.temp} °C` : "–"),
+          h("td", { class: "hide-narrow small" }, d.kind === "parity" || d.kind === "flash" ? "" : bytesAgo(d.scanned)));
+      }))),
+    h("p", { class: "hint" }, "Sleeping disks aren't woken to scan; their last scan stands until they're awake at scan time (or a week has passed)."));
+
+  const largest = Math.max(1, ...u.shares.map((sh) => sh.total));
+  const shares = h("div", { class: "card table-wrap" }, h("h2", {}, "Shares and their disks"),
+    h("table", {}, h("tbody", {}, u.shares.map((sh) => h("tr", {},
+      h("td", { style: "width:22%" }, sh.name, h("div", { class: "sub" }, [sh.comment, sh.cache].filter(Boolean).join(" · "))),
+      h("td", {},
+        h("div", { class: "stack-bar", style: `width:${Math.max(2, (sh.total / largest) * 100).toFixed(1)}%` },
+          sh.placements.map((p) => h("div", {
+            class: `seg seg-${diskIndex.get(p.disk) ?? 0}${p.stale ? " stale" : ""}`,
+            style: `width:${sh.total ? ((p.bytes / sh.total) * 100).toFixed(2) : 0}%`,
+            title: `${p.disk}: ${size(p.bytes)}${p.stale ? " (last scan)" : ""}`,
+          }))),
+        h("div", { class: "sub" }, sh.placements.map((p) => `${p.disk} ${size(p.bytes)}${p.stale ? " (earlier scan)" : ""}`).join(" · "))),
+      h("td", { class: "num" }, size(sh.total), sh.complete ? null : h("div", { class: "sub" }, "partly from earlier scans")))))));
+
+  const sections = [array, shares];
+  const d = u.docker;
+  if (d) {
+    const safe = d.findings.filter((f) => f.safety === "safe" && ["dangling_image", "build_cache", "image"].includes(f.kind));
+    const safeBytes = safe.reduce((sum, f) => sum + f.bytes, 0);
+    sections.push(h("div", { class: "card" },
+      h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Docker"),
+        safe.length && canDo(device, "clean") ? h("button", { class: "small", onclick: () => requestDialog(device,
+          { type: "docker_cleanup", items: safe.map((f) => f.id), labels: safe.map((f) => f.label), bytes: safeBytes },
+          [`Remove what's safe to remove (${size(safeBytes)}):`, ...safe.map((f) => `${f.label} (${size(f.bytes)})`)]) },
+          `Remove all safe (${size(safeBytes)})…`) : null),
+      h("p", { class: "dim small" }, d.running ? `${d.running_containers} of ${d.containers} containers running` : "Docker isn't running",
+        ` · ${d.mode === "folder" ? "folder" : "docker.img"} ${d.location}`,
+        d.image_size ? ` · ${size(d.image_used)} used of ${size(d.image_size)}` : ""),
+      findingsTable(device, d.findings)));
+  }
+  const v = u.vms;
+  if (v) {
+    sections.push(h("div", { class: "card" }, h("h2", {}, "VMs"),
+      v.vms.length ? h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, v.vms.map((vm) => h("tr", {},
+        h("td", {}, vm.name, " ", h("span", { class: `badge ${vm.running ? "ok" : ""}` }, vm.running ? "running" : "stopped"),
+          vm.snapshots ? h("span", { class: "badge", style: "margin-left:6px" }, count(vm.snapshots, "snapshot", "snapshots")) : null),
+        h("td", { class: "small" }, vm.disks.map((disk) => h("div", {}, disk.path,
+          h("span", { class: "dim" }, disk.provisioned != null ? ` · ${size(disk.used)} used of ${size(disk.provisioned)}` : " · on a sleeping disk"))),
+          vm.isos.map((iso) => h("div", { class: "dim" }, `CD: ${iso}`)))))))) : h("p", { class: "dim" }, v.enabled ? "No VMs." : "The VM service is off."),
+      v.findings.some((f) => f.safety !== "protected") ? [h("h3", { style: "margin-top:14px" }, "Files no VM uses"),
+        findingsTable(device, v.findings.filter((f) => f.safety !== "protected"))] : null));
+  }
+  if (u.activity.length) {
+    sections.push(h("div", { class: "card table-wrap" }, h("h2", {}, "What keeps disks awake"),
+      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Disk"), h("th", { class: "num" }, "Spin-ups"), h("th", { class: "num hide-narrow" }, "Awake"),
+        h("th", { class: "num hide-narrow" }, "Read"), h("th", { class: "num hide-narrow" }, "Written"), h("th", {}, "Open now"))),
+        h("tbody", {}, u.activity.map((a) => h("tr", {},
+          h("td", {}, a.disk),
+          h("td", { class: "num" }, a.wakeups),
+          h("td", { class: "num hide-narrow" }, a.awake_minutes >= 60 ? `${(a.awake_minutes / 60).toFixed(1)} h` : `${a.awake_minutes} min`),
+          h("td", { class: "num hide-narrow" }, size(a.reads * 512)),
+          h("td", { class: "num hide-narrow" }, size(a.writes * 512)),
+          h("td", { class: "small" }, a.open.length ? a.open.map((o) => h("div", {}, o.container ? `${o.container}: ` : `${o.process}: `, h("span", { class: "dim" }, o.path))) : h("span", { class: "dim" }, "nothing")))))),
+      h("p", { class: "hint" }, "Over the last day. A disk that keeps waking up is usually read by an app on a schedule: move what it reads to a pool, or change the app's schedule.")));
+  }
+  if (u.permissions.length) {
+    sections.push(h("div", { class: "card" }, h("h2", {}, "Permissions"),
+      h("p", { class: "dim small" }, "Files not owned by nobody:users, or without read and write for its group, can't always be reached over SMB. Tools → Docker Safe New Perms on the server fixes them (it leaves appdata alone)."),
+      u.permissions.map((p) => h("details", {}, h("summary", {}, `${p.share}: ${count(p.count, "item", "items")}`),
+        h("div", { class: "paths" }, p.examples.map((e) => h("div", {}, e)))))));
+  }
+  if (u.moves.length) {
+    sections.push(h("div", { class: "card table-wrap" }, h("h2", {}, "Moves between disks"),
+      h("table", {}, h("tbody", {}, u.moves.slice().reverse().map((m) => h("tr", {},
+        h("td", {}, m.folder ? `${m.share}/${m.folder}` : m.share, h("div", { class: "sub" }, `${m.from} → ${m.to}`)),
+        h("td", {}, h("span", { class: `badge ${m.state === "done" ? "ok" : m.state === "failed" ? "danger" : "accent"}` }, m.state)),
+        h("td", { class: "num" }, `${size(m.done_bytes)} of ${size(m.bytes)}`),
+        h("td", { class: "small dim" }, m.detail))))),
+      h("p", { class: "hint" }, "Moves are started on the server, in DiskTree's page under Tools.")));
+  }
+  return h("div", { class: "stack" }, sections);
+}
+
+function deviceQuarantine(device) {
+  const batches = device.quarantine || [];
+  const total = batches.reduce((sum, b) => sum + b.bytes, 0);
+  const head = h("div", { class: "card" },
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, h("h2", { style: "margin:0" }, "Quarantine"),
+        h("p", { class: "dim small", style: "margin:4px 0 0" }, batches.length
+          ? `${count(batches.length, "batch", "batches")}, ${size(total)}. Their space is freed only when the quarantine is emptied.`
+          : "Empty. Deleting on this device moves things here first.")),
+      batches.length && canDo(device, "delete") ? h("button", { onclick: () => requestDialog(device,
+        { type: "empty_quarantine", batches: batches.map((b) => b.id), bytes: total },
+        [`Empty the whole quarantine for good (${size(total)}):`, ...batches.flatMap((b) => b.items.slice(0, 20).map((i) => i.original))]) },
+        "Empty all…") : null),
+    h("p", { class: "hint" }, "Nothing here is deleted until someone asks to empty it and the device's approver agrees. On Unraid each disk keeps its own; batches on a sleeping disk show again when it wakes."));
+  const cards = batches.map((b) => h("div", { class: "card" },
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, h("strong", {}, `${count(b.items.length, "item", "items")}, ${size(b.bytes)}`),
+        h("div", { class: "dim small" }, `${date(b.when)} · by ${b.by || "the device"}${b.reason ? ` · ${b.reason}` : ""}`)),
+      canDo(device, "restore") ? h("button", { class: "small", onclick: () => requestDialog(device,
+        { type: "restore", batch: b.id, label: "" }, ["Put back where they were:", ...b.items.map((i) => i.original)]) }, "Put back…") : null,
+      canDo(device, "delete") ? h("button", { class: "small", onclick: () => requestDialog(device,
+        { type: "empty_quarantine", batches: [b.id], bytes: b.bytes },
+        [`Delete for good (${size(b.bytes)}):`, ...b.items.map((i) => i.original)]) }, "Empty…") : null),
+    h("div", { class: "paths", style: "margin-top:8px" }, b.items.slice(0, 10).map((i) => h("div", {}, i.original, h("span", { class: "dim" }, ` · ${size(i.bytes)}`))),
+      b.items.length > 10 ? h("div", { class: "dim" }, `… and ${b.items.length - 10} more`) : null)));
+  return h("div", { class: "stack" }, head, cards);
 }
 
 function deviceApps(device) {
@@ -1174,7 +1343,9 @@ function requestDialog(device, action, lines) {
 }
 
 function canDo(device, kind) {
-  return state.me.admin && (device.info.actions || []).includes(kind);
+  const info = device.info || {};
+  // A device nobody is at, without an approver, can't be asked anything.
+  return state.me.admin && (info.actions || []).includes(kind) && (info.attended || Boolean(info.approver));
 }
 
 /** A bar under a list for asking to delete the checked items. */

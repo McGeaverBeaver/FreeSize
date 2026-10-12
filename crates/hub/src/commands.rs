@@ -158,9 +158,15 @@ fn check_action(
                     "paths must be below the scanned folder",
                 ));
             }
-            *bytes = sizes_in_scan(c, device, root, paths)?.ok_or_else(|| {
-                ApiError::bad_request("the device never reported scanning that folder")
-            })?;
+            *bytes = if root == "/mnt/user" {
+                // On Unraid, only what the server itself listed as not in
+                // use (old appdata, ISOs, VM files) can be named by share.
+                findings_size(c, device, paths)?
+            } else {
+                sizes_in_scan(c, device, root, paths)?.ok_or_else(|| {
+                    ApiError::bad_request("the device never reported scanning that folder")
+                })?
+            };
         }
         Action::Uninstall { package, label } => {
             let report = apps_report(c, device)?;
@@ -256,6 +262,33 @@ fn check_action(
         }
     }
     Ok(())
+}
+
+/// The size of Unraid findings by their paths below `/mnt/user`; each must
+/// be one the server reported as not protected.
+fn findings_size(c: &Connection, device: &str, paths: &[String]) -> ApiResult<u64> {
+    let report = unraid_report(c, device)?;
+    let findings: Vec<_> = report
+        .docker
+        .iter()
+        .flat_map(|d| d.findings.iter())
+        .chain(report.vms.iter().flat_map(|v| v.findings.iter()))
+        .collect();
+    let mut total = 0;
+    for path in paths {
+        let full = format!("/mnt/user/{path}");
+        let finding = findings
+            .iter()
+            .find(|f| f.path.as_deref() == Some(full.as_str()))
+            .ok_or_else(|| {
+                ApiError::bad_request(format!("{full} isn't something the server listed"))
+            })?;
+        if finding.safety == Safety::Protected {
+            return Err(ApiError::bad_request(format!("{full}: {}", finding.reason)));
+        }
+        total += finding.bytes;
+    }
+    Ok(total)
 }
 
 /// What a device's quarantine held, as it last reported.

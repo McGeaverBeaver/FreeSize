@@ -279,6 +279,10 @@ pub struct DeviceDetail {
     pub history: Vec<DiskHistory>,
     pub roots: Vec<RootScans>,
     pub apps: Option<Value>,
+    /// What an Unraid server reported: array, shares, Docker, VMs, …
+    pub unraid: Option<Value>,
+    /// What the device's quarantine holds.
+    pub quarantine: Option<Value>,
 }
 
 /// `GET /api/devices/{id}`.
@@ -332,11 +336,19 @@ pub async fn detail(
                 })
                 .optional()?;
             let apps = apps.and_then(|text| serde_json::from_str::<AppsReport>(&text).ok());
+            let stored = |sql: &str| -> rusqlite::Result<Option<Value>> {
+                let text: Option<String> = c.query_row(sql, [&id], |r| r.get(0)).optional()?;
+                Ok(text.and_then(|t| serde_json::from_str(&t).ok()))
+            };
+            let unraid = stored("SELECT report FROM unraid WHERE device_id = ?1")?;
+            let quarantine = stored("SELECT batches FROM quarantine WHERE device_id = ?1")?;
             Ok(DeviceDetail {
                 summary,
                 history,
                 roots,
                 apps: apps.map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),
+                unraid,
+                quarantine,
             })
         })
         .await?;

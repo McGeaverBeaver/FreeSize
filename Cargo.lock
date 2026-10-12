@@ -1372,6 +1372,8 @@ dependencies = [
  "disktree-agent",
  "disktree-core",
  "disktree-proto",
+ "disktree-unraid",
+ "serde",
  "serde_json",
 ]
 
@@ -1436,6 +1438,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "xxhash-rust",
 ]
 
 [[package]]

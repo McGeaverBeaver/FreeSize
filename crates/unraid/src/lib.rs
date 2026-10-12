@@ -7,10 +7,14 @@
 //! `/boot/config`, `/proc`) through [`System`], so tests run against a
 //! folder laid out like a server.
 
+pub mod activity;
 pub mod array;
 pub mod docker;
 pub mod ini;
+pub mod mover;
+pub mod perms;
 pub mod protect;
+pub mod round;
 pub mod scans;
 pub mod shares;
 pub mod vms;
@@ -60,6 +64,19 @@ impl System {
             .map(|text| ini::parse_cfg(&text))
             .and_then(|cfg| cfg.get("version").cloned())
             .unwrap_or_default()
+    }
+}
+
+/// Space a file takes on disk.
+pub fn allocated(meta: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.blocks() * 512
+    }
+    #[cfg(not(unix))]
+    {
+        meta.len()
     }
 }
 

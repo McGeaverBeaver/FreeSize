@@ -33,6 +33,10 @@ pub trait Places: Send + Sync {
     /// The quarantine folders to look in now (on Unraid, only on disks that
     /// are awake).
     fn roots(&self) -> Vec<PathBuf>;
+    /// How to show a path to people.
+    fn shown(&self, path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
 }
 
 /// The quarantine at the top of the filesystem a path is on.
@@ -245,7 +249,7 @@ impl Quarantine {
                             }
                         };
                         manifest.items.push(StoredItem {
-                            original: item.to_string_lossy().into_owned(),
+                            original: self.places.shown(item),
                             physical: place.path.to_string_lossy().into_owned(),
                             stored: stored.to_string_lossy().into_owned(),
                             bytes: size,

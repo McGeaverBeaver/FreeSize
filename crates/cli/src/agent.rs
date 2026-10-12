@@ -40,6 +40,13 @@ pub enum Command {
         #[arg(long, global = true, env = "DISKTREE_AGENT_STATE", value_name = "FILE")]
         state: Option<PathBuf>,
     },
+    /// The Unraid plugin's background work, and the commands its page uses.
+    Unraid {
+        #[command(subcommand)]
+        action: crate::unraid::UnraidAction,
+        #[command(flatten)]
+        dirs: crate::unraid::DirArgs,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -138,6 +145,7 @@ pub fn main(command: Command) -> ExitCode {
                 ApproverAction::Clear => clear_approver(&path),
             }
         }
+        Command::Unraid { action, dirs } => crate::unraid::main(action, dirs),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -191,6 +199,12 @@ fn os_name() -> String {
 }
 
 fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
+    // On Unraid the plugin's daemon reports; say the same as it does, so
+    // pairing or setting the approver here doesn't change what the Hub shows.
+    let system = disktree_unraid::System::real();
+    if system.is_unraid() {
+        return crate::unraid::device_info(&system, name, state);
+    }
     DeviceInfo {
         name: name.to_string(),
         platform: Platform::current(),
@@ -349,7 +363,7 @@ fn clear_approver(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn log(message: &str) {
+pub(crate) fn log(message: &str) {
     println!("{message}");
 }
 
@@ -539,7 +553,12 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
     }
 }
 
-fn send(state: &AgentState, transport: &dyn Transport, id: &str, update: &CommandUpdate) {
+pub(crate) fn send(
+    state: &AgentState,
+    transport: &dyn Transport,
+    id: &str,
+    update: &CommandUpdate,
+) {
     if let Err(err) = Client::new(state, transport).update(id, update) {
         log(&format!("couldn't tell the Hub about request {id}: {err}"));
     }

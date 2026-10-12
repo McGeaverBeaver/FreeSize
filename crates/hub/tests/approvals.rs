@@ -410,3 +410,108 @@ async fn polls_wake_up_for_new_requests() {
     })
     .await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unraid_requests_name_only_what_the_server_reported() {
+    use disktree_proto::unraid::{
+        DockerReport, Finding, QuarantineBatch, QuarantineItem, Safety, UnraidReport, VmReport,
+    };
+    let hub = start_hub("unraid").await;
+    let url = hub.url.clone();
+    blocking(move || {
+        let transport = UreqTransport::new();
+        let mut admin = Browser::new();
+        admin.sign_in(&url, "%2F");
+        let actions = vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Clean];
+        let phone = paired(&mut admin, &url, info("Phone", true, vec![], None));
+        let server = paired(&mut admin, &url, info("Tower", false, actions.clone(), None));
+        let finding = |id: &str, kind: &str, path: Option<&str>, bytes: u64, safety: Safety| Finding {
+            id: id.into(),
+            kind: kind.into(),
+            label: id.into(),
+            path: path.map(String::from),
+            bytes,
+            safety,
+            reason: "because".into(),
+        };
+        Client::new(&server, &transport)
+            .report(&Report {
+                info: Some(info("Tower", false, actions, Some(phone.fingerprint()))),
+                unraid: Some(UnraidReport {
+                    started: true,
+                    docker: Some(DockerReport {
+                        running: true,
+                        findings: vec![
+                            finding("image:old", "dangling_image", None, 300, Safety::Safe),
+                            finding("image:plex", "image", None, 900, Safety::Protected),
+                            finding("volume:abc", "volume", None, 50, Safety::Check),
+                            finding("appdata:plex", "appdata", Some("/mnt/user/appdata/plex"), 70, Safety::Protected),
+                        ],
+                        ..DockerReport::default()
+                    }),
+                    vms: Some(VmReport {
+                        enabled: true,
+                        vms: vec![],
+                        findings: vec![finding("iso:old", "iso", Some("/mnt/user/isos/old.iso"), 4_000, Safety::Check)],
+                    }),
+                    ..UnraidReport::default()
+                }),
+                quarantine: Some(vec![QuarantineBatch {
+                    id: "w1".into(),
+                    when: 1_790_000_000,
+                    by: "Unraid web UI".into(),
+                    reason: String::new(),
+                    bytes: 2_000,
+                    items: vec![QuarantineItem {
+                        original: "/mnt/user/TV/Show".into(),
+                        stored: "/mnt/disk3/.disktree-quarantine/w1/0".into(),
+                        bytes: 2_000,
+                    }],
+                }]),
+                ..Report::default()
+            })
+            .unwrap();
+        let devices = admin.get(&format!("{url}/api/devices")).json();
+        let id = devices.as_array().unwrap().iter().find(|d| d["name"] == "Tower").unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let ask = |admin: &mut Browser, action: Value| {
+            admin.post(&format!("{url}/api/devices/{id}/commands"), &json!({"action": action}), true)
+        };
+        let action_of = |admin: &mut Browser, made: &Value| {
+            requests(admin, &url).into_iter().find(|r| r["id"] == made["id"]).unwrap()["action"].clone()
+        };
+
+        // Below /mnt/user, only what the server listed and didn't protect.
+        let delete = |path: &str| json!({"type": "delete", "root": "/mnt/user", "paths": [path], "bytes": 0});
+        let made = ask(&mut admin, delete("isos/old.iso"));
+        assert_eq!(made.status, 200, "{}", made.body);
+        assert_eq!(action_of(&mut admin, &made.json())["bytes"], 4_000);
+        assert_eq!(ask(&mut admin, delete("appdata/plex")).status, 400);
+        assert_eq!(ask(&mut admin, delete("TV/Show")).status, 400);
+        assert_eq!(ask(&mut admin, delete("../boot")).status, 400);
+
+        // Put back and empty only batches the server holds.
+        let made = ask(&mut admin, json!({"type": "restore", "batch": "w1", "label": "anything"}));
+        assert_eq!(made.status, 200, "{}", made.body);
+        let label = action_of(&mut admin, &made.json())["label"].as_str().unwrap().to_string();
+        assert!(label.starts_with("/mnt/user/TV/Show moved to the quarantine"), "{label}");
+        assert_eq!(ask(&mut admin, json!({"type": "restore", "batch": "w9", "label": ""})).status, 400);
+        let made = ask(&mut admin, json!({"type": "empty_quarantine", "batches": ["w1"], "bytes": 1}));
+        assert_eq!(made.status, 200, "{}", made.body);
+        assert_eq!(action_of(&mut admin, &made.json())["bytes"], 2_000);
+        assert_eq!(ask(&mut admin, json!({"type": "empty_quarantine", "batches": [], "bytes": 0})).status, 400);
+        assert_eq!(ask(&mut admin, json!({"type": "empty_quarantine", "batches": ["w9"], "bytes": 0})).status, 400);
+
+        // Docker: images and build cache that nothing uses, nothing else.
+        let cleanup = |item: &str| json!({"type": "docker_cleanup", "items": [item], "labels": [], "bytes": 0});
+        let made = ask(&mut admin, cleanup("image:old"));
+        assert_eq!(made.status, 200, "{}", made.body);
+        assert_eq!(action_of(&mut admin, &made.json())["bytes"], 300);
+        for refused in ["image:plex", "volume:abc", "appdata:plex", "image:unknown"] {
+            assert_eq!(ask(&mut admin, cleanup(refused)).status, 400, "{refused}");
+        }
+    })
+    .await;
+}

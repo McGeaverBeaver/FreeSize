@@ -11,6 +11,7 @@ use disktree_core::{
 };
 
 mod agent;
+mod unraid;
 
 /// Shows what is using space on a drive or in a folder.
 #[derive(Parser, Debug)]
