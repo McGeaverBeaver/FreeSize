@@ -116,7 +116,7 @@ from [rustup.rs](https://rustup.rs).
   sudo dnf install gcc pkgconf fontconfig-devel                    # Fedora
   ```
 
-Get the code with `git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid`
+Get the code with `git clone https://github.com/McGeaverBeaver/FreeSize`
 and run the commands below inside that folder. `git pull` fetches updates.
 
 ### Desktop app
@@ -267,8 +267,8 @@ One-time setup (Debian/Ubuntu and WSL; other distros need the same packages):
 ```sh
 sudo apt install curl unzip openjdk-17-jdk-headless build-essential   # or openjdk-21-…
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # if you don't have Rust
-git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid
-cd TreeSizeCloneAndroid
+git clone https://github.com/McGeaverBeaver/FreeSize
+cd FreeSize
 scripts/android/setup-linux.sh
 ```
 
@@ -543,7 +543,7 @@ Community Applications, add it from the Unraid terminal, then pick
 
 ```sh
 wget -O /boot/config/plugins/dockerMan/templates-user/my-disktree-hub.xml \
-  https://raw.githubusercontent.com/McGeaverBeaver/TreeSizeCloneAndroid/HEAD/unraid/disktree-hub.xml
+  https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/disktree-hub.xml
 ```
 
 It asks for the web port, the appdata folder
@@ -760,7 +760,7 @@ stopped, everything they could use counts as in use.
 In Unraid, **Plugins → Install Plugin**, and paste:
 
 ```
-https://github.com/McGeaverBeaver/TreeSizeCloneAndroid/releases/latest/download/disktree.plg
+https://github.com/McGeaverBeaver/FreeSize/releases/latest/download/disktree.plg
 ```
 
 (Unraid downloads it without logging in, so the repository has to be
@@ -815,8 +815,8 @@ sudo apt install -y build-essential pkg-config git curl unzip zip gh mingw-w64 \
     musl-tools openjdk-21-jdk-headless libfontconfig1-dev
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
-git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git
-cd TreeSizeCloneAndroid
+git clone https://github.com/McGeaverBeaver/FreeSize.git
+cd FreeSize
 scripts/android/setup-linux.sh   # Android SDK, NDK, cargo-apk
 gh auth login                    # GitHub.com, HTTPS, log in with a web browser
 ```
@@ -865,15 +865,15 @@ caches writes) returned corrupted file contents in a real build.
 sudo mkdir -p /mnt/ssdbuilds
 echo 'ssdbobbybuilds /mnt/ssdbuilds 9p trans=virtio,version=9p2000.L,msize=262144,cache=mmap,nofail 0 0' | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload && sudo mount /mnt/ssdbuilds
-git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git /mnt/ssdbuilds/TreeSizeCloneAndroid
-ln -s /mnt/ssdbuilds/TreeSizeCloneAndroid ~/TreeSizeCloneAndroid
+git clone https://github.com/McGeaverBeaver/FreeSize.git /mnt/ssdbuilds/FreeSize
+ln -s /mnt/ssdbuilds/FreeSize ~/FreeSize
 ```
 
 To check that every file arrived intact, make git re-read them all; this
 should print nothing:
 
 ```sh
-cd ~/TreeSizeCloneAndroid
+cd ~/FreeSize
 find . -path ./.git -prune -o -type f -exec touch {} +
 git status --short
 ```
@@ -888,7 +888,7 @@ Rust, the Android SDK and the signing key stay on the VM's own disk.
 2. On the build machine:
 
    ```sh
-   cd ~/TreeSizeCloneAndroid
+   cd ~/FreeSize
    git pull
    scripts/release.sh
    ```

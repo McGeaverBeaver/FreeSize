@@ -33,6 +33,8 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
   changes, `scripts/android/build-apk.sh dist/test.apk` builds and checks
   the APK.
 - Keep README.md, ARCHITECTURE.md and docs/ROADMAP.md in step with changes.
+- The repository is public, history included: never commit keys, tokens,
+  passwords, or the owner's addresses, hostnames or other personal details.
 - Each release bumps `version` in the root `Cargo.toml`; Android won't
   install a lower version over a higher one.
 - `cargo run -p disktree-hub --example demo` starts a Hub with made-up
@@ -41,7 +43,8 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
 ## This machine
 
 This Ubuntu VM is the build machine, with the repository in
-`~/TreeSizeCloneAndroid`. `scripts/release.sh` runs the tests, builds
+`~/TreeSizeCloneAndroid` (its name on GitHub until 2026-10-12; it's
+McGeaverBeaver/FreeSize now, and public). `scripts/release.sh` runs the tests, builds
 everything (APK, Linux, Windows, the Hub, the Unraid plugin) and publishes
 the GitHub release; `--build-only` just builds into `dist/`, `--draft`
 publishes a draft. A release needs about 15 GB of free disk. The Android
@@ -80,7 +83,7 @@ compiling inside Docker.
      folder. On the first real install, check that Tools → Disk Space →
      DiskTree appears, `/var/log/disktree.log`, and
      `disktree unraid status`. Unraid downloads the plugin from the
-     GitHub release, so the repository has to be public for that.
+     GitHub release, which works since the repository went public.
   3. Next on the roadmap: phase 5 (Nextcloud and "do I have a copy?"),
      then phase 6 (a CCleaner-style junk cleaner on every device, every
      item with a blurb on what cleaning it means), plus the held-back items

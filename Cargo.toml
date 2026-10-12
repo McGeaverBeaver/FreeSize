@@ -11,7 +11,7 @@ default-members = [
 version = "0.8.3"
 edition = "2024"
 rust-version = "1.92"
-repository = "https://github.com/McGeaverBeaver/TreeSizeCloneAndroid"
+repository = "https://github.com/McGeaverBeaver/FreeSize"
 
 [workspace.dependencies]
 disktree-core = { path = "crates/core" }

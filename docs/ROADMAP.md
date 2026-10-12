@@ -162,7 +162,8 @@ Left over:
     the container, and a volume's data can't go to the quarantine without
     Docker losing track of it. The Docker tab handles them.
   - **Community Applications**: the plugin installs from its `.plg` URL
-    until it's submitted there, which needs the repository to be public.
+    until it's submitted there; the repository is public since 0.8.3, so
+    it can be.
   - **Unraid's own notifications** for full disks: the Hub's alerts cover
     it once paired.
 

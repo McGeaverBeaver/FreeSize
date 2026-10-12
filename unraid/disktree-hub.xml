@@ -2,13 +2,13 @@
 <Container version="2">
   <Name>disktree-hub</Name>
   <Repository>ghcr.io/mcgeaverbeaver/disktree-hub:latest</Repository>
-  <Registry>https://github.com/McGeaverBeaver/TreeSizeCloneAndroid/pkgs/container/disktree-hub</Registry>
+  <Registry>https://github.com/McGeaverBeaver/FreeSize/pkgs/container/disktree-hub</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/McGeaverBeaver/TreeSizeCloneAndroid/issues</Support>
-  <Project>https://github.com/McGeaverBeaver/TreeSizeCloneAndroid</Project>
+  <Support>https://github.com/McGeaverBeaver/FreeSize/issues</Support>
+  <Project>https://github.com/McGeaverBeaver/FreeSize</Project>
   <Overview>DiskTree Hub: one dashboard for the storage of all your devices. Phones, PCs and servers running DiskTree report their disks, biggest folders and files; you can compare scans over time, search every device at once and get alerts (ntfy, Gotify, Pushover, webhooks) before a disk fills up.&#xD;
 &#xD;
 Nothing is ever deleted automatically. The dashboard can only ask: each request is shown on the device itself, with every path, to approve or deny. Servers without a screen send their requests to an approver phone, which can only be chosen on the server (disktree approver set), never from the dashboard.&#xD;
@@ -16,8 +16,8 @@ Nothing is ever deleted automatically. The dashboard can only ask: each request 
 Sign-in is OpenID Connect against Authentik: make an OAuth2/OpenID provider and application there, with the redirect URI [Hub address]/auth/callback, and fill in the fields below.</Overview>
   <Category>Tools: Status:Stable</Category>
   <WebUI>http://[IP]:[PORT:9090]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/McGeaverBeaver/TreeSizeCloneAndroid/HEAD/unraid/disktree-hub.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/McGeaverBeaver/TreeSizeCloneAndroid/HEAD/unraid/disktree-hub.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/disktree-hub.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/disktree-hub.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>

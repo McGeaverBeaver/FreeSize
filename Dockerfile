@@ -56,5 +56,5 @@ EXPOSE 9090
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s CMD ["/usr/local/bin/disktree-hub", "health"]
 LABEL org.opencontainers.image.title="DiskTree Hub" \
       org.opencontainers.image.description="One dashboard for the storage of all your devices" \
-      org.opencontainers.image.source="https://github.com/McGeaverBeaver/TreeSizeCloneAndroid"
+      org.opencontainers.image.source="https://github.com/McGeaverBeaver/FreeSize"
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

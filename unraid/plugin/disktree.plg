@@ -5,7 +5,7 @@
 <!ENTITY name       "disktree">
 <!ENTITY author     "McGeaverBeaver">
 <!ENTITY version    "@VERSION@">
-<!ENTITY repo       "https://github.com/McGeaverBeaver/TreeSizeCloneAndroid">
+<!ENTITY repo       "https://github.com/McGeaverBeaver/FreeSize">
 <!ENTITY pluginURL  "&repo;/releases/latest/download/disktree.plg">
 <!ENTITY package    "&name;-&version;-x86_64-1">
 <!ENTITY packageURL "&repo;/releases/download/v&version;/&package;.txz">

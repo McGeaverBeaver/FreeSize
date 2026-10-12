@@ -15,7 +15,7 @@
 # anyway), and nothing is deleted without an approval from the approver.
 [Unit]
 Description=DiskTree agent
-Documentation=https://github.com/McGeaverBeaver/TreeSizeCloneAndroid
+Documentation=https://github.com/McGeaverBeaver/FreeSize
 Wants=network-online.target
 After=network-online.target
 
