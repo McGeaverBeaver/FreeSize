@@ -1,0 +1,5 @@
+Menu="DiskTree:2"
+Title="Shares and moves"
+---
+<?require_once "$docroot/plugins/disktree/include/page.php";?>
+<div class="disktree" id="dt-shares"><p class="dt-muted">Loading…</p></div>

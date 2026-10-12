@@ -13,7 +13,8 @@ else that can delete:
   can be opened to browse the files inside before anything happens.
 - **Recoverable first.** Where possible, deleting moves items to a quarantine
   folder on the same disk (so it's instant and frees space only when
-  emptied), with a retention period and one-click restore.
+  emptied), with one-click restore. It's emptied only when someone asks,
+  never on a timer.
 - **Protected paths are never offered.** Each platform has a built-in list
   (for example Unraid's flash drive, `system` share and the appdata of
   installed containers), and admins can add their own.
@@ -78,10 +79,27 @@ else that can delete:
   - Prometheus metrics and JSON for Home Assistant.
   - A Docker image for amd64 and arm64, the Unraid template, and systemd
     units.
+- 0.8 (phase 4): DiskTree for Unraid, a plugin with a page under Tools.
+  - Disks and pools scanned directly (`/mnt/diskN`, never `/mnt/user`),
+    without waking sleeping disks; each share's size per disk.
+  - Docker (`docker.img` or a folder) and VMs: safe to remove, check first,
+    or in use and never offered; unused images and the build cache removed
+    on request.
+  - Never offered: the flash drive, the system share, Docker's storage,
+    installed apps' appdata, container mounts, VM disks and ISOs in use,
+    whole disks and shares, remote mounts, open files, and the owner's own
+    list.
+  - A quarantine on each disk, with put back and empty only on request;
+    the command-line agent on other servers uses it too.
+  - What deleting really frees (hard links, ZFS snapshots), what keeps
+    disks spun up, a permissions report, and moving a share between disks
+    with a plan and checked copies.
+  - Reports to the Hub (its Unraid and Quarantine tabs); the server's
+    approver is chosen on the page or with `disktree approver set`.
 
 Left over:
-- From 2b/2c: old downloads and screen recordings as their own groups, and
-  Docker build cache (part of the Docker work in phases 3 and 4).
+- From 2b/2c: old downloads and screen recordings as their own groups.
+  (Docker's build cache is cleaned on Unraid since 0.8.)
 - From 2d: an Apps bubble view on desktops (an app's install folder plus its
   AppData/Library/cache folders, gathered across drives); Epic and GOG game
   artwork.
@@ -93,11 +111,8 @@ Left over:
   - **The phone in the background**: the Android app only reports and gets
     prompts while it's open (an alert nudges you to open it). A small Java
     part with WorkManager fixes that, together with Shizuku below.
-  - **Quarantine with restore on servers**: the agent deletes after
-    approval; desktops use the Trash. A quarantine folder on the same disk
-    comes with the Unraid plugin (phase 4), which needs it most.
   - **More actions**: removing packages (apt, dnf, Flatpak, Snap, winget,
-    Homebrew), Docker cleanup and making OneDrive/Nextcloud files
+    Homebrew), Docker cleanup outside Unraid and making OneDrive/Nextcloud files
     online-only. Each needs its own checks of what's safe; deleting files,
     cleaning junk and uninstalling Android apps come first.
   - **Scanning over SSH** without an agent: uploading `ncdu -o` files covers
@@ -120,8 +135,8 @@ Left over:
     the Hub's background agent needs too, so the two come together.
     Sideloaded or F-Droid builds only; Play restricts it.
   - **Shrinking photos** (SD Maid SE's Squeezer): rewrites people's photos,
-    so it waits for quarantine with restore (phase 3) to keep the originals
-    until the user is happy.
+    so it waits for a quarantine with restore on phones and desktops (servers
+    have one since 0.8) to keep the originals until the user is happy.
   - **Blurry photos**: a sharpness score per photo, on top of the similar
     photos finder, to pick the best of a group.
   - **NTFS compression in place** and **fast Windows scans** from the
@@ -133,6 +148,15 @@ Left over:
   - **Leftovers of uninstalled programs** in AppData and `~/Library`:
     matching folders to installed programs is reliable for the icons but not
     yet reliable enough to call a folder abandoned.
+- From 4, each held back for a reason:
+  - **Container logs, writable layers and orphan volumes** are only shown:
+    Docker keeps writing to a running container's log, a layer is part of
+    the container, and a volume's data can't go to the quarantine without
+    Docker losing track of it. The Docker tab handles them.
+  - **Community Applications**: the plugin installs from its `.plg` URL
+    until it's submitted there, which needs the repository to be public.
+  - **Unraid's own notifications** for full disks: the Hub's alerts cover
+    it once paired.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 
@@ -233,6 +257,8 @@ Built in 0.7, apart from what's listed under Done → "From 3".
 
 ## Phase 4: Unraid plugin
 
+Built in 0.8, apart from what's listed under Done → "From 4".
+
 Answers "what's taking up the array?" and never breaks the server.
 
 - **Array-aware scanning:** per disk (`/mnt/diskN`), per pool
@@ -254,8 +280,9 @@ Answers "what's taking up the array?" and never breaks the server.
 - **Protected, never offered:** `/boot`, the `system` share, `docker.img`,
   `libvirt.img`, appdata of configured containers, files open by a process.
 - **Deleting:** preview and browse first, quarantine with restore, nothing
-  automatic. The quarantine lives on the same disk (`/mnt/diskN/.disktree`),
-  or the "instant" move becomes a copy between disks.
+  automatic. The quarantine lives on the same disk
+  (`/mnt/diskN/.disktree-quarantine`), or the "instant" move becomes a copy
+  between disks.
 - **What deleting really frees:** files hard-linked elsewhere (the *arr apps
   do this) and data held by ZFS snapshots free nothing; the estimate has to
   count links and snapshots.
@@ -342,7 +369,8 @@ Suggestions this enables:
 ## Decided
 
 - Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5) and
-  2e (0.6). The Hub (phase 3) is in 0.7; the Unraid plugin (phase 4) is
-  next, with quarantine and the approver in its settings page.
+  2e (0.6). The Hub (phase 3) is in 0.7, the Unraid plugin (phase 4), with
+  the quarantine and the approver in its settings page, in 0.8. Nextcloud
+  (phase 5) is next.
 - Screenless devices use a designated approver who can only be changed on
   the device (see Approvals).

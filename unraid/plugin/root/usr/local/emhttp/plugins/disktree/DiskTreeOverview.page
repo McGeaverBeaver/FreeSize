@@ -1,0 +1,5 @@
+Menu="DiskTree:1"
+Title="Overview"
+---
+<?require_once "$docroot/plugins/disktree/include/page.php";?>
+<div class="disktree" id="dt-overview"><p class="dt-muted">Loading…</p></div>

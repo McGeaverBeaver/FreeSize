@@ -509,8 +509,9 @@ on the device itself:
   every answer.
 - Every device refuses what's outside the folders it scans, paths with
   `..` or through links, system folders, and DiskTree's own files. On a
-  desktop, deleted files go to the Trash; on Android and servers they're
-  deleted.
+  desktop, deleted files go to the Trash; on a server they go to a
+  quarantine on the same disk, to put back or empty later (each another
+  request, approved the same way); on Android they're deleted.
 - Commands are signed by the Hub's key, which each device checked when it
   paired, and every device request is signed by the device's key, so
   neither a fake Hub nor someone on the network can make up a request.
@@ -701,6 +702,98 @@ starts a Hub on http://127.0.0.1:9090 with a stand-in sign-in (it signs you
 straight in as an admin) and a few made-up devices, scans, requests and
 alerts.
 
+## DiskTree for Unraid
+
+A plugin for Unraid 6.12 and newer: a page under **Tools → DiskTree** and a
+small background part. It knows the array, the pools, Docker and the VMs,
+and keeps what the server needs out of reach.
+
+![The plugin's overview](docs/screenshots/unraid-plugin.png)
+
+What it shows:
+
+- **Disks and pools**: how full each is, its temperature, and when it was
+  last scanned. Disks that are spun down aren't woken: their last scan
+  stands until they're awake at scan time, or until a week has passed
+  (Settings).
+- **Shares and their disks**: how much of each share is on which disk.
+- **Docker**: images left behind by updates and the build cache (safe to
+  remove), unused images and volumes and the appdata of apps that are gone
+  (check first), and what's in use (never offered). Also containers that
+  write inside themselves and fill `docker.img`.
+- **VMs**: ISOs no VM uses, and files in a VM's folder that aren't attached
+  to it.
+- **What keeps disks awake**: spin-ups, reads and writes over the last day,
+  and which files are open on each disk, by which app or container.
+- **Permissions**: files in shares that SMB may not reach. Only reported;
+  Tools → New Permissions fixes them.
+
+What it does, only when asked:
+
+- **Quarantine**: moves files and folders aside on the disk they're on (a
+  rename; nothing is copied). Put them back any time. They're deleted only
+  when you empty the quarantine, after a list of every path with links to
+  look at them in Unraid's file browser, and a box to tick. Nothing is
+  emptied on a timer.
+- **What deleting really frees**, counting hard links (the \*arr apps'
+  imports) and ZFS snapshots that keep the data anyway.
+- **Moving a share**, or a folder in it, **between disks**: a plan first
+  (room, files in the way, hard links that would be split), then each file
+  is copied, checked against its original, and the originals go to the
+  source disk's quarantine. The path in `/mnt/user` stays the same.
+- **Removing Docker images** nobody uses, and the build cache.
+
+Never offered, whoever asks: the flash drive, the system share
+(`docker.img`, `libvirt.img`), Docker's storage, the appdata of installed
+apps, folders mounted into containers, the VMs' disks and the ISOs in their
+CD drives, whole disks and shares, other machines' storage under
+`/mnt/remotes`, and files open right now. While Docker or the VM service is
+stopped, everything they could use counts as in use.
+
+### Installing the plugin
+
+In Unraid, **Plugins → Install Plugin**, and paste:
+
+```
+https://github.com/McGeaverBeaver/TreeSizeCloneAndroid/releases/latest/download/disktree.plg
+```
+
+(Unraid downloads it without logging in, so the repository has to be
+public.) Updates show on the Plugins page like any other plugin's.
+
+The background part runs at the lowest CPU and disk priority, stops when
+the array stops so it never holds a disk, and logs to
+`/var/log/disktree.log`. To start or stop it by hand:
+`/etc/rc.d/rc.disktree start|stop|restart|status`. Removing the plugin
+keeps its settings and Hub pairing in `/boot/config/plugins/disktree`, and
+anything still in the quarantine stays in `.disktree-quarantine` at the top
+of each disk until you delete it.
+
+### With the Hub
+
+On the **Settings and Hub** tab, paste a pairing link from the Hub (Pair a
+device), then choose the approver by the key its DiskTree app shows. The
+server then reports its disks, a scan per disk, shares, Docker, VMs and
+quarantine to the Hub, which shows them on the device's **Unraid** and
+**Quarantine** tabs. An admin can ask it to put back or empty the
+quarantine, remove Docker images, or delete what the server listed as not
+in use; the approver's phone shows every path first. The approver can only
+be changed on this page or with `disktree approver set` on the server.
+
+### From the Unraid terminal
+
+```sh
+disktree unraid status
+disktree unraid estimate /mnt/user/Movies/Old
+disktree unraid quarantine list
+disktree unraid quarantine add /mnt/user/isos/old.iso --reason "not needed"
+disktree unraid quarantine restore <batch>
+disktree unraid quarantine empty <batch>...
+disktree unraid move plan --share Movies --folder "Old Films" --from disk1 --to disk3
+disktree unraid move start --share Movies --folder "Old Films" --from disk1 --to disk3
+disktree unraid docker-cleanup <id>...    # ids from status --json
+```
+
 ## Releases
 
 Releases are built on your own Linux machine (an Ubuntu VM works well) and
@@ -714,7 +807,7 @@ On a fresh Ubuntu Server (24.04 or newer):
 ```sh
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y build-essential pkg-config git curl unzip zip gh mingw-w64 \
-    openjdk-21-jdk-headless libfontconfig1-dev
+    musl-tools openjdk-21-jdk-headless libfontconfig1-dev
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git
@@ -796,9 +889,11 @@ Rust, the Android SDK and the signing key stay on the VM's own disk.
    ```
 
 `scripts/release.sh` runs the tests, builds `disktree-android.apk`,
-`disktree-linux-x86_64.tar.gz`, `disktree-hub-linux-x86_64.tar.gz` and
+`disktree-linux-x86_64.tar.gz`, `disktree-hub-linux-x86_64.tar.gz`,
 `disktree-windows-x86_64.zip` (the Windows build is cross-compiled with
-MinGW), writes `SHA256SUMS.txt`, and creates the GitHub release `v<version>`
+MinGW) and the Unraid plugin, `disktree.plg` with its package
+`disktree-<version>-x86_64-1.txz` (a static musl build, so it runs on every
+Unraid version), writes `SHA256SUMS.txt`, and creates the GitHub release `v<version>`
 for the checked-out commit with those files and notes listing the changes.
 With `gcc-aarch64-linux-gnu` installed it adds the Hub and command line for
 ARM boards (`*-linux-aarch64.tar.gz`).
@@ -820,8 +915,9 @@ first; `--build-only` just builds into `dist/`. macOS builds need a Mac, so
 releases have none.
 
 The GitHub Actions CI workflow (`.github/workflows/ci.yml`) no longer runs on
-its own. It runs formatting, clippy and tests on Windows, macOS and Linux when
-started by hand from the Actions tab. The same checks locally:
+its own. It runs formatting, clippy and tests on Windows, macOS and Linux,
+builds the APK and the Unraid plugin, when started by hand from the Actions
+tab. The same checks locally:
 
 ```sh
 cargo fmt --all --check
@@ -860,7 +956,11 @@ crates/proto  what devices and the Hub say to each other: keys, signatures,
               pairing links, reports, commands
 crates/agent  the device side of the Hub, shared by the app and the agent
 crates/hub    DiskTree Hub: web server, dashboard (web/), SQLite, alerts
-unraid/       Unraid template; packaging/ the Docker entrypoint and systemd units
+crates/unraid Unraid: the array, shares, Docker, VMs, what to protect,
+              disk activity, permissions, moves between disks
+unraid/       the Hub's Unraid template, and plugin/: the .plg and the
+              package (page, start script)
+packaging/    the Hub's Docker entrypoint, systemd units
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work, and

@@ -41,6 +41,7 @@ pub enum Command {
         state: Option<PathBuf>,
     },
     /// The Unraid plugin's background work, and the commands its page uses.
+    #[cfg(unix)]
     Unraid {
         #[command(subcommand)]
         action: crate::unraid::UnraidAction,
@@ -97,6 +98,9 @@ pub enum ApproverAction {
         /// Don't ask to confirm.
         #[arg(long)]
         yes: bool,
+        /// Only show which device that is; change nothing.
+        #[arg(long, conflicts_with = "yes")]
+        check: bool,
     },
     /// Show the approver.
     Show,
@@ -140,11 +144,16 @@ pub fn main(command: Command) -> ExitCode {
         Command::Approver { action, state } => {
             let path = state.unwrap_or_else(default_state_path);
             match action {
-                ApproverAction::Set { fingerprint, yes } => set_approver(&path, &fingerprint, yes),
+                ApproverAction::Set {
+                    fingerprint,
+                    yes,
+                    check,
+                } => set_approver(&path, &fingerprint, yes, check),
                 ApproverAction::Show => status(&path),
                 ApproverAction::Clear => clear_approver(&path),
             }
         }
+        #[cfg(unix)]
         Command::Unraid { action, dirs } => crate::unraid::main(action, dirs),
     };
     match result {
@@ -201,9 +210,12 @@ fn os_name() -> String {
 fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
     // On Unraid the plugin's daemon reports; say the same as it does, so
     // pairing or setting the approver here doesn't change what the Hub shows.
-    let system = disktree_unraid::System::real();
-    if system.is_unraid() {
-        return crate::unraid::device_info(&system, name, state);
+    #[cfg(unix)]
+    {
+        let system = disktree_unraid::System::real();
+        if system.is_unraid() {
+            return crate::unraid::device_info(&system, name, state);
+        }
     }
     DeviceInfo {
         name: name.to_string(),
@@ -325,7 +337,7 @@ fn unpair(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn set_approver(path: &Path, fingerprint: &str, yes: bool) -> Result<(), String> {
+fn set_approver(path: &Path, fingerprint: &str, yes: bool, check: bool) -> Result<(), String> {
     let mut state = load(path)?;
     let transport = UreqTransport::new();
     let found = Client::new(&state, &transport)
@@ -337,6 +349,9 @@ fn set_approver(path: &Path, fingerprint: &str, yes: bool) -> Result<(), String>
         found.platform.label(),
         found.key.fingerprint()
     );
+    if check {
+        return Ok(());
+    }
     if !yes && !ask("Set it as approver?") {
         return Err("not changed".into());
     }

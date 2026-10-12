@@ -1,0 +1,12 @@
+        |-----handy-ruler------------------------------------------------------|
+disktree: DiskTree for Unraid
+disktree:
+disktree: Shows where the space on the array and pools goes, share by share
+disktree: and disk by disk, without waking sleeping disks. Knows what Docker
+disktree: and the VMs use, keeps it from being deleted, moves things to a
+disktree: quarantine you can undo, moves shares between disks with checked
+disktree: copies, and reports to the DiskTree Hub once paired.
+disktree:
+disktree: https://github.com/McGeaverBeaver/TreeSizeCloneAndroid
+disktree:
+disktree:

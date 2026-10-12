@@ -568,7 +568,16 @@ whole array, rather than every file.
      approver, and one without an approver refuses.
 
   An approver's decision must be signed by the approver's pinned key and
-  name the hash of the exact command; grants last at most 8 hours.
+  name the hash of the exact command; grants last at most 8 hours. A
+  `Policy` can carry extra `Guard`s that refuse paths on their own terms
+  (Unraid's rules, open files).
+- `quarantine.rs`: on servers a delete is a move into `.disktree-quarantine`
+  at the top of the file system the item is on: a rename, never a copy, in a
+  batch with a manifest of where each item was. A batch is put back (never
+  over something that's there now) or emptied only on request.
+- `estimate.rs`: what deleting would really free: hard-linked files count
+  only when every link goes, and ZFS snapshots holding the data are named.
+- `guard.rs`: refuses files some process has open (`/proc/*/fd`).
 
 The command line's agent (`crates/cli/src/agent.rs`) reports disks hourly,
 scans its folders on a thread every `--every` hours, and long-polls the Hub
@@ -577,7 +586,8 @@ reports and answers and a second one for polling, so an answer goes out at
 once; the first poll after starting asks the Hub to send everything still
 open again, so a prompt shown before the app closed comes back. Prompts go
 to the controller through a channel; on the desktop deletes go to the
-Trash, on Android they're deleted, as everywhere else in the app.
+Trash, on Android they're deleted, as everywhere else in the app. The
+command line's agent sends deletes to the quarantine.
 
 ### Server (`crates/hub`)
 
@@ -643,16 +653,86 @@ the same with made-up devices for trying the dashboard.
   drops to that user with `setpriv`. `disktree-hub health` is the health
   check.
 - `unraid/disktree-hub.xml`: the Unraid template.
+- `unraid/plugin/`: the Unraid plugin (below).
 - `packaging/systemd/`: units for the Hub (its own dynamic user and
   hardening) and the agent, with their settings files.
+
+## Unraid
+
+The plugin is the command line, built statically with musl so it runs on
+any Unraid version, plus a page in Unraid's web UI. `crates/unraid` knows
+the server; every module reads Unraid's own files through `System`, the
+server's root (`/`, or a folder laid out like a server in the tests).
+
+- `array.rs`: disks and pools from `/var/local/emhttp/disks.ini` and
+  `/proc/mounts` (kind, device, file system, size, free space, temperature,
+  whether it's spun down), and whether the array is started (`var.ini`).
+  Maps a `/mnt/user` path to the disks that hold it.
+- `shares.rs`: share settings (`shares.ini`) and each share's size per
+  disk, from this round's scans or, for a disk that slept through it, the
+  last one (kept in `disks.json` on the flash drive).
+- `docker.rs`: Docker's settings (`docker.cfg`), the Engine API over its
+  Unix socket (a small HTTP/1.1 client: disk usage, containers, inspect,
+  image removal, build cache prune), dockerMan's templates, and findings
+  sorted into safe (dangling images, build cache), check first (unused
+  images, orphan volumes, appdata no installed app uses) and in use. Logs
+  and writable layers are only reported.
+- `vms.rs`: `domain.cfg` and libvirt's XML: each VM's disks, CD drives and
+  snapshots; ISOs no VM uses, and files in a VM's folder not attached to it.
+- `protect.rs`: what's never offered (flash, system share, Docker's
+  storage, installed apps' appdata, container mounts, VM disks and ISOs in
+  use, whole disks and shares, remote mounts, the quarantine). `whole`
+  rules (a disk, a share, a share's folder mounted into a container) keep
+  the path itself from being deleted but let what's inside move between
+  disks. `UnraidGuard` applies the rules to every Hub request;
+  `UnraidPlaces` gives each disk (or ZFS dataset) its own quarantine.
+- `activity.rs`: a sample a minute of each disk's sleep state and
+  `/proc/diskstats`, for spin-ups, awake time, reads and writes over the
+  last day; open files from `/proc/*/fd`, put on disks and named by
+  process and container (from its cgroup).
+- `perms.rs`: files in user shares not owned by nobody:users or without
+  group read and write (app, system and VM shares are skipped).
+- `mover.rs`: a plan (room with a margin of 1 GiB or 1%, files in the way,
+  hard links that would be split, the in-use rules), then file by file:
+  copy to a hidden `.name.disktree-part`, compare the xxh3-128 hashes of
+  both, keep owner, mode and times, rename into place. The originals go to
+  the source disk's quarantine. Cancelling stops between files.
+- `round.rs`: one look at the server: scan the disks that are awake (and
+  one that slept for `WAKE_DAYS`), then shares, Docker, VMs, permissions
+  and the rules.
+
+The daemon (`crates/cli/src/unraid.rs`, `disktree unraid daemon`) runs a
+round every `SCAN_HOURS` on a thread (and as soon as a stopped array
+starts), samples activity each minute, runs moves on threads of their own,
+and writes `status.json` to `/var/local/disktree` for the page. The page
+asks it for things with files in `requests/` (scan, refresh, settings,
+hub, `move-<id>.json`, `cancel-<id>`); quick actions (quarantine,
+estimates, plans, Docker cleanup) it runs with the same command directly.
+Once paired (`agent.json` on the flash drive), a second thread long-polls
+the Hub, and the daemon carries out what the approver allows through
+`UnraidExecutor`: deletes go to the quarantine, and putting back, emptying
+and Docker cleanup work as on the page.
+
+The page (`unraid/plugin/root/usr/local/emhttp/plugins/disktree`):
+`DiskTree*.page` are Unraid's tabs, in a section of Tools of their own
+(`DiskSpace.page`). `disktree.js` draws them from `include/status.php` and
+posts to `include/action.php`, which checks Unraid's CSRF token, checks
+each value and runs `disktree` with every argument quoted. `rc.disktree`
+starts the daemon at nice 19 with idle I/O priority; the array's events
+(`event/stopping`, `stopped`, `started`) stop it before the disks unmount
+and start it again. `scripts/unraid-plugin.sh` packs the static binary
+and these into a Slackware `.txz`, and fills in the `.plg`'s version and
+the package's SHA-256.
 
 ## Testing
 
 - `cargo test --workspace` runs the core tests (sizes, contiguity, hard links,
   symlinks, permissions, cancellation, deletion, squarify geometry), the
   app's helper tests, the protocol and agent tests (signatures, pairing
-  links, which commands a device runs, refuses or asks about), and the
-  Hub's end-to-end tests.
+  links, which commands a device runs, refuses or asks about), the Unraid
+  tests (each against a made-up server folder: disks, shares, Docker over
+  a fake socket, VMs, protection, quarantine, moves), and the Hub's
+  end-to-end tests.
 - `scripts/release.sh` runs them before building a release on the build
   machine. The CI workflow runs them on Windows, macOS and Linux and builds
   the APK, but only when started by hand.
@@ -664,7 +744,8 @@ with the GitHub CLI: the APK through `build-apk.sh` (so it is checked and
 signed with the machine's key), the Linux app natively, and the Windows app
 cross-compiled for `x86_64-pc-windows-gnu` with MinGW, plus the Hub for
 Linux (and the Hub and command line for ARM when the aarch64
-cross-compiler is there). The Windows executables only import system DLLs,
+cross-compiler is there) and the Unraid plugin (the command line for
+`x86_64-unknown-linux-musl`, packed by `scripts/unraid-plugin.sh`). The Windows executables only import system DLLs,
 so they need no MinGW runtime. With `DISKTREE_IMAGE` set it also builds and
 pushes the Hub's Docker image for amd64 and arm64. The
 script only publishes a clean checkout that matches GitHub, and lets
@@ -672,7 +753,7 @@ script only publishes a clean checkout that matches GitHub, and lets
 
 ## Possible next steps
 
-See [docs/ROADMAP.md](docs/ROADMAP.md): what's left of the Hub, an Unraid
-plugin, and Nextcloud integration. The Windows MFT reader (reading the NTFS Master File Table
+See [docs/ROADMAP.md](docs/ROADMAP.md): what's left of the Hub and the
+Unraid plugin, and Nextcloud integration. The Windows MFT reader (reading the NTFS Master File Table
 directly, as WizTree does, for a whole-drive scan in seconds) would be an
 optional fast path for admins.

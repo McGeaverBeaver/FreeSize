@@ -247,8 +247,16 @@ fn real_places(system: &System, array: &Array, path: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The paths the owner added in Settings (`keep.txt` on the flash drive).
+fn own_rules(dirs: &Dirs) -> Vec<Rule> {
+    std::fs::read_to_string(dirs.config.join("keep.txt"))
+        .map(|text| protect::own_rules(&text))
+        .unwrap_or_default()
+}
+
 /// What must never be deleted, worked out now (without scanning).
-fn current_rules(system: &System, array: &Array) -> (Vec<Rule>, Option<Inventory>) {
+fn current_rules(dirs: &Dirs, array: &Array) -> (Vec<Rule>, Option<Inventory>) {
+    let system = &dirs.system;
     let docker_cfg = docker::config(system);
     let engine = Engine::new(system);
     let inventory = engine
@@ -271,12 +279,13 @@ fn current_rules(system: &System, array: &Array) -> (Vec<Rule>, Option<Inventory
     }
     share_names.sort();
     share_names.dedup();
-    let rules = protect::rules(
+    let mut rules = protect::rules(
         array,
         &share_names,
         (&docker_cfg, inventory.as_ref()),
         (&vm_cfg, definitions.as_deref()),
     );
+    rules.extend(own_rules(dirs));
     (rules, inventory)
 }
 
@@ -349,7 +358,7 @@ fn quarantine(dirs: &Dirs, action: QuarantineAction) -> Result<(), String> {
             false
         }
         QuarantineAction::Add { paths, reason, by } => {
-            let (rules, _) = current_rules(system, &array);
+            let (rules, _) = current_rules(dirs, &array);
             let mut results = Vec::new();
             let mut allowed = Vec::new();
             for path in &paths {
@@ -419,10 +428,9 @@ fn estimate(dirs: &Dirs, paths: &[String], json: bool) -> Result<(), String> {
 }
 
 fn moves(dirs: &Dirs, action: MoveAction) -> Result<(), String> {
-    let system = &dirs.system;
     match action {
         MoveAction::Plan { args, json } => {
-            let plan = make_plan(system, &args);
+            let plan = make_plan(dirs, &args);
             if json {
                 println!(
                     "{}",
@@ -451,7 +459,7 @@ fn moves(dirs: &Dirs, action: MoveAction) -> Result<(), String> {
             Ok(())
         }
         MoveAction::Start { args } => {
-            let plan = make_plan(system, &args);
+            let plan = make_plan(dirs, &args);
             if !plan.ok() {
                 return Err(plan.problems.join("; "));
             }
@@ -471,9 +479,10 @@ fn moves(dirs: &Dirs, action: MoveAction) -> Result<(), String> {
     }
 }
 
-fn make_plan(system: &System, args: &MoveArgs) -> mover::Plan {
+fn make_plan(dirs: &Dirs, args: &MoveArgs) -> mover::Plan {
+    let system = &dirs.system;
     let array = array::read(system);
-    let (rules, _) = current_rules(system, &array);
+    let (rules, _) = current_rules(dirs, &array);
     mover::plan(
         system,
         &array,
@@ -661,11 +670,14 @@ impl Daemon {
             .map(|(_, mount)| system.file(mount))
             .collect();
         roots.push(system.file("/mnt/user"));
-        let rules = self
-            .round
-            .as_ref()
-            .map(|r| r.rules.clone())
-            .unwrap_or_else(|| current_rules(system, array).0);
+        let rules = match &self.round {
+            Some(round) => {
+                let mut rules = round.rules.clone();
+                rules.extend(own_rules(&self.dirs));
+                rules
+            }
+            None => current_rules(&self.dirs, array).0,
+        };
         Policy {
             attended: false,
             actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Clean],
@@ -760,7 +772,7 @@ impl Daemon {
 
     fn start_move(&mut self, id: &str, args: MoveArgs) {
         let system = self.dirs.system.clone();
-        let mut plan = make_plan(&system, &args);
+        let mut plan = make_plan(&self.dirs, &args);
         // The id the page was given.
         plan.job.id = id.to_string();
         if !plan.ok() {
@@ -804,6 +816,23 @@ impl Daemon {
                 self.start_round();
             } else if name == "refresh" {
                 refresh = true;
+            } else if name == "settings" {
+                // Saved on the page: the next round follows the new
+                // schedule, counted from the last one.
+                self.config = read_config(&self.dirs);
+                let every = self.config.scan_hours * 3600;
+                let since = self
+                    .round
+                    .as_ref()
+                    .map_or(0, |r| (now() - r.taken).max(0) as u64);
+                self.next_round =
+                    Instant::now() + Duration::from_secs(every.saturating_sub(since).max(60));
+                self.write_status();
+            } else if name == "hub" {
+                // Just paired: tell the Hub everything known so far.
+                self.connection.clear();
+                self.report_round();
+                self.write_status();
             } else if let Some(id) = name.strip_prefix("cancel-") {
                 if let Some(flag) = self.cancels.get(id) {
                     flag.store(true, Ordering::Relaxed);
@@ -1036,6 +1065,14 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
             daemon.start_round();
         }
         if Instant::now() >= next_sample {
+            // The array was stopped at the last round and has started
+            // since: look now rather than at the next scheduled round.
+            if !daemon.round_running
+                && daemon.round.as_ref().is_some_and(|r| r.skipped.is_some())
+                && daemon.array().started
+            {
+                daemon.start_round();
+            }
             daemon.sample();
             next_sample = Instant::now() + Duration::from_secs(60);
             daemon.write_status();

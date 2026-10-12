@@ -1,0 +1,57 @@
+#!/bin/bash
+# DiskTree for Unraid: starts and stops the background part, which scans
+# the disks that are awake, watches what keeps them spun up, runs moves
+# and reports to the Hub once paired.
+#
+# Usage: /etc/rc.d/rc.disktree start|stop|restart|status
+
+DAEMON=/usr/local/bin/disktree
+PIDFILE=/var/run/disktree.pid
+LOG=/var/log/disktree.log
+
+running() {
+  [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+start() {
+  if running; then
+    echo "DiskTree is running"
+    return 0
+  fi
+  mkdir -p /var/local/disktree /boot/config/plugins/disktree
+  # Lowest CPU and disk priority: a scan never slows the server down.
+  setsid nice -n 19 ionice -c 3 "$DAEMON" unraid daemon >>"$LOG" 2>&1 </dev/null &
+  echo $! >"$PIDFILE"
+  echo "DiskTree started"
+}
+
+stop() {
+  if ! running; then
+    rm -f "$PIDFILE"
+    echo "DiskTree isn't running"
+    return 0
+  fi
+  local pid
+  pid="$(cat "$PIDFILE")"
+  kill "$pid"
+  for _ in $(seq 1 20); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -0 "$pid" 2>/dev/null && kill -9 "$pid"
+  rm -f "$PIDFILE"
+  echo "DiskTree stopped"
+}
+
+case "$1" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  status)
+    if running; then echo "DiskTree is running"; else echo "DiskTree isn't running"; exit 1; fi
+    ;;
+  *)
+    echo "usage: $0 start|stop|restart|status"
+    exit 2
+    ;;
+esac

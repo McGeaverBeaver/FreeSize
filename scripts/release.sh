@@ -7,6 +7,11 @@
 #                                      agent's systemd unit)
 #   disktree-hub-linux-<arch>.tar.gz   the Hub, with its systemd unit
 #   disktree-windows-x86_64.zip        app and command line for Windows
+#   disktree.plg, disktree-<version>-x86_64-1.txz
+#                                      the Unraid plugin (a static build of
+#                                      the command line, the page under
+#                                      Tools); Unraid installs it from the
+#                                      .plg in the latest release
 #   disktree-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
 #                                      the aarch64 cross-compiler is installed
 #   SHA256SUMS.txt
@@ -21,7 +26,8 @@
 # --password-stdin, with a token that may write packages).
 #
 # Needs everything android/build-apk.sh needs, the MinGW cross-compiler and
-# zip for the Windows build, and the GitHub CLI logged in (`gh auth login`).
+# zip for the Windows build, musl-tools for the Unraid plugin's static build,
+# and the GitHub CLI logged in (`gh auth login`).
 #
 # Usage: scripts/release.sh [--draft] [--build-only]
 #   --draft       publish as a draft, to check before making it public
@@ -47,9 +53,9 @@ target="${CARGO_TARGET_DIR:-target}"
 tag="v$version"
 commit="$(git rev-parse HEAD)"
 
-for tool in x86_64-w64-mingw32-gcc zip; do
-    if ! command -v "$tool" >/dev/null; then
-        echo "error: $tool is missing; run: sudo apt install mingw-w64 zip" >&2
+for tool in x86_64-w64-mingw32-gcc:mingw-w64 zip:zip musl-gcc:musl-tools file:file; do
+    if ! command -v "${tool%%:*}" >/dev/null; then
+        echo "error: ${tool%%:*} is missing; run: sudo apt install ${tool#*:}" >&2
         exit 1
     fi
 done
@@ -146,6 +152,12 @@ if [ "$(uname -m)" != aarch64 ]; then
         echo "    (no ARM builds: sudo apt install gcc-aarch64-linux-gnu to add them)"
     fi
 fi
+
+echo "==> Unraid plugin"
+# Unraid has its own glibc; a static musl build runs on every version.
+rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1
+cargo build --release --quiet --target x86_64-unknown-linux-musl -p disktree-cli
+scripts/unraid-plugin.sh "$target/x86_64-unknown-linux-musl/release/disktree" "$dist"
 
 echo "==> Windows"
 rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1

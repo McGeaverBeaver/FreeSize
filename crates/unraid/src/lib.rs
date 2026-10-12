@@ -5,7 +5,10 @@
 //!
 //! Everything reads the server's own files (`/var/local/emhttp`,
 //! `/boot/config`, `/proc`) through [`System`], so tests run against a
-//! folder laid out like a server.
+//! folder laid out like a server. Unraid is Linux, so on other systems the
+//! crate is empty.
+
+#![cfg(unix)]
 
 pub mod activity;
 pub mod array;

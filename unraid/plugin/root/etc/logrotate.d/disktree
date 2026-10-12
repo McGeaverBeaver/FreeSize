@@ -1,0 +1,7 @@
+/var/log/disktree.log {
+    size 1M
+    rotate 1
+    missingok
+    notifempty
+    copytruncate
+}

@@ -33,6 +33,31 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  unraid:
+    name: Unraid plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl and PHP
+        run: sudo apt-get update && sudo apt-get install -y musl-tools php-cli
+      - name: Check the page's PHP and script
+        run: |
+          for f in unraid/plugin/root/usr/local/emhttp/plugins/disktree/include/*.php; do php -l "$f"; done
+          node --check unraid/plugin/root/usr/local/emhttp/plugins/disktree/disktree.js
+          bash -n unraid/plugin/root/etc/rc.d/rc.disktree
+      - name: Build the plugin
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl -p disktree-cli
+          scripts/unraid-plugin.sh target/x86_64-unknown-linux-musl/release/disktree dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: disktree-unraid
+          path: dist/
+
   android:
     name: Android APK
     runs-on: ubuntu-latest

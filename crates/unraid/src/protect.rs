@@ -92,7 +92,14 @@ pub fn rules(
         ));
     }
     for (path, why, all) in docker::protected_paths(docker.0, docker.1) {
-        rules.push(rule(&path, &why, all));
+        // A share's folder mounted into a container is still where the
+        // container looks after its files move between disks; one of a
+        // disk's own folders isn't.
+        let movable = !all && path.starts_with("/mnt/user/");
+        rules.push(Rule {
+            whole: movable,
+            ..rule(&path, &why, all)
+        });
     }
     for (path, why, all) in vms::protected_paths(vms.0, vms.1) {
         rules.push(rule(&path, &why, all));
@@ -120,6 +127,16 @@ pub fn check(rules: &[Rule], path: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Paths the owner listed in the plugin's settings, one per line, kept
+/// with everything inside them.
+pub fn own_rules(text: &str) -> Vec<Rule> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('/'))
+        .map(|line| rule(line, "on your list of paths to keep (Settings)", true))
+        .collect()
 }
 
 /// The agent's guard for an Unraid server.
@@ -236,7 +253,12 @@ mod tests {
         let inventory = Inventory {
             containers: vec![docker::Container {
                 name: "plex".into(),
-                mounts: vec!["/mnt/cache/appdata/plex".into(), "/mnt/user/Movies".into()],
+                mounts: vec![
+                    "/mnt/cache/appdata/plex".into(),
+                    "/mnt/user/Movies".into(),
+                    "/mnt/user/Movies/Kids".into(),
+                    "/mnt/disk2/TV".into(),
+                ],
                 ..docker::Container::default()
             }],
             ..Inventory::default()
@@ -289,6 +311,27 @@ mod tests {
         assert_eq!(kept("/mnt/disk1/Movies/Old Film (1999)/film.mkv"), None);
         assert_eq!(kept("/mnt/user/appdata/oldapp"), None);
         assert_eq!(kept("/mnt/user/domains/Win/old.img"), None);
+        // Folders mounted into a container are kept from deleting; one in
+        // a share may still move between disks, one on a disk may not.
+        assert_eq!(
+            kept("/mnt/disk1/Movies/Kids").as_deref(),
+            Some("mounted into plex")
+        );
+        assert_eq!(kept("/mnt/disk2/TV").as_deref(), Some("mounted into plex"));
+        let moves: Vec<Rule> = rules.iter().filter(|r| !r.whole).cloned().collect();
+        assert_eq!(check(&moves, "/mnt/disk1/Movies/Kids"), None);
+        assert!(check(&moves, "/mnt/disk2/TV").is_some());
+
+        // The owner's own list, by share or by disk.
+        let own = own_rules("/mnt/user/Backups/\n# a note\n\nnot a path\n/mnt/disk2/Photos\n");
+        assert_eq!(own.len(), 2);
+        assert!(
+            check(&own, "/mnt/disk1/Backups/pc.tar")
+                .unwrap()
+                .contains("your list")
+        );
+        assert!(check(&own, "/mnt/user/Photos/2020").is_some());
+        assert_eq!(check(&own, "/mnt/user/Backups2"), None);
     }
 
     #[test]

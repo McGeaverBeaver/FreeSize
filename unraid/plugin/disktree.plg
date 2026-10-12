@@ -1,0 +1,59 @@
+<?xml version='1.0' standalone='yes'?>
+<!-- DiskTree for Unraid. scripts/unraid-plugin.sh fills in the version and
+     the package's checksum; the release carries the result. -->
+<!DOCTYPE PLUGIN [
+<!ENTITY name       "disktree">
+<!ENTITY author     "McGeaverBeaver">
+<!ENTITY version    "@VERSION@">
+<!ENTITY repo       "https://github.com/McGeaverBeaver/TreeSizeCloneAndroid">
+<!ENTITY pluginURL  "&repo;/releases/latest/download/disktree.plg">
+<!ENTITY package    "&name;-&version;-x86_64-1">
+<!ENTITY packageURL "&repo;/releases/download/v&version;/&package;.txz">
+<!ENTITY sha256     "@SHA256@">
+<!ENTITY config     "/boot/config/plugins/&name;">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="Tools/DiskTree" pluginURL="&pluginURL;" support="&repo;/issues" icon="pie-chart" min="6.12.0">
+
+<CHANGES>
+### @VERSION@
+- Where the space goes on the array and pools, per share and per disk, without waking sleeping disks
+- Docker and VMs: what's safe to remove, what to check first, and what's in use and never offered
+- A quarantine to move things aside and put them back; nothing is deleted until you empty it
+- What keeps disks spun up, a permissions report, and moving shares between disks with checked copies
+- Reports to the DiskTree Hub once paired; the server's approver allows what the Hub asks
+</CHANGES>
+
+<!-- The package: the disktree command, the page under Tools, and the
+     background part's start script. -->
+<FILE Name="&config;/&package;.txz" Run="upgradepkg --install-new">
+<URL>&packageURL;</URL>
+<SHA256>&sha256;</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+# Packages of older versions aren't needed on the flash drive.
+for old in &config;/&name;-*.txz; do
+  [ "$old" = "&config;/&package;.txz" ] || rm -f "$old"
+done
+mkdir -p /var/local/disktree
+/etc/rc.d/rc.disktree restart
+echo
+echo "DiskTree &version; is installed: Tools, then DiskTree."
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+/etc/rc.d/rc.disktree stop
+removepkg &package;
+rm -rf /usr/local/emhttp/plugins/&name; /var/local/disktree
+rm -f &config;/&name;-*.txz
+echo
+echo "DiskTree is removed. Its settings and Hub pairing stay in &config;."
+echo "Anything in its quarantine stays too, in .disktree-quarantine at the top"
+echo "of each disk, until you delete it."
+</INLINE>
+</FILE>
+
+</PLUGIN>

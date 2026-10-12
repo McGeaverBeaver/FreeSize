@@ -65,11 +65,10 @@ impl Guard for OpenFiles {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn open_files_are_kept() {
         let dir = tempfile::tempdir().unwrap();

@@ -3,6 +3,7 @@
 //! last link goes, and on ZFS, snapshots keep deleted data until they're
 //! destroyed.
 
+#[cfg(unix)]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -104,6 +105,7 @@ pub fn estimate(paths: &[PathBuf]) -> Estimate {
 }
 
 /// The ZFS datasets holding `paths` that have snapshots.
+#[cfg(unix)]
 fn zfs_snapshots(paths: &[PathBuf]) -> Vec<String> {
     let Ok(mounts) = std::fs::read_to_string("/proc/mounts") else {
         return Vec::new();

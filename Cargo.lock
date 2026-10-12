@@ -1333,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-agent"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.23.1",
  "disktree-core",
@@ -1346,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-app"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "disktree-agent",
  "disktree-core",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "disktree-agent",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -1392,7 +1392,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-hub"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -1415,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-proto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.23.1",
  "disktree-core",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "disktree-unraid"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "disktree-agent",
  "disktree-core",

@@ -1,0 +1,137 @@
+<?php
+// DiskTree for Unraid: what the page asks for. Nothing here deletes
+// anything on its own: moving to the quarantine is a rename, a share move
+// keeps the originals in the quarantine, and only "empty" and Docker
+// cleanup remove data, each after the page listed exactly what goes.
+
+require_once __DIR__.'/common.php';
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') dt_fail('POST only', 405);
+dt_check_csrf();
+
+/** Replies with the command's JSON output, or its message on failure. */
+function dt_json($result) {
+  if ($result['ok']) {
+    $decoded = json_decode($result['output'], true);
+    if ($decoded !== null) dt_reply(['ok' => true, 'result' => $decoded]);
+  }
+  dt_reply($result, $result['ok'] ? 200 : 400);
+}
+
+function dt_disk($name) {
+  $disk = (string)($_POST[$name] ?? '');
+  if (!preg_match('/^[a-z][a-z0-9_]{0,30}$/', $disk)) dt_fail('choose a disk');
+  return $disk;
+}
+
+function dt_move_args() {
+  $share = dt_text('share', 100);
+  $folder = trim(dt_text('folder', 500), '/');
+  if ($share === '' || str_contains($share, '/')) dt_fail('choose a share');
+  return ['--share', $share, '--folder', $folder, '--from', dt_disk('from'), '--to', dt_disk('to')];
+}
+
+switch ($_POST['action'] ?? '') {
+case 'scan':
+  dt_reply(dt_run(['unraid', 'scan']));
+
+case 'estimate':
+  dt_json(dt_run(array_merge(['unraid', 'estimate', '--json', '--'], dt_paths('paths'))));
+
+case 'quarantine_add':
+  $args = ['unraid', 'quarantine', 'add', '--reason', dt_text('reason'), '--by', 'Unraid web UI', '--'];
+  dt_json(dt_run(array_merge($args, dt_paths('paths'))));
+
+case 'quarantine_restore':
+  dt_reply(dt_run(['unraid', 'quarantine', 'restore', dt_id('batch')]));
+
+case 'quarantine_empty':
+  $batches = $_POST['batches'] ?? [];
+  if (!is_array($batches) || !$batches) dt_fail('choose what to empty');
+  $ids = [];
+  foreach ($batches as $batch) {
+    if (!preg_match('/^[A-Za-z0-9]{1,40}$/', (string)$batch)) dt_fail('no such batch');
+    $ids[] = (string)$batch;
+  }
+  dt_reply(dt_run(array_merge(['unraid', 'quarantine', 'empty', '--'], $ids)));
+
+case 'docker_cleanup':
+  $items = $_POST['items'] ?? [];
+  if (!is_array($items) || !$items) dt_fail('choose what to remove');
+  foreach ($items as $item) {
+    if (!preg_match('#^[A-Za-z0-9:._/-]{1,200}$#', (string)$item)) dt_fail('no such item');
+  }
+  dt_reply(dt_run(array_merge(['unraid', 'docker-cleanup', '--'], array_map('strval', $items))));
+
+case 'move_plan':
+  dt_json(dt_run(array_merge(['unraid', 'move', 'plan', '--json'], dt_move_args())));
+
+case 'move_start':
+  dt_reply(dt_run(array_merge(['unraid', 'move', 'start'], dt_move_args())));
+
+case 'move_cancel':
+  dt_reply(dt_run(['unraid', 'move', 'cancel', dt_id('id')]));
+
+case 'settings':
+  $hours = (int)($_POST['scan_hours'] ?? 24);
+  $days = (int)($_POST['wake_days'] ?? 7);
+  if ($hours < 1 || $hours > 720) dt_fail('scan every 1 to 720 hours');
+  if ($days < 0 || $days > 365) dt_fail('wake a disk after 0 to 365 days');
+  $yes = fn($k) => ($_POST[$k] ?? '') === 'yes' ? 'yes' : 'no';
+  $cfg = "SCAN_HOURS=\"$hours\"\nWAKE_DAYS=\"$days\"\nPERMISSIONS=\"{$yes('permissions')}\"\nREPORT=\"{$yes('report')}\"\n";
+  @mkdir($dt_config, 0755, true);
+  if (@file_put_contents("$dt_config/disktree.cfg", $cfg) === false) dt_fail("couldn't save the settings");
+  dt_request('settings');
+  dt_reply(['ok' => true, 'output' => 'Saved.']);
+
+case 'keep':
+  // Paths never offered, on top of what DiskTree keeps on its own.
+  $lines = preg_split('/\r?\n/', (string)($_POST['paths'] ?? ''));
+  $keep = [];
+  foreach ($lines as $line) {
+    $line = rtrim(trim(preg_replace('/[\x00-\x1f\x7f]/', '', $line)), '/');
+    if ($line === '') continue;
+    if ($line[0] !== '/') dt_fail("$line: start each path with /");
+    $keep[] = $line;
+  }
+  if (count($keep) > 500) dt_fail('500 paths at most');
+  @mkdir($dt_config, 0755, true);
+  $text = $keep ? implode("\n", array_unique($keep))."\n" : '';
+  if (@file_put_contents("$dt_config/keep.txt", $text) === false) dt_fail("couldn't save the list");
+  dt_reply(['ok' => true, 'output' => count($keep) ? 'Saved; those paths are never offered now.' : 'Saved; the list is empty.']);
+
+case 'pair':
+  $link = trim((string)($_POST['link'] ?? ''));
+  if (!preg_match('#^disktree://pair\?[A-Za-z0-9%._~=&+-]{1,1000}$#', $link)) {
+    dt_fail('paste the whole pairing link from the dashboard (Pair a device); it starts with disktree://pair?');
+  }
+  $args = ['agent', 'pair', $link, '--state', dt_state()];
+  $name = dt_text('name', 80);
+  if ($name !== '') array_push($args, '--name', $name);
+  $result = dt_run($args, false);
+  if ($result['ok']) dt_request('hub');
+  dt_reply($result, $result['ok'] ? 200 : 400);
+
+case 'approver_check':
+case 'approver_set':
+  $key = strtoupper(trim((string)($_POST['fingerprint'] ?? '')));
+  if (!preg_match('/^[A-Z0-9]{4}(-[A-Z0-9]{4}){3}$/', $key)) {
+    dt_fail('type the key as the DiskTree app shows it, like ABCD-EFGH-JKMN-PQRS');
+  }
+  $flag = $_POST['action'] === 'approver_set' ? '--yes' : '--check';
+  $result = dt_run(['approver', 'set', $key, $flag, '--state', dt_state()], false);
+  if ($result['ok'] && $flag === '--yes') dt_request('refresh');
+  dt_reply($result, $result['ok'] ? 200 : 400);
+
+case 'approver_clear':
+  dt_reply(dt_run(['approver', 'clear', '--state', dt_state()], false));
+
+case 'revoke':
+  dt_reply(dt_run(['agent', 'revoke', '--state', dt_state()], false));
+
+case 'unpair':
+  dt_reply(dt_run(['agent', 'unpair', '--state', dt_state()], false));
+
+default:
+  dt_fail('unknown action');
+}
