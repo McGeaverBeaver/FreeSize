@@ -59,11 +59,13 @@ or commit them. The release needs `musl-tools` (for the Unraid plugin) since
   opens as its own page with a back arrow; Back returns to the same spot on
   the home screen. Before, a tap changed a list further down the screen and
   seemed to do nothing. Rows also show when they're pressed.
-- 0.8.0 was never published. 0.8.1 was built and saved as a draft GitHub
-  release only; the owner tried its APK on the Pixel (Biggest caches worked).
+- 0.8.0 and 0.8.1 were never published (the owner tried 0.8.1's APK from a
+  draft, then had the draft deleted, since 0.8.2 contains it). 0.8.2 is
+  built and saved as a draft GitHub release.
 - Not yet done:
-  1. Release 0.8.2 with `scripts/release.sh` (and publish or discard the
-     0.8.1 draft), install the APK on the Pixel and try the group pages.
+  1. Install 0.8.2's APK from the draft on the Pixel and try the group
+     pages, then publish the draft (it's the first public release since
+     0.7.0, so its notes cover 0.8.0 and 0.8.1 too).
   2. The Unraid plugin has only been tested against a made-up server
      folder. On the first real install, check that Tools → Disk Space →
      DiskTree appears, `/var/log/disktree.log`, and
