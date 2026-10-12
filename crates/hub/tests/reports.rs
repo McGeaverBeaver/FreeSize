@@ -44,7 +44,7 @@ fn scan_report(dir: &Path, taken: i64) -> Report {
         scan: Some(disktree_agent::report::scan_report(
             &tree, "Shares", taken, 0, true,
         )),
-        apps: None,
+        ..Report::default()
     }
 }
 

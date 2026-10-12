@@ -7,11 +7,13 @@ use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clap::Subcommand;
-use disktree_agent::commands::{self, FsExecutor, Policy, Request, Verdict};
+use disktree_agent::commands::{self, Executor, Guards, Policy, Request, Verdict};
+use disktree_agent::guard::OpenFiles;
+use disktree_agent::quarantine::{MountPlaces, Quarantine, QuarantineExecutor};
 use disktree_agent::{AgentState, Approver, Client, Transport, UreqTransport, now};
 use disktree_core::{ScanOptions, ScanProgress, format_size, scan};
 use disktree_proto::pairing::{format_code, normalize_hub};
@@ -195,7 +197,7 @@ fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
         os: os_name(),
         hostname: disktree_agent::hostname(),
         app: format!("DiskTree agent {}", env!("CARGO_PKG_VERSION")),
-        actions: vec![ActionKind::Delete],
+        actions: vec![ActionKind::Delete, ActionKind::Restore],
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),
@@ -400,9 +402,16 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
     let keep = vec![path.canonicalize().unwrap_or_else(|_| path.to_path_buf())];
     let policy = Policy {
         attended: false,
-        actions: vec![ActionKind::Delete],
+        actions: vec![ActionKind::Delete, ActionKind::Restore],
         roots: roots.clone(),
         keep,
+        guards: Guards(vec![Arc::new(OpenFiles::default())]),
+    };
+    // Deletes go to a quarantine on the same filesystem, to put back or
+    // empty by later requests.
+    let executor = QuarantineExecutor {
+        quarantine: Quarantine::new(Box::new(MountPlaces::new(&roots))),
+        device: state.name.clone(),
     };
     log(&format!(
         "DiskTree agent {} reporting to {} ({})",
@@ -434,6 +443,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
             sent = client.report(&Report {
                 info: Some(device_info(&state.name, Some(&state))),
                 disks: Some(disktree_agent::report::disks(&places)),
+                quarantine: Some(executor.quarantine.list()),
                 ..Report::default()
             });
             if sent.is_ok() {
@@ -505,9 +515,26 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
                 continue;
             }
         };
-        let changed = handle(&mut state, &transport, &policy, &mut pending, response);
-        if changed {
+        let outcome = handle(
+            &mut state,
+            &transport,
+            &policy,
+            &executor,
+            &mut pending,
+            response,
+        );
+        if outcome.changed {
             state.save(path)?;
+        }
+        if outcome.ran {
+            // The quarantine changed: say so, for the Hub's buttons.
+            let report = Report {
+                quarantine: Some(executor.quarantine.list()),
+                ..Report::default()
+            };
+            if let Err(err) = Client::new(&state, &transport).report(&report) {
+                log(&format!("couldn't report the quarantine: {err}"));
+            }
         }
     }
 }
@@ -528,15 +555,26 @@ fn refusal(state: CommandState, reason: String) -> CommandUpdate {
     }
 }
 
-/// Acts on what a poll brought. Returns whether the saved state changed.
-fn handle(
+/// What handling a poll did.
+#[derive(Default)]
+pub struct Outcome {
+    /// The saved state changed (grants, handled requests).
+    pub changed: bool,
+    /// A request was carried out.
+    pub ran: bool,
+}
+
+/// Acts on what a poll brought.
+pub fn handle(
     state: &mut AgentState,
     transport: &dyn Transport,
     policy: &Policy,
+    executor: &dyn Executor,
     pending: &mut HashMap<String, Request>,
     response: disktree_proto::PollResponse,
-) -> bool {
+) -> Outcome {
     let mut changed = false;
+    let mut ran = false;
     for id in &response.cancelled {
         if pending.remove(id).is_some() {
             log(&format!("request {id} was withdrawn"));
@@ -574,13 +612,14 @@ fn handle(
                     request.command.id,
                     request.command.action.summary()
                 ));
-                let update = commands::run(&request, &FsExecutor, approval);
+                let update = commands::run(&request, executor, approval);
                 log(&format!(
                     "request {}: {}",
                     request.command.id, update.detail
                 ));
                 state.mark_handled(&request.command.id);
                 changed = true;
+                ran = true;
                 send(state, transport, &request.command.id, &update);
             }
             Verdict::AskApprover(request) | Verdict::Ask(request) => {
@@ -592,11 +631,12 @@ fn handle(
                     request.command.id,
                     request.command.action.summary()
                 ));
+                // How this device carries it out, for the approver.
                 send(
                     state,
                     transport,
                     &request.command.id,
-                    &refusal(CommandState::NeedsApprover, String::new()),
+                    &refusal(CommandState::NeedsApprover, executor.note(&request)),
                 );
                 pending.insert(request.command.id.clone(), request);
             }
@@ -625,12 +665,13 @@ fn handle(
                             "the approver allowed request {}",
                             request.command.id
                         ));
-                        let update = commands::run(&request, &FsExecutor, approval);
+                        let update = commands::run(&request, executor, approval);
                         log(&format!(
                             "request {}: {}",
                             request.command.id, update.detail
                         ));
                         state.mark_handled(&request.command.id);
+                        ran = true;
                         send(state, transport, &request.command.id, &update);
                     }
                     None => {
@@ -653,5 +694,5 @@ fn handle(
             )),
         }
     }
-    changed
+    Outcome { changed, ran }
 }

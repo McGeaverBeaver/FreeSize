@@ -3,6 +3,9 @@
 
 pub mod client;
 pub mod commands;
+pub mod estimate;
+pub mod guard;
+pub mod quarantine;
 pub mod report;
 pub mod state;
 pub mod transport;

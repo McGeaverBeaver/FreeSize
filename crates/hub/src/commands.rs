@@ -7,6 +7,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use disktree_core::snapshot::FolderSize;
 use disktree_proto::keys::random_id;
+use disktree_proto::unraid::{QuarantineBatch, Safety, UnraidReport};
 use disktree_proto::{
     Action, Admin as AdminRef, ApprovalRequest, AppsReport, Command, CommandState, CommandUpdate,
     Decision, PollResponse, PublicKey, Purpose, Signed,
@@ -180,8 +181,107 @@ fn check_action(
             *label = junk.label.clone();
             *bytes = junk.bytes;
         }
+        Action::Restore { batch, label } => {
+            let batches = quarantine(c, device)?;
+            let found = batches
+                .iter()
+                .find(|b| &b.id == batch)
+                .ok_or_else(|| ApiError::bad_request("the device didn't report that batch"))?;
+            *label = format!(
+                "{} moved to the quarantine on {} ({})",
+                match found.items.len() {
+                    1 => found
+                        .items
+                        .first()
+                        .map_or_else(|| "1 item".to_string(), |i| i.original.clone()),
+                    n => format!("{n} items"),
+                },
+                crate::reports::iso_date(found.when),
+                disktree_core::format_size(found.bytes)
+            );
+        }
+        Action::EmptyQuarantine { batches, bytes } => {
+            let held = quarantine(c, device)?;
+            batches.sort();
+            batches.dedup();
+            if batches.is_empty() {
+                return Err(ApiError::bad_request("choose what to empty"));
+            }
+            *bytes = 0;
+            for batch in batches.iter() {
+                let found = held
+                    .iter()
+                    .find(|b| &b.id == batch)
+                    .ok_or_else(|| ApiError::bad_request("the device didn't report that batch"))?;
+                *bytes += found.bytes;
+            }
+        }
+        Action::DockerCleanup {
+            items,
+            labels,
+            bytes,
+        } => {
+            let report = unraid_report(c, device)?;
+            let docker = report
+                .docker
+                .ok_or_else(|| ApiError::bad_request("the device didn't report Docker"))?;
+            items.sort();
+            items.dedup();
+            if items.is_empty() || items.len() > MAX_PATHS {
+                return Err(ApiError::bad_request(format!(
+                    "choose 1 to {MAX_PATHS} items"
+                )));
+            }
+            labels.clear();
+            *bytes = 0;
+            for item in items.iter() {
+                let finding = docker
+                    .findings
+                    .iter()
+                    .find(|f| &f.id == item)
+                    .ok_or_else(|| ApiError::bad_request("the device didn't report that"))?;
+                let removable = matches!(
+                    finding.kind.as_str(),
+                    "image" | "dangling_image" | "build_cache"
+                ) && finding.safety != Safety::Protected;
+                if !removable {
+                    return Err(ApiError::bad_request(format!(
+                        "{} can't be removed from here: {}",
+                        finding.label, finding.reason
+                    )));
+                }
+                labels.push(finding.label.clone());
+                *bytes += finding.bytes;
+            }
+        }
     }
     Ok(())
+}
+
+/// What a device's quarantine held, as it last reported.
+fn quarantine(c: &Connection, device: &str) -> ApiResult<Vec<QuarantineBatch>> {
+    let text: Option<String> = c
+        .query_row(
+            "SELECT batches FROM quarantine WHERE device_id = ?1",
+            [device],
+            |r| r.get(0),
+        )
+        .optional()?;
+    text.and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| ApiError::bad_request("the device hasn't reported a quarantine"))
+}
+
+/// What an Unraid server reported last.
+fn unraid_report(c: &Connection, device: &str) -> ApiResult<UnraidReport> {
+    let text: Option<String> = c
+        .query_row(
+            "SELECT report FROM unraid WHERE device_id = ?1",
+            [device],
+            |r| r.get(0),
+        )
+        .optional()?;
+    text.and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| ApiError::bad_request("the device hasn't reported as an Unraid server"))
 }
 
 fn apps_report(c: &Connection, device: &str) -> ApiResult<AppsReport> {
@@ -453,22 +553,24 @@ pub async fn pending_for(
 
             // Requests for devices it approves for.
             let mut stmt = c.prepare(&format!(
-                "SELECT a.command_id, m.signed, m.device_id, d.name FROM approvals a
+                "SELECT a.command_id, m.signed, m.device_id, d.name, m.detail FROM approvals a
                  JOIN commands m ON m.id = a.command_id JOIN devices d ON d.id = m.device_id
                  WHERE a.approver = ?1 AND a.decision IS NULL AND m.state IN {OPEN}
                    AND (a.delivered IS NULL OR a.delivered < ?2)"
             ))?;
-            let asks: Vec<(String, String, String, String)> = stmt
+            type Ask = (String, String, String, String, String);
+            let asks: Vec<Ask> = stmt
                 .query_map(params![device.fingerprint, again], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
                 })?
                 .collect::<rusqlite::Result<_>>()?;
-            for (id, signed, target, name) in asks {
+            for (id, signed, target, name, note) in asks {
                 if let Ok(command) = serde_json::from_str(&signed) {
                     response.approvals.push(ApprovalRequest {
                         command,
                         device: target,
                         device_name: name,
+                        note,
                     });
                 }
                 c.execute("UPDATE approvals SET delivered = ?1 WHERE command_id = ?2", params![now, id])?;

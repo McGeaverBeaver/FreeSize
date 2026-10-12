@@ -1,0 +1,21 @@
+[package]
+name = "disktree-unraid"
+description = "What DiskTree knows about Unraid: the array, shares, Docker, VMs, quarantine and moves"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+disktree-agent.workspace = true
+disktree-core.workspace = true
+disktree-proto.workspace = true
+roxmltree = "0.21.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"

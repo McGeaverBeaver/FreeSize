@@ -78,6 +78,11 @@ pub enum ActionKind {
     Delete,
     Uninstall,
     Clean,
+    /// Put quarantined files back.
+    Restore,
+    /// One a newer device or Hub knows and this one doesn't.
+    #[serde(other)]
+    Unknown,
 }
 
 impl ActionKind {
@@ -86,6 +91,8 @@ impl ActionKind {
             ActionKind::Delete => "delete files",
             ActionKind::Uninstall => "uninstall apps",
             ActionKind::Clean => "clean up junk",
+            ActionKind::Restore => "put back files",
+            ActionKind::Unknown => "do something this version doesn't know",
         }
     }
 }
@@ -158,6 +165,12 @@ pub struct Report {
     pub scan: Option<ScanReport>,
     #[serde(default)]
     pub apps: Option<AppsReport>,
+    /// An Unraid server's array, shares, Docker and VMs.
+    #[serde(default)]
+    pub unraid: Option<crate::unraid::UnraidReport>,
+    /// What the device's quarantine holds, to put back or empty.
+    #[serde(default)]
+    pub quarantine: Option<Vec<crate::unraid::QuarantineBatch>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +348,17 @@ pub enum Action {
         label: String,
         bytes: u64,
     },
+    /// Put a quarantined batch back where it was.
+    Restore { batch: String, label: String },
+    /// Delete quarantined batches for good.
+    EmptyQuarantine { batches: Vec<String>, bytes: u64 },
+    /// Remove Docker images or build cache the device reported as safe or
+    /// unused.
+    DockerCleanup {
+        items: Vec<String>,
+        labels: Vec<String>,
+        bytes: u64,
+    },
 }
 
 impl Action {
@@ -343,6 +367,9 @@ impl Action {
             Action::Delete { .. } => ActionKind::Delete,
             Action::Uninstall { .. } => ActionKind::Uninstall,
             Action::CleanJunk { .. } => ActionKind::Clean,
+            Action::Restore { .. } => ActionKind::Restore,
+            Action::EmptyQuarantine { .. } => ActionKind::Delete,
+            Action::DockerCleanup { .. } => ActionKind::Clean,
         }
     }
 
@@ -361,6 +388,23 @@ impl Action {
             Action::CleanJunk { label, bytes, .. } => {
                 format!("{label} ({})", disktree_core::format_size(*bytes))
             }
+            Action::Restore { label, .. } => format!("Put back {label}"),
+            Action::EmptyQuarantine { batches, bytes } => format!(
+                "Empty {} from the quarantine ({})",
+                match batches.len() {
+                    1 => "1 batch".to_string(),
+                    n => format!("{n} batches"),
+                },
+                disktree_core::format_size(*bytes)
+            ),
+            Action::DockerCleanup { labels, bytes, .. } => format!(
+                "Remove {} from Docker ({})",
+                match labels.len() {
+                    1 => labels[0].clone(),
+                    n => format!("{n} items"),
+                },
+                disktree_core::format_size(*bytes)
+            ),
         }
     }
 }
@@ -432,6 +476,10 @@ pub struct ApprovalRequest {
     pub command: Signed<Command>,
     pub device: String,
     pub device_name: String,
+    /// What the device says about it, e.g. how it deletes and what that
+    /// really frees.
+    #[serde(default)]
+    pub note: String,
 }
 
 /// An approver's answer, signed by the approver's device.

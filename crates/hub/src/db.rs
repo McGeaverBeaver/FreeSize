@@ -218,6 +218,21 @@ const MIGRATIONS: &[&str] = &[
         last_error TEXT
     );
     ",
+    // 4: what Unraid servers report beyond disks and scans.
+    "
+    CREATE TABLE unraid (
+        device_id TEXT PRIMARY KEY,
+        taken INTEGER NOT NULL,
+        report TEXT NOT NULL
+    );
+
+    -- What a device's quarantine holds.
+    CREATE TABLE quarantine (
+        device_id TEXT PRIMARY KEY,
+        updated INTEGER NOT NULL,
+        batches TEXT NOT NULL
+    );
+    ",
 ];
 
 impl Db {

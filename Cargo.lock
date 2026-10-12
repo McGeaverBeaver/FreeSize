@@ -1340,6 +1340,7 @@ dependencies = [
  "disktree-proto",
  "serde",
  "serde_json",
+ "tempfile",
  "ureq",
 ]
 
@@ -1421,6 +1422,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "disktree-unraid"
+version = "0.7.0"
+dependencies = [
+ "disktree-agent",
+ "disktree-core",
+ "disktree-proto",
+ "libc",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

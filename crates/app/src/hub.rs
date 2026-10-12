@@ -470,7 +470,10 @@ impl Worker {
             if !self.asked.insert(command.id.clone()) {
                 continue;
             }
-            let lines = commands::describe(&command, Some(&request.device_name));
+            let mut lines = commands::describe(&command, Some(&request.device_name));
+            if !request.note.trim().is_empty() {
+                lines.push(request.note.trim().to_string());
+            }
             self.tell(Event::Ask(Prompt {
                 id: command.id.clone(),
                 title: format!("{} asks for your approval", request.device_name),

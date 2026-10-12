@@ -9,6 +9,7 @@
 //!   one of them gave the same admin for the same kind of action.
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use disktree_proto::{
     Action, ActionKind, Approval, ApprovedBy, Command, CommandState, CommandUpdate, Decision,
@@ -31,6 +32,25 @@ pub struct Policy {
     /// Files never to delete, nor any folder holding them, such as the
     /// agent's own state.
     pub keep: Vec<PathBuf>,
+    /// More reasons to refuse a delete: on Unraid what Docker and the VMs
+    /// use, anywhere files that are open right now.
+    pub guards: Guards,
+}
+
+/// Another reason a path must never be deleted, beyond the built-in list.
+pub trait Guard: Send + Sync {
+    /// Why `path` (a real path, links resolved above it) must stay, if it
+    /// must.
+    fn check(&self, path: &Path) -> Option<String>;
+}
+
+#[derive(Clone, Default)]
+pub struct Guards(pub Vec<Arc<dyn Guard>>);
+
+impl std::fmt::Debug for Guards {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Guards({})", self.0.len())
+    }
 }
 
 /// A command that checked out, with what it would touch.
@@ -270,6 +290,9 @@ pub fn delete_targets(
         if let Some(why) = protected(&real, policy) {
             return Err(format!("{}: {why}", real.display()));
         }
+        if let Some(why) = policy.guards.0.iter().find_map(|g| g.check(&real)) {
+            return Err(format!("{}: {why}", real.display()));
+        }
         targets.push(real);
     }
     Ok(targets)
@@ -374,15 +397,62 @@ pub fn protected_text(path: &str, windows: bool, macos: bool) -> Option<&'static
     None
 }
 
+/// What a delete did with its items.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Deleted {
+    /// One result per target: the bytes it held, or why it failed.
+    pub results: Vec<Result<u64, String>>,
+    /// Space actually freed; zero when items were only moved aside.
+    pub freed: u64,
+    /// What happened, e.g. "deleted 2 of 2, freeing 1.2 GB".
+    pub detail: String,
+}
+
 /// Carries out commands on a device.
 pub trait Executor {
     /// Deletes a file or folder; returns the bytes it held.
     fn delete(&self, path: &Path) -> Result<u64, String>;
+    /// Deletes everything a command names. By default one at a time with
+    /// [`Executor::delete`]; a device with a quarantine moves them aside
+    /// together, so they can be put back as one.
+    fn delete_all(&self, targets: &[PathBuf], _command: &Command) -> Deleted {
+        let results: Vec<Result<u64, String>> = targets.iter().map(|t| self.delete(t)).collect();
+        let freed = results.iter().flatten().sum();
+        let done = results.iter().filter(|r| r.is_ok()).count();
+        Deleted {
+            detail: format!(
+                "deleted {done} of {}, freeing {}",
+                targets.len(),
+                disktree_core::format_size(freed)
+            ),
+            results,
+            freed,
+        }
+    }
     fn uninstall(&self, _package: &str) -> Result<String, String> {
         Err("this device can't uninstall apps".into())
     }
     fn clean(&self, _kind: &str) -> Result<u64, String> {
         Err("this device has no junk to clean".into())
+    }
+    /// Puts a quarantined batch back; says what happened.
+    fn restore(&self, _batch: &str) -> Result<String, String> {
+        Err("this device has no quarantine".into())
+    }
+    /// Deletes quarantined batches for good; returns the bytes freed.
+    fn empty_quarantine(&self, _batches: &[String]) -> Result<u64, String> {
+        Err("this device has no quarantine".into())
+    }
+    /// Removes Docker images or build cache by the ids it reported;
+    /// returns the bytes freed.
+    fn docker_cleanup(&self, _items: &[String]) -> Result<u64, String> {
+        Err("this device doesn't manage Docker".into())
+    }
+    /// A line for whoever approves, about how this device carries the
+    /// request out (e.g. that deletes go to a quarantine first), or what it
+    /// would really free.
+    fn note(&self, _request: &Request) -> String {
+        String::new()
     }
 }
 
@@ -425,27 +495,45 @@ pub fn run(request: &Request, executor: &dyn Executor, approval: Approval) -> Co
         freed: 0,
         failed: Vec::new(),
     };
+    let failed = |update: &mut CommandUpdate, err: String| {
+        update.state = CommandState::Failed;
+        update.detail = err;
+    };
     match &request.command.action {
         Action::Delete { .. } => {
-            let mut done = 0;
-            for target in &request.targets {
-                match executor.delete(target) {
-                    Ok(bytes) => {
-                        done += 1;
-                        update.freed += bytes;
-                    }
-                    Err(err) => update.failed.push(format!("{}: {err}", target.display())),
+            let deleted = executor.delete_all(&request.targets, &request.command);
+            for (target, result) in request.targets.iter().zip(&deleted.results) {
+                if let Err(err) = result {
+                    update.failed.push(format!("{}: {err}", target.display()));
                 }
             }
-            update.detail = format!(
-                "deleted {done} of {}, freeing {}",
-                request.targets.len(),
-                disktree_core::format_size(update.freed)
-            );
-            if done == 0 {
+            update.freed = deleted.freed;
+            update.detail = deleted.detail;
+            if !deleted.results.iter().any(Result::is_ok) {
                 update.state = CommandState::Failed;
             }
         }
+        Action::Restore { batch, .. } => match executor.restore(batch) {
+            Ok(detail) => update.detail = detail,
+            Err(err) => failed(&mut update, err),
+        },
+        Action::EmptyQuarantine { batches, .. } => match executor.empty_quarantine(batches) {
+            Ok(bytes) => {
+                update.freed = bytes;
+                update.detail = format!(
+                    "emptied the quarantine, freeing {}",
+                    disktree_core::format_size(bytes)
+                );
+            }
+            Err(err) => failed(&mut update, err),
+        },
+        Action::DockerCleanup { items, .. } => match executor.docker_cleanup(items) {
+            Ok(bytes) => {
+                update.freed = bytes;
+                update.detail = format!("freed {}", disktree_core::format_size(bytes));
+            }
+            Err(err) => failed(&mut update, err),
+        },
         Action::Uninstall { package, .. } => match executor.uninstall(package) {
             Ok(detail) => update.detail = detail,
             Err(err) => {
@@ -500,6 +588,28 @@ pub fn describe(command: &Command, device_name: Option<&str>) -> Vec<String> {
             command.by.name,
             disktree_core::format_size(*bytes)
         )),
+        Action::Restore { label, .. } => lines.push(format!(
+            "{} asks to put back {label}{on}, where it was before.",
+            command.by.name
+        )),
+        Action::EmptyQuarantine { batches, bytes } => lines.push(format!(
+            "{} asks to permanently delete what's in the quarantine{on}: {} ({}). It can't be \
+             put back afterwards.",
+            command.by.name,
+            match batches.len() {
+                1 => "1 batch".to_string(),
+                n => format!("{n} batches"),
+            },
+            disktree_core::format_size(*bytes)
+        )),
+        Action::DockerCleanup { labels, bytes, .. } => {
+            lines.push(format!(
+                "{} asks to remove from Docker ({}){on}:",
+                command.by.name,
+                disktree_core::format_size(*bytes)
+            ));
+            lines.extend(labels.iter().take(50).cloned());
+        }
     }
     if !command.reason.trim().is_empty() {
         lines.push(format!("Reason: {}", command.reason.trim()));
@@ -552,6 +662,7 @@ mod tests {
             actions: vec![ActionKind::Delete],
             roots: vec![dir.join("share")],
             keep: vec![],
+            guards: Guards::default(),
         };
         Setup {
             dir,

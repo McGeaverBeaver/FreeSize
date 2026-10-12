@@ -1,7 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/proto", "crates/agent", "crates/cli", "crates/app", "crates/hub"]
-default-members = ["crates/core", "crates/proto", "crates/agent", "crates/cli", "crates/app", "crates/hub"]
+members = [
+    "crates/core", "crates/proto", "crates/agent", "crates/unraid", "crates/cli", "crates/app", "crates/hub",
+]
+default-members = [
+    "crates/core", "crates/proto", "crates/agent", "crates/unraid", "crates/cli", "crates/app", "crates/hub",
+]
 
 [workspace.package]
 version = "0.7.0"
@@ -13,6 +17,7 @@ repository = "https://github.com/McGeaverBeaver/TreeSizeCloneAndroid"
 disktree-core = { path = "crates/core" }
 disktree-proto = { path = "crates/proto" }
 disktree-agent = { path = "crates/agent" }
+disktree-unraid = { path = "crates/unraid" }
 
 [profile.release]
 lto = "thin"

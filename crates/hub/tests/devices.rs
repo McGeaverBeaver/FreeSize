@@ -90,7 +90,7 @@ async fn pair_report_and_look() {
                     free: 1 << 40,
                 }]),
                 scan: Some(scan_report),
-                apps: None,
+                ..Report::default()
             })
             .unwrap();
         assert!(client.poll(1).unwrap().commands.is_empty());

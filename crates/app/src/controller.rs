@@ -357,6 +357,7 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>) -> Hub {
         },
         roots,
         keep: vec![path.clone()],
+        guards: Default::default(),
     };
     Hub::new(path, transport, executor, policy)
 }

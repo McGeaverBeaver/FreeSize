@@ -425,6 +425,26 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
             ],
         )?;
     }
+    if let Some(batches) = report.quarantine {
+        tx.execute(
+            "INSERT OR REPLACE INTO quarantine (device_id, updated, batches) VALUES (?1, ?2, ?3)",
+            params![
+                device.id,
+                time,
+                serde_json::to_string(&batches).unwrap_or_default()
+            ],
+        )?;
+    }
+    if let Some(unraid) = report.unraid {
+        tx.execute(
+            "INSERT OR REPLACE INTO unraid (device_id, taken, report) VALUES (?1, ?2, ?3)",
+            params![
+                device.id,
+                unraid.taken,
+                serde_json::to_string(&unraid).unwrap_or_default()
+            ],
+        )?;
+    }
     tx.commit()
 }
 

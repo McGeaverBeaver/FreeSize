@@ -90,6 +90,7 @@ async fn the_approver_decides_for_a_server() {
             actions: vec![ActionKind::Delete],
             roots: vec![root.clone()],
             keep: vec![],
+            guards: Default::default(),
         };
 
         let devices = admin.get(&format!("{url}/api/devices")).json();

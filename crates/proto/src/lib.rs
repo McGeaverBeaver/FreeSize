@@ -11,6 +11,7 @@ pub mod keys;
 pub mod messages;
 pub mod pairing;
 pub mod signing;
+pub mod unraid;
 
 pub use keys::{KeyPair, PublicKey};
 pub use messages::*;
