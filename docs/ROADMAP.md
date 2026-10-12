@@ -345,6 +345,77 @@ Suggestions this enables:
 - Later: OneDrive, Google Drive, Syncthing, and backup tools (restic, Borg,
   Duplicacy) as additional sources of copies.
 
+### The same files on several devices
+
+- **Nextcloud's file id is the key.** Each desktop client's sync journal
+  records the server's file id for every file it syncs, and the id is the
+  same on every device. The Hub joins the devices' reports on it, so "this
+  file is stored on 5 devices" is exact for synced files, with no hashing.
+  Agents report per synced folder the bytes stored on the device and what's
+  set to "always keep on this device"; very big files one by one.
+- Files outside Nextcloud are matched as above, by hash, only above a size
+  that matters for space, and cached by inode, size and modification time.
+- The Hub groups them: "Photos/2019: 38 GB × 5 devices = 190 GB".
+- **Where to keep local copies is chosen per folder**, not per file: "keep
+  on the desktop and the server". DiskTree turns that into one suggestion
+  per device ("make online-only on the laptop, the old laptop and the
+  phone: frees 114 GB"). The defaults keep the copy where it was opened
+  last and on devices marked as main ones, and drop it first on laptops and
+  phones short of space.
+
+### Moving files into Nextcloud
+
+- **Suggestions:** folders that are big, unopened for months, of personal
+  files (videos, photos, archives) and not on Nextcloud yet. Each says what
+  it frees on the device and what it takes on the server, against the
+  server's free space: "D:\Videos\GoPro: 210 GB, not opened in 14 months,
+  not on Nextcloud. Move it there and keep it online-only on this PC."
+- **The person chooses the layout** on Nextcloud: under
+  `Archive/<device>/`, merged into existing folders by kind (Videos,
+  Photos), or the folder's own structure. The Hub connects to Nextcloud
+  with an app password (Nextcloud's Login Flow v2) and creates the folders.
+- **Setting up the sync**, from least to most invasive:
+  1. **Into the existing sync folder** (the default): the device moves the
+     folder into its Nextcloud folder (a rename on the same drive; across
+     drives copied, checked and the original quarantined). The client
+     uploads it; once its journal shows every file synced at the right
+     size, DiskTree makes it online-only. The files stay where the person
+     sees them, and the space is freed.
+  2. **In place, on Windows:** the folder becomes a sync folder of its own
+     with online-only files (D:\Videos ↔ `/Archive/Videos`), so its path
+     doesn't change. The client has no API for adding one: DiskTree backs up
+     its config file, stops the client, adds the pair and starts it again,
+     approved on the device. Only when chosen.
+  3. **On Unraid, no second copy:** the share is added to Nextcloud as
+     External storage, so every device reaches it without copying it.
+- **Online-only on each platform:** Windows like Explorer's "Free up space"
+  (`attrib +U -P` on the placeholders; reversible, no client change).
+  macOS: the newer client's File Provider; whether DiskTree can free files
+  from outside it needs testing. Linux: online-only files are experimental
+  in the client, so selective sync, done in the client. Android: the
+  Nextcloud app's "available offline" setting is private to it, so DiskTree
+  shows what's kept and points to the setting; uploaded camera photos are
+  freed through the quarantine, as Google Photos' "Free up space" does.
+
+### Safety
+
+- No local copy is freed until the copy on Nextcloud is confirmed by hash.
+  With Nextcloud on the Unraid server, the plugin hashes the server's copy
+  on disk, so nothing is downloaded to check it.
+- Every action is approved on the device it happens on. Online-only comes
+  back with a click; deleting goes through the quarantine.
+- The "only copy" risk report becomes a check: when everything would end
+  up online-only and Nextcloud's own data has no backup, the server holds
+  the only copy, and DiskTree says so before suggesting it.
+
+### In this order
+
+1. Read only: connecting Nextcloud, the clients' sync state on each
+   device, and "kept on N devices".
+2. Suggestions: moving into Nextcloud, and camera photos already uploaded.
+3. Actions: online-only, moving into the sync folder, creating folders on
+   Nextcloud, then the in-place sync and External storage.
+
 ## Phase 6: Junk cleaner on every device
 
 What CCleaner does for Windows, on every device DiskTree runs on and without
