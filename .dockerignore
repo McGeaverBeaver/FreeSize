@@ -1,0 +1,6 @@
+# Only what building the Hub needs goes to the Docker build.
+target
+dist
+.git
+docs/screenshots
+**/*.apk

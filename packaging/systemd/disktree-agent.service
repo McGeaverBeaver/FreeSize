@@ -1,0 +1,42 @@
+# The DiskTree agent on a Linux server: reports disks and scans to a Hub
+# and handles requests from it, each one approved by the server's approver
+# first.
+#
+#   sudo install -m 755 disktree /usr/local/bin/
+#   sudo disktree agent pair 'disktree://pair?...' --state /var/lib/disktree-agent/agent.json
+#   sudo disktree approver set XXXX-XXXX-XXXX-XXXX --state /var/lib/disktree-agent/agent.json
+#   sudo install -m 644 disktree-agent.service /etc/systemd/system/
+#   sudo install -m 644 disktree-agent.env /etc/default/disktree-agent   # choose folders
+#   sudo systemctl enable --now disktree-agent
+#
+# It runs as root so it can read every folder it scans and, after approval,
+# delete in them. It never touches the system's own folders (/usr, /etc,
+# /boot and the like are read-only to it here, and refused by the agent
+# anyway), and nothing is deleted without an approval from the approver.
+[Unit]
+Description=DiskTree agent
+Documentation=https://github.com/McGeaverBeaver/TreeSizeCloneAndroid
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=-/etc/default/disktree-agent
+ExecStart=/usr/local/bin/disktree agent run --state /var/lib/disktree-agent/agent.json $DISKTREE_AGENT_ARGS
+Restart=on-failure
+RestartSec=30
+StateDirectory=disktree-agent
+StateDirectoryMode=0700
+# Scans are low priority: the server's own work goes first.
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

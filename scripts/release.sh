@@ -2,13 +2,23 @@
 # Builds a release on this machine and publishes it on GitHub.
 #
 # Builds, from the commit that's checked out:
-#   disktree-android.apk            signed with your key (see android/build-apk.sh)
-#   disktree-linux-<arch>.tar.gz    desktop app and command line
-#   disktree-windows-x86_64.zip     the same for Windows, cross-compiled
+#   disktree-android.apk               signed with your key (see android/build-apk.sh)
+#   disktree-linux-<arch>.tar.gz       desktop app and command line (with the
+#                                      agent's systemd unit)
+#   disktree-hub-linux-<arch>.tar.gz   the Hub, with its systemd unit
+#   disktree-windows-x86_64.zip        app and command line for Windows
+#   disktree-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
+#                                      the aarch64 cross-compiler is installed
 #   SHA256SUMS.txt
 # runs the tests, then creates the GitHub release v<version> for that commit,
 # with the files attached and release notes listing the changes. The version
 # comes from the root Cargo.toml. macOS builds need a Mac, so there are none.
+#
+# With DISKTREE_IMAGE set (e.g. ghcr.io/mcgeaverbeaver/disktree-hub), it also
+# builds the Hub's Docker image for amd64 and arm64 and pushes it as
+# <version> and latest. That needs Docker with buildx, logged in to the
+# registry (for GitHub: echo $TOKEN | docker login ghcr.io -u <user>
+# --password-stdin, with a token that may write packages).
 #
 # Needs everything android/build-apk.sh needs, the MinGW cross-compiler and
 # zip for the Windows build, and the GitHub CLI logged in (`gh auth login`).
@@ -43,6 +53,14 @@ for tool in x86_64-w64-mingw32-gcc zip; do
         exit 1
     fi
 done
+
+image="${DISKTREE_IMAGE:-}"
+if [ -n "$image" ] && $publish; then
+    if ! docker buildx version >/dev/null 2>&1; then
+        echo "error: DISKTREE_IMAGE is set but Docker buildx isn't available" >&2
+        exit 1
+    fi
+fi
 
 if $publish; then
     if ! command -v gh >/dev/null || ! gh auth status >/dev/null 2>&1; then
@@ -102,9 +120,32 @@ package() {
 }
 
 echo "==> Linux"
-cargo build --release --quiet -p disktree-app -p disktree-cli
+cargo build --release --quiet -p disktree-app -p disktree-cli -p disktree-hub
+units=packaging/systemd
 package "disktree-linux-$(uname -m).tar.gz" "$target/release" \
-    "$target/release/disktree-gui" "$target/release/disktree"
+    "$target/release/disktree-gui" "$target/release/disktree" \
+    "$units/disktree-agent.service" "$units/disktree-agent.env"
+package "disktree-hub-linux-$(uname -m).tar.gz" "$target/release" \
+    "$target/release/disktree-hub" "$units/disktree-hub.service" "$units/disktree-hub.env"
+
+if [ "$(uname -m)" != aarch64 ]; then
+    if command -v aarch64-linux-gnu-gcc >/dev/null; then
+        echo "==> Linux on ARM (Hub and command line)"
+        rustup target add aarch64-unknown-linux-gnu >/dev/null 2>&1
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+            CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+            AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+            cargo build --release --quiet --target aarch64-unknown-linux-gnu \
+            -p disktree-cli -p disktree-hub
+        arm="$target/aarch64-unknown-linux-gnu/release"
+        package disktree-cli-linux-aarch64.tar.gz "$arm" \
+            "$arm/disktree" "$units/disktree-agent.service" "$units/disktree-agent.env"
+        package disktree-hub-linux-aarch64.tar.gz "$arm" \
+            "$arm/disktree-hub" "$units/disktree-hub.service" "$units/disktree-hub.env"
+    else
+        echo "    (no ARM builds: sudo apt install gcc-aarch64-linux-gnu to add them)"
+    fi
+fi
 
 echo "==> Windows"
 rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1
@@ -119,6 +160,14 @@ ls -lh "$dist"
 if ! $publish; then
     echo "Not published (--build-only)."
     exit 0
+fi
+
+if [ -n "$image" ]; then
+    echo "==> Docker image $image:$version (amd64, arm64)"
+    docker buildx build --platform linux/amd64,linux/arm64 \
+        --label "org.opencontainers.image.version=$version" \
+        --label "org.opencontainers.image.revision=$commit" \
+        -t "$image:$version" -t "$image:latest" --push .
 fi
 
 echo "==> Publishing $tag on GitHub"

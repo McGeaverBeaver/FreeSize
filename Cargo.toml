@@ -4,7 +4,7 @@ members = ["crates/core", "crates/proto", "crates/agent", "crates/cli", "crates/
 default-members = ["crates/core", "crates/proto", "crates/agent", "crates/cli", "crates/app", "crates/hub"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.92"
 repository = "https://github.com/McGeaverBeaver/TreeSizeCloneAndroid"

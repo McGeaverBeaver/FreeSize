@@ -88,6 +88,9 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   older than a month, and the photos and videos chat apps saved, to look
   through before deciding what goes.
 - **Command-line tool** (`disktree`) sharing the same core.
+- **DiskTree Hub**: one web dashboard for every device's storage, with
+  history, search, alerts and requests that each device approves itself
+  (see [DiskTree Hub](#disktree-hub)).
 
 ## Platform notes
 
@@ -454,6 +457,250 @@ than the day you removed it.
 | "App blocked" because the developer isn't verified | Google is rolling out developer verification region by region. | `adb install` still works. Registering the developer and package `dev.disktree.app` with Google removes the block for everyone. |
 | A folder shows "no access" | `Android/data`, `Android/obb` and other apps' private files are off limits to every app on Android 11+. | Nothing to fix; that's an Android rule. |
 
+## DiskTree Hub
+
+One dashboard for the storage of all your devices: phones, PCs, servers and
+the NAS. Each device reports its disks, its biggest folders and files (not
+every file) and, on Android, its apps. The Hub keeps the history, so you can
+see what grew, search every device at once and get an alert before a disk
+fills up.
+
+![The Hub's device list](docs/screenshots/hub-devices.png)
+
+| Changes between two scans | Alerts |
+|---|---|
+| ![](docs/screenshots/hub-changes.png) | ![](docs/screenshots/hub-alerts.png) |
+
+What it does:
+
+- **Devices**: disks with how they filled over time, scanned folders to browse, the
+  largest files, and Android's apps and junk.
+- **Changes**: any two scans of a folder side by side: what grew, shrank,
+  appeared and went. The Hub keeps every scan for a week, then one a day
+  for three months, one a week for a year and one a month after that.
+- **Search** across every device ("which device has that ISO?"): words in
+  the path, `*.iso` for a file type, a size floor. Searches can be saved.
+- **Exports**: a scan or a comparison as CSV or JSON, all devices and
+  disks as CSV, and a printable report per device.
+- **Requests**: an admin can ask a device to delete files, clean up junk or
+  uninstall an app. The device shows every path and asks first (below);
+  nothing happens on its own.
+- **Alerts** to ntfy, Gotify, Pushover or a webhook, and **metrics** for
+  Prometheus and Home Assistant.
+- **Devices without an agent** (a router, a VPS, a Proxmox host): upload
+  scans made with `ncdu`.
+
+### How requests are approved
+
+Reading a device's storage needs no approval. Anything that deletes does,
+on the device itself:
+
+- The app shows the request with every path and the admin's reason:
+  **Deny**, **Approve once** or **Approve for N minutes**. A grant lets the
+  same admin do the same kind of thing again without asking until it runs
+  out; the lengths on offer (and a maximum of 8 hours) are set per device
+  group in Settings. The device lists its grants and ends them on request
+  (Hub settings → End grants, or `disktree agent revoke`).
+- A server with nobody at it sends its requests to its **approver**, a
+  phone or PC with the DiskTree app. The approver is chosen **on the server
+  only**, with `disktree approver set <key>` (the key is under Hub settings
+  in the app), never from the dashboard, so a stolen dashboard sign-in can't
+  approve its own requests. The server checks the approver's signature on
+  every answer.
+- Every device refuses what's outside the folders it scans, paths with
+  `..` or through links, system folders, and DiskTree's own files. On a
+  desktop, deleted files go to the Trash; on Android and servers they're
+  deleted.
+- Commands are signed by the Hub's key, which each device checked when it
+  paired, and every device request is signed by the device's key, so
+  neither a fake Hub nor someone on the network can make up a request.
+- Everything (sign-ins, pairings, requests, answers, results, setting
+  changes) goes into an audit log whose entries are chained by hash;
+  **Audit log → Check the chain** shows if one was changed or removed.
+
+![An approval on the desktop app](docs/screenshots/hub-approval.png)
+
+The DiskTree app on a phone only hears from the Hub while it's open. Turn on
+the request alert (Alerts → When to alert) and add ntfy or Pushover, and
+you'll get a notification to open it.
+
+### Running the Hub
+
+The Hub is one program with its database (SQLite) and key in a data folder.
+**Back that folder up**: devices trust the key, and a new one means pairing
+every device again. Keep the Hub off the internet: bind it to a LAN or
+WireGuard address, and put HTTPS in front with a reverse proxy.
+
+**Unraid**: the template is in `unraid/disktree-hub.xml`. Until it's in
+Community Applications, add it from the Unraid terminal, then pick
+**disktree-hub** under Docker → Add Container → Template:
+
+```sh
+wget -O /boot/config/plugins/dockerMan/templates-user/my-disktree-hub.xml \
+  https://raw.githubusercontent.com/McGeaverBeaver/TreeSizeCloneAndroid/HEAD/unraid/disktree-hub.xml
+```
+
+It asks for the web port, the appdata folder
+(`/mnt/user/appdata/disktree-hub`), the Hub's address and the Authentik
+settings; the listen address and metrics token are under "Show more
+settings".
+
+**Docker** (any Linux, Synology, Docker Desktop):
+
+```sh
+docker run -d --name disktree-hub --restart unless-stopped \
+  -p 192.168.10.200:9090:9090 -v /srv/disktree-hub:/data \
+  -e DISKTREE_HUB_URL=https://disktree.home.lan \
+  -e DISKTREE_OIDC_ISSUER=https://auth.home.lan/application/o/disktree/ \
+  -e DISKTREE_OIDC_CLIENT_ID=... -e DISKTREE_OIDC_CLIENT_SECRET=... \
+  ghcr.io/mcgeaverbeaver/disktree-hub:latest
+```
+
+The container runs the Hub as `PUID`:`PGID` (99:100 by default) and gives
+it the data folder. The image is built for amd64 and arm64 by
+`scripts/release.sh` (see Releases).
+
+**Plain Linux**: `disktree-hub-linux-<arch>.tar.gz` from a release has the
+program, a systemd unit and a settings file:
+
+```sh
+sudo install -m 755 disktree-hub /usr/local/bin/
+sudo install -m 644 disktree-hub.service /etc/systemd/system/
+sudo install -m 600 disktree-hub.env /etc/disktree-hub.env   # fill it in
+sudo systemctl enable --now disktree-hub
+```
+
+Its data goes to `/var/lib/disktree-hub`. Every setting is a variable (or
+a flag; `disktree-hub --help` lists them):
+
+| Variable | Meaning |
+|---|---|
+| `DISKTREE_HUB_LISTEN` | Address and port, default `0.0.0.0:9090` |
+| `DISKTREE_HUB_URL` | How people and devices reach the Hub; goes into pairing codes |
+| `DISKTREE_HUB_DATA` | The data folder |
+| `DISKTREE_HUB_NAME` | Name in the dashboard and on devices |
+| `DISKTREE_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` (or `_CLIENT_SECRET_FILE`) | The Authentik provider |
+| `DISKTREE_ADMIN_GROUP`, `DISKTREE_VIEWER_GROUP` | Groups for admins and viewers (`disktree-admins`, `disktree-viewers`) |
+| `DISKTREE_METRICS_TOKEN` | Turns on `/metrics` and `/metrics/json` |
+| `DISKTREE_HUB_LOG` | `info`, or `debug` |
+
+`disktree-hub health` checks that the Hub on this machine answers; the
+Docker image uses it as its health check.
+
+### Signing in with Authentik
+
+The dashboard signs in with OpenID Connect (authorization code flow with
+PKCE), so Authentik's MFA and policies apply.
+
+1. In Authentik, **Applications → Providers → Create → OAuth2/OpenID
+   Provider**: client type **Confidential**, redirect URI
+   `https://disktree.home.lan/auth/callback` (your Hub address plus
+   `/auth/callback`), and a signing key (Authentik's self-signed
+   certificate is fine).
+2. **Applications → Create**: name it, slug `disktree`, with that provider.
+   The issuer is then `https://auth.home.lan/application/o/disktree/`.
+3. **Directory → Groups**: make `disktree-admins` and `disktree-viewers`,
+   and add yourself to the admins.
+4. Give the Hub the issuer, client ID and client secret.
+
+Admins pair devices, send requests and change settings. Viewers can look
+at every device but change nothing. A device group can also name Authentik
+groups that see only that group's devices, for family members who should
+see just their own phone and PC.
+
+### Pairing devices
+
+In the dashboard, **Pair a device** shows a code and a QR code, valid for 10
+minutes and good for one device. It carries the Hub's address and its key's
+fingerprint, which the device checks before it trusts the Hub.
+
+- **Phone**: scan the QR code with the camera; it opens DiskTree's connect
+  dialog. Or open the DiskTree Hub card on the start screen → Connect, and
+  type the Hub's address and the code.
+- **Computer**: DiskTree app → DiskTree Hub → Connect, and paste the link.
+- **Server**: the command line (`disktree`) is also the agent:
+
+  ```sh
+  sudo disktree agent pair 'disktree://pair?hub=...' --state /var/lib/disktree-agent/agent.json
+  sudo disktree approver set XXXX-XXXX-XXXX-XXXX --state /var/lib/disktree-agent/agent.json
+  sudo disktree agent run --scan /mnt/user --scan /mnt/cache --state /var/lib/disktree-agent/agent.json
+  ```
+
+  `packaging/systemd/disktree-agent.service` (also in the Linux release
+  archive) runs it as a service. `disktree agent status` shows the Hub,
+  the approver and grants.
+
+The app reports after each scan; the agent reports its disks every hour and
+scans its folders once a day (`--every`, in hours).
+
+### Devices without an agent
+
+**Add without an agent** on the Devices page makes a device the Hub can only
+look at. On that machine, make a scan file with ncdu and upload it on the
+device's page (**Upload a scan**):
+
+```sh
+ncdu -1xo- / | gzip > scan.json.gz
+```
+
+Any ncdu writes this with `-o` (not ncdu 2.6's binary `-O`), and so does
+`disktree /path --export scan.json`. Files up to 128 MB unpacked; for big
+machines, run the agent instead.
+
+### Alerts, metrics and Home Assistant
+
+The Alerts page sets when to alert: a disk over a fill level (90%), growth
+of 5% of a disk in a week, a disk full within 30 days at the past month's
+rate, a server silent for 24 hours, and requests left waiting two minutes.
+Alerts are checked every minute and sent when they start, when they get
+worse and when they're over, to:
+
+- **ntfy** (ntfy.sh or your own server, with an access token for protected
+  topics),
+- **Gotify**,
+- **Pushover**,
+- a **webhook**: a JSON POST, signed with HMAC-SHA256 in an
+  `X-DiskTree-Signature: sha256=…` header when you set a secret.
+
+With `DISKTREE_METRICS_TOKEN` set, `/metrics` serves Prometheus metrics
+(disk size, free and used space; scanned folder sizes; devices; requests;
+alerts) and `/metrics/json` the same as JSON. Both want the token as a
+bearer token:
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: disktree
+    scheme: https
+    authorization:
+      credentials: <token>
+    static_configs:
+      - targets: [disktree.home.lan]
+
+# Home Assistant configuration.yaml
+sensor:
+  - platform: rest
+    name: Tower array used
+    resource: https://disktree.home.lan/metrics/json
+    headers:
+      Authorization: !secret disktree_bearer   # "Bearer <token>"
+    value_template: >-
+      {{ (value_json.devices | selectattr('name', 'eq', 'Tower') | first).disks
+         | selectattr('path', 'eq', '/mnt/user') | map(attribute='used_percent') | first }}
+    unit_of_measurement: "%"
+    scan_interval: 300
+```
+
+### Trying the Hub without devices
+
+```sh
+cargo run -p disktree-hub --example demo
+```
+
+starts a Hub on http://127.0.0.1:9090 with a stand-in sign-in (it signs you
+straight in as an admin) and a few made-up devices, scans, requests and
+alerts.
+
 ## Releases
 
 Releases are built on your own Linux machine (an Ubuntu VM works well) and
@@ -549,10 +796,25 @@ Rust, the Android SDK and the signing key stay on the VM's own disk.
    ```
 
 `scripts/release.sh` runs the tests, builds `disktree-android.apk`,
-`disktree-linux-x86_64.tar.gz` and `disktree-windows-x86_64.zip` (the Windows
-build is cross-compiled with MinGW), writes `SHA256SUMS.txt`, and creates the
-GitHub release `v<version>` for the checked-out commit with those files and
-notes listing the changes. It refuses to publish uncommitted or unpushed code,
+`disktree-linux-x86_64.tar.gz`, `disktree-hub-linux-x86_64.tar.gz` and
+`disktree-windows-x86_64.zip` (the Windows build is cross-compiled with
+MinGW), writes `SHA256SUMS.txt`, and creates the GitHub release `v<version>`
+for the checked-out commit with those files and notes listing the changes.
+With `gcc-aarch64-linux-gnu` installed it adds the Hub and command line for
+ARM boards (`*-linux-aarch64.tar.gz`).
+
+To publish the Hub's Docker image too, install Docker with buildx, log in
+to GitHub's registry once, and set `DISKTREE_IMAGE`:
+
+```sh
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u McGeaverBeaver --password-stdin   # a token that may write packages
+DISKTREE_IMAGE=ghcr.io/mcgeaverbeaver/disktree-hub scripts/release.sh
+```
+
+It builds the image for amd64 and arm64 (cross-compiled, no emulation
+needed) and pushes `<version>` and `latest`. The first time, make the
+package public on GitHub (Packages → disktree-hub → Package settings) so
+Unraid can pull it without logging in. It refuses to publish uncommitted or unpushed code,
 or a version that's already released. `--draft` publishes a draft to check
 first; `--build-only` just builds into `dist/`. macOS builds need a Mac, so
 releases have none.
@@ -592,8 +854,13 @@ To sign with a different key, set `CARGO_APK_RELEASE_KEYSTORE` and
 ```
 crates/core   scanner, tree model, stats, treemap and bubble layout,
               snapshots, scan files (no UI)
-crates/cli    `disktree` command-line tool
+crates/cli    `disktree` command-line tool and Hub agent
 crates/app    Slint app; ui/app.slint is the whole UI, src/controller.rs the logic
+crates/proto  what devices and the Hub say to each other: keys, signatures,
+              pairing links, reports, commands
+crates/agent  the device side of the Hub, shared by the app and the agent
+crates/hub    DiskTree Hub: web server, dashboard (web/), SQLite, alerts
+unraid/       Unraid template; packaging/ the Docker entrypoint and systemd units
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work, and

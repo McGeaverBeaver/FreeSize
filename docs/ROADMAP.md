@@ -58,6 +58,26 @@ else that can delete:
     `--export`, `--import`;
   - a similar photos finder (difference hashes, read from EXIF previews);
   - Android cards to review old screenshots and chat apps' media.
+- 0.7 (phase 3): the DiskTree Hub.
+  - A server with a web dashboard, sign-in through Authentik (OpenID
+    Connect with PKCE), admins, viewers and viewers limited to device
+    groups.
+  - Pairing by QR code or link, checked by the Hub's key fingerprint.
+    Devices sign every request, the Hub signs every command.
+  - The command-line agent for servers, and the Hub card in the desktop
+    and Android apps.
+  - Requests to delete, clean up or uninstall, approved on the device
+    (Deny / once / for N minutes) or, for servers, on their approver, which
+    only the server can set.
+  - A hash-chained audit log.
+  - History with retention, comparing any two scans, search across devices
+    with saved searches, CSV/JSON/HTML exports, and devices without an
+    agent fed with ncdu files.
+  - Alerts (full, growing fast, forecast to fill, quiet servers, waiting
+    requests) to ntfy, Gotify, Pushover and webhooks.
+  - Prometheus metrics and JSON for Home Assistant.
+  - A Docker image for amd64 and arm64, the Unraid template, and systemd
+    units.
 
 Left over:
 - From 2b/2c: old downloads and screen recordings as their own groups, and
@@ -65,6 +85,35 @@ Left over:
 - From 2d: an Apps bubble view on desktops (an app's install folder plus its
   AppData/Library/cache folders, gathered across drives); Epic and GOG game
   artwork.
+- From 3, each held back for a reason:
+  - **The Hub on Windows** as a service from the installer, with a firewall
+    rule for private networks: needs the installer (NSIS) and a Windows
+    service wrapper, tested on real Windows. The Hub runs in Docker Desktop
+    meanwhile.
+  - **The phone in the background**: the Android app only reports and gets
+    prompts while it's open (an alert nudges you to open it). A small Java
+    part with WorkManager fixes that, together with Shizuku below.
+  - **Quarantine with restore on servers**: the agent deletes after
+    approval; desktops use the Trash. A quarantine folder on the same disk
+    comes with the Unraid plugin (phase 4), which needs it most.
+  - **More actions**: removing packages (apt, dnf, Flatpak, Snap, winget,
+    Homebrew), Docker cleanup and making OneDrive/Nextcloud files
+    online-only. Each needs its own checks of what's safe; deleting files,
+    cleaning junk and uninstalling Android apps come first.
+  - **Scanning over SSH** without an agent: uploading `ncdu -o` files covers
+    it for now, without the Hub holding SSH keys.
+  - **Mass-change warnings** (thousands of files rewritten, a new extension
+    everywhere): needs file-level changes between scans, which the summaries
+    don't keep.
+  - **Email alerts and scheduled digest reports**: ntfy, Gotify, Pushover
+    and webhooks (which can reach email through Home Assistant or n8n)
+    cover alerts for now.
+  - **Disk health from Scrutiny**, **S3/B2/MinIO buckets**, **per-user
+    totals** for shares and Nextcloud, **tags and keep marks** on what's
+    found, and **MQTT discovery** for Home Assistant (the REST sensor works
+    meanwhile).
+  - **An MCP server** for AI assistants: read-only first, with actions
+    still approved on the device.
 - From 2e, each held back for a reason:
   - **Shizuku mode on Android** (batch cache clearing and `Android/data`
     through an unrooted phone's helper): needs a Java part in the APK, which
@@ -89,7 +138,7 @@ Left over:
 
 One small Rust server with a web UI and SQLite.
 
-Not built yet: this is the next phase.
+Built in 0.7, apart from what's listed under Done → "From 3".
 
 **Running it**
 - Docker image for amd64 and arm64: runs on Unraid, any Linux host,
@@ -293,6 +342,7 @@ Suggestions this enables:
 ## Decided
 
 - Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5) and
-  2e (0.6). The Hub (phase 3) is next.
+  2e (0.6). The Hub (phase 3) is in 0.7; the Unraid plugin (phase 4) is
+  next, with quarantine and the approver in its settings page.
 - Screenless devices use a designated approver who can only be changed on
   the device (see Approvals).

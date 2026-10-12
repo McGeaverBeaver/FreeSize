@@ -1,0 +1,41 @@
+# DiskTree Hub as a system service on Linux.
+#
+#   sudo install -m 755 disktree-hub /usr/local/bin/
+#   sudo install -m 644 disktree-hub.service /etc/systemd/system/
+#   sudo install -m 600 disktree-hub.env /etc/disktree-hub.env   # then fill it in
+#   sudo systemctl enable --now disktree-hub
+#
+# The database and key live in /var/lib/disktree-hub; back that folder up.
+[Unit]
+Description=DiskTree Hub
+Documentation=https://github.com/McGeaverBeaver/TreeSizeCloneAndroid
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/disktree-hub.env
+Environment=DISKTREE_HUB_DATA=/var/lib/disktree-hub
+ExecStart=/usr/local/bin/disktree-hub
+Restart=on-failure
+RestartSec=5
+
+# Its own user, made when it starts, and nothing it doesn't need.
+DynamicUser=yes
+StateDirectory=disktree-hub
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

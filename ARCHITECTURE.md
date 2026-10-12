@@ -1,16 +1,22 @@
 # Architecture
 
-DiskTree is a Cargo workspace with three crates:
+DiskTree is a Cargo workspace with six crates:
 
 ```
 crates/core   disktree-core   scanner, tree model, stats, treemap and bubble
                               layout, snapshots, scan files
-crates/cli    disktree-cli    command-line front end
+crates/cli    disktree-cli    command-line front end and the Hub agent
 crates/app    disktree-app    Slint UI for desktop and Android
+crates/proto  disktree-proto  keys, signatures, pairing links and messages
+                              shared by devices and the Hub
+crates/agent  disktree-agent  the device side of the Hub
+crates/hub    disktree-hub    DiskTree Hub: web server, dashboard, database
 ```
 
-All the logic lives in `core`, which has no UI or platform UI dependencies, so
-it can be tested on its own. The CLI and the app are thin layers on top of it.
+All the scanning logic lives in `core`, which has no UI or platform UI
+dependencies, so it can be tested on its own. The CLI and the app are thin
+layers on top of it. The Hub (see [Hub](#hub)) adds a server that collects
+what devices report.
 
 ## Core
 
@@ -501,11 +507,152 @@ these doesn't hold:
 - every LOAD segment of every `.so` is aligned to 16 KB, and the zip passes
   `zipalign -c -P 16`.
 
+## Hub
+
+The Hub is three crates: what devices and the Hub say to each other
+(`proto`), the device side (`agent`, used by both the app and the command
+line), and the server (`hub`).
+
+### Protocol (`crates/proto`)
+
+- **Keys** (`keys.rs`): Ed25519 key pairs. A key's fingerprint is the first
+  10 bytes of its SHA-256 in Crockford base32, `XXXX-XXXX-XXXX-XXXX`, short
+  enough to compare by eye or type.
+- **Signed requests** (`signing.rs`): every call a device makes carries
+  `x-disktree-device`, `-time`, `-nonce` and `-signature` headers. The
+  signature covers `disktree-request-v1`, the method, path, time, nonce and
+  the SHA-256 of the body. The Hub refuses a time more than 5 minutes off
+  and any nonce it has seen.
+- **Signed messages** (`Signed<T>`): the JSON text, the signer's
+  fingerprint and a signature over a purpose prefix
+  (`disktree-command-v1`, `-decision-v1`, …) and the text, so a signature
+  made for one kind of message never passes as another. Commands are signed
+  by the Hub, decisions by the approver's device.
+- **Pairing links** (`pairing.rs`):
+  `disktree://pair?hub=<url>&code=XXXX-XXXX-XXXX&key=<fingerprint>`. Codes
+  are 60 random bits in Crockford base32, which forgives O/0 and I/1 mix-ups;
+  the Hub stores only their hash, for 10 minutes and one use, and allows 20
+  wrong guesses a minute.
+- **Messages** (`messages.rs`): `DeviceInfo` (name, platform, what it can
+  do, whether someone is at it, its approver and grants), `Report` (info,
+  disks, a scan summary, Android's apps), `PollResponse` (commands, approval
+  requests for another device, decisions, withdrawals), `Command` with its
+  `Action` (`delete`, `uninstall`, `clean_junk`) and `CommandUpdate`.
+
+A scan summary holds the 10,000 biggest folders (path, size, size on disk),
+the 500 biggest files and the 100 biggest file types: under a megabyte for a
+whole array, rather than every file.
+
+### Device side (`crates/agent`)
+
+- `state.rs`: the pairing, saved as JSON with mode 0600: Hub address, name
+  and key, this device's id and private key, the approver's device and key,
+  grants, and the last 500 handled commands (so a redelivered one never runs
+  twice).
+- `transport.rs`: HTTP through a `Transport` trait. Desktops and servers use
+  ureq (the system's TLS on Windows and macOS, rustls with the system's
+  certificates elsewhere, no redirects); Android passes Java's
+  `HttpURLConnection` in through JNI.
+- `client.rs`: `hello` (the Hub's name and key), `pair` (refuses a Hub whose
+  key doesn't match the link's fingerprint, or asks the person to compare
+  it when the link has none), and a signed `Client` for reports, polls,
+  updates and decisions.
+- `commands.rs` decides what to do with a command:
+  1. it must be signed by the pinned Hub key, for this device, not expired
+     and not handled before;
+  2. a delete must stay inside a folder this device scans, with no `..` and
+     no symbolic link leading out (parents are resolved), and never touch
+     protected system paths or DiskTree's own files;
+  3. a grant for that admin and kind of action runs it without asking;
+  4. otherwise a device with someone at it asks them; one without asks its
+     approver, and one without an approver refuses.
+
+  An approver's decision must be signed by the approver's pinned key and
+  name the hash of the exact command; grants last at most 8 hours.
+
+The command line's agent (`crates/cli/src/agent.rs`) reports disks hourly,
+scans its folders on a thread every `--every` hours, and long-polls the Hub
+in between. The app (`crates/app/src/hub.rs`) has a worker thread for
+reports and answers and a second one for polling, so an answer goes out at
+once; the first poll after starting asks the Hub to send everything still
+open again, so a prompt shown before the app closed comes back. Prompts go
+to the controller through a channel; on the desktop deletes go to the
+Trash, on Android they're deleted, as everywhere else in the app.
+
+### Server (`crates/hub`)
+
+Axum on Tokio, one SQLite database (rusqlite, bundled) behind a mutex,
+queried on Tokio's blocking threads. `db.rs` applies numbered migrations
+once each (`PRAGMA user_version`): devices, pairing codes, nonces, disks
+and their daily samples, scans (folders as gzipped JSON) and their files,
+apps, commands, approvals, the audit log, sessions and sign-ins; then
+devices without an agent and saved searches; then alerts and their
+channels.
+
+- `auth.rs`: OpenID Connect with PKCE (S256), state and nonce. The ID token
+  is checked against the provider's keys (JWKS, or HS256 with the client
+  secret), issuer, audience and expiry. Roles come from the `groups` claim.
+  Sessions are a random token in an HttpOnly, SameSite=Lax cookie (Secure
+  over HTTPS), stored hashed; changes need the session's CSRF token in a
+  header.
+- `devices.rs`: the device API under `/api/v1/` (`hello`, `pair`, `report`,
+  `poll`, the approver's key by fingerprint) behind the request signature
+  check. A poll waits up to 60 s on a per-device `Notify`, woken when
+  something arrives for it.
+- `commands.rs`: requests from the dashboard, checked against what the
+  device reported (the paths must be in its newest scan of that folder, the
+  app or junk in its report), signed and queued. States: queued, delivered,
+  shown, needs_approver, running, done, failed, denied, expired, cancelled.
+  Undelivered work is sent again after 10 minutes and expires after a day.
+  For a device without anyone at it, the request goes to the approver's
+  device and the signed decision back.
+- `dashboard.rs`, `reports.rs`: devices, scans, folders, groups and pairing
+  codes; comparing scans (`snapshot::compare` from core), search across the
+  newest scans, CSV/JSON exports, the HTML report (its own strict CSP) and
+  uploads of ncdu files for devices without an agent, which get a key
+  nobody holds.
+- `history.rs`: keeps every scan for 7 days, then one a day to 90 days, one
+  a week to a year and one every 30 days after that.
+- `alerts.rs`: every minute, works out what's wrong (full disks, with a
+  point of hysteresis; a week's growth; a least-squares forecast over 30
+  days of samples; quiet servers; waiting requests), opens and closes alerts
+  and sends what changed to ntfy (JSON publishing), Gotify, Pushover or a
+  webhook signed with HMAC-SHA256.
+- `metrics.rs`: Prometheus text and the same as JSON, behind a bearer token
+  compared in constant time.
+- `audit.rs`: an append-only log; each entry's hash covers its fields and the
+  previous entry's hash, and `verify` finds the first changed or missing
+  one.
+- `web/`: the dashboard, plain JavaScript without a build step. All text
+  goes in through `textContent`; the page's CSP allows scripts and styles
+  from the Hub only, so styles are set through the CSSOM.
+
+The tests in `crates/hub/tests` run a Hub on a random port against a mock
+OpenID provider (`tests/common/idp.rs`) and pair real agents with it:
+sign-in, pairing, signatures and replays, scoped viewers, requests and
+approvals through an approver, comparing, search, exports, uploads, alerts
+to a local ntfy and webhook stand-in, and metrics. `examples/demo.rs` runs
+the same with made-up devices for trying the dashboard.
+
+### Packaging
+
+- `Dockerfile`: builds on the build machine's architecture and
+  cross-compiles for amd64 or arm64, so a multi-architecture image needs no
+  emulation. The image is Debian slim with the Hub and an entrypoint
+  (`packaging/docker/entrypoint.sh`) that gives `/data` to `PUID:PGID` and
+  drops to that user with `setpriv`. `disktree-hub health` is the health
+  check.
+- `unraid/disktree-hub.xml`: the Unraid template.
+- `packaging/systemd/`: units for the Hub (its own dynamic user and
+  hardening) and the agent, with their settings files.
+
 ## Testing
 
 - `cargo test --workspace` runs the core tests (sizes, contiguity, hard links,
-  symlinks, permissions, cancellation, deletion, squarify geometry) and the
-  app's helper tests.
+  symlinks, permissions, cancellation, deletion, squarify geometry), the
+  app's helper tests, the protocol and agent tests (signatures, pairing
+  links, which commands a device runs, refuses or asks about), and the
+  Hub's end-to-end tests.
 - `scripts/release.sh` runs them before building a release on the build
   machine. The CI workflow runs them on Windows, macOS and Linux and builds
   the APK, but only when started by hand.
@@ -515,14 +662,17 @@ these doesn't hold:
 `scripts/release.sh` builds a release on a Linux machine and publishes it
 with the GitHub CLI: the APK through `build-apk.sh` (so it is checked and
 signed with the machine's key), the Linux app natively, and the Windows app
-cross-compiled for `x86_64-pc-windows-gnu` with MinGW. The Windows
-executables only import system DLLs, so they need no MinGW runtime. The
+cross-compiled for `x86_64-pc-windows-gnu` with MinGW, plus the Hub for
+Linux (and the Hub and command line for ARM when the aarch64
+cross-compiler is there). The Windows executables only import system DLLs,
+so they need no MinGW runtime. With `DISKTREE_IMAGE` set it also builds and
+pushes the Hub's Docker image for amd64 and arm64. The
 script only publishes a clean checkout that matches GitHub, and lets
 `gh release create --target` create the tag for that commit.
 
 ## Possible next steps
 
-See [docs/ROADMAP.md](docs/ROADMAP.md): the DiskTree Hub dashboard with
-device-confirmed actions, an Unraid plugin, and Nextcloud integration. The Windows MFT reader (reading the NTFS Master File Table
+See [docs/ROADMAP.md](docs/ROADMAP.md): what's left of the Hub, an Unraid
+plugin, and Nextcloud integration. The Windows MFT reader (reading the NTFS Master File Table
 directly, as WizTree does, for a whole-drive scan in seconds) would be an
 optional fast path for admins.

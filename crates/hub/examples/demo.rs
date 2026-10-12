@@ -75,9 +75,9 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
         os: os.into(),
         hostname: name.to_lowercase().replace(' ', "-"),
         app: if attended {
-            "DiskTree app 0.7.0".into()
+            format!("DiskTree app {}", env!("CARGO_PKG_VERSION"))
         } else {
-            "DiskTree agent 0.7.0".into()
+            format!("DiskTree agent {}", env!("CARGO_PKG_VERSION"))
         },
         actions: if platform == Platform::Android {
             vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]

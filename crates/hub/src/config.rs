@@ -8,7 +8,12 @@ use clap::Parser;
 
 /// DiskTree Hub: one dashboard for the storage of all your devices.
 #[derive(Clone, Debug, Parser)]
-#[command(version, about)]
+#[command(
+    version,
+    about,
+    after_help = "`disktree-hub health` checks that the Hub on this machine answers, \
+                  for a container's health check."
+)]
 pub struct Config {
     /// Address and port to listen on. Bind it to a LAN or WireGuard address
     /// to keep the Hub off the internet.
