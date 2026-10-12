@@ -422,7 +422,8 @@ crates/cli    `disktree` command-line tool
 crates/app    Slint app; ui/app.slint is the whole UI, src/controller.rs the logic
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work, and
+[docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
 
 ## Licensing
 

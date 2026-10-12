@@ -345,13 +345,8 @@ script only publishes a clean checkout that matches GitHub, and lets
 
 ## Possible next steps
 
-- **Windows MFT reader**: reading the NTFS Master File Table directly is how
-  WizTree scans a whole drive in seconds. It needs admin rights, so it would be
-  an optional fast path next to the current scanner.
-- **Growth screens**: "Signal grew 1.2 GB this month" and a storage chart,
-  from the samples the app history already records.
-- **Duplicate finder** and **big old files**, on every platform.
-- **Scan history and compare** ("what grew since last week").
-- **Export** to CSV or JSON.
-- **Windows installer and macOS `.app` bundle** (the latter needs a Mac to
-  build).
+See [docs/ROADMAP.md](docs/ROADMAP.md): growth and file cleanup, the DiskTree
+Hub dashboard with device-confirmed actions, an Unraid plugin, and Nextcloud
+integration. The Windows MFT reader (reading the NTFS Master File Table
+directly, as WizTree does, for a whole-drive scan in seconds) would be an
+optional fast path for admins.
