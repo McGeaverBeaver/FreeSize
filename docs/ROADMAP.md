@@ -79,9 +79,13 @@ One small Rust server with a web UI and SQLite.
   maximum are set per device group in the dashboard.
 - A grant covers one admin and one kind of action, expires by itself, is
   shown on the device while active, and can be revoked there.
-- Devices without anyone at the screen (servers): approve from a phone, a
-  second admin approves in the dashboard, or a deliberate per-device
-  auto-approve policy.
+- Devices without anyone at the screen (servers, Unraid): each has a
+  designated approver. That admin is set up and signs in (Authentik) on the
+  device itself, and its approval prompts go to the approver's phone.
+  **The approver can't be changed from the dashboard**, only on the device:
+  with a CLI command (`disktree approver set`), or in the device's own
+  settings page where it has one (the Unraid plugin's page under Settings).
+  A stolen dashboard login therefore can't redirect approvals to itself.
 - Append-only audit log; each entry carries the hash of the previous one so
   tampering shows.
 
@@ -170,8 +174,8 @@ Suggestions this enables:
   old, and hand pruning to the tools built for it rather than duplicating
   them.
 
-## Open questions
+## Decided
 
-- Approvals on servers with nobody at the screen: phone, second admin or
-  per-device policy?
-- Start the Hub before or after phases 2b and 2c?
+- Phases 2b and 2c come before the Hub.
+- Screenless devices use a designated approver who can only be changed on
+  the device (see Approvals).
