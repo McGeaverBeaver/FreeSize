@@ -96,6 +96,10 @@ else that can delete:
     with a plan and checked copies.
   - Reports to the Hub (its Unraid and Quarantine tabs); the server's
     approver is chosen on the page or with `disktree approver set`.
+- 0.8.1: the App caches card says how much Android's cache cleaner can
+  really clear, and offers it only when that's worth it.
+- 0.8.2: each group of apps opens as its own page with a way back, instead
+  of changing a list further down the screen; rows show when they're pressed.
 
 Left over:
 - From 2b/2c: old downloads and screen recordings as their own groups.

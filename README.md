@@ -361,12 +361,14 @@ Tapping an app opens its settings page, where you can clear its cache, clear
 its storage or uninstall it.
 
 The Back gesture steps back through the app: it closes a dialog, stops a scan,
-zooms the treemap out, then returns to the drive list before leaving the app.
+zooms the treemap or the app bubbles out, closes a group of apps, then returns
+to the drive list before leaving the app.
 
 ### Cleaning up apps
 
-Under the storage breakdown, the apps are grouped so the space you can win
-back is easy to find:
+Under *Your apps* on the home screen, the apps are grouped so the space you
+can win back is easy to find. Each group opens as its own page; the arrow at
+its top or the Back gesture returns to where you were on the home screen.
 
 | Group | What's in it |
 |---|---|

@@ -49,15 +49,21 @@ signing key and its password are in `~/.android/`: never print, copy, move
 or commit them. The release needs `musl-tools` (for the Unraid plugin) since
 0.8.0.
 
-## Where things stand (0.8.1)
+## Where things stand (0.8.2)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
   shared storage, and the card now says how much that is, offers the
   cleaner only when it's worth it, and otherwise points to Biggest caches.
+- 0.8.2: each Android app group (Biggest caches, Not opened in 3 months, …)
+  opens as its own page with a back arrow; Back returns to the same spot on
+  the home screen. Before, a tap changed a list further down the screen and
+  seemed to do nothing. Rows also show when they're pressed.
+- 0.8.0 was never published. 0.8.1 was built and saved as a draft GitHub
+  release only; the owner tried its APK on the Pixel (Biggest caches worked).
 - Not yet done:
-  1. Publish 0.8.1 with `scripts/release.sh` and install the APK on the
-     owner's Pixel; check what the App caches card shows there.
+  1. Release 0.8.2 with `scripts/release.sh` (and publish or discard the
+     0.8.1 draft), install the APK on the Pixel and try the group pages.
   2. The Unraid plugin has only been tested against a made-up server
      folder. On the first real install, check that Tools → Disk Space →
      DiskTree appears, `/var/log/disktree.log`, and

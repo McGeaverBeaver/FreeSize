@@ -19,8 +19,10 @@ pub const REFRESH_APPS: &str = "refresh-apps";
 pub const OPEN_APP_INFO: &str = "open-app-info";
 pub const CLEAR_CACHE: &str = "clear-cache";
 pub const GRANT_STORAGE: &str = "grant-storage";
-/// Prefix of the action ids that switch the app list to another group.
+/// Prefix of the action ids that open a group of apps as its own page.
 pub const VIEW_PREFIX: &str = "view:";
+/// Closes the open group's page (its back arrow; `app.slint` sends it too).
+pub const BACK: &str = "back";
 /// Prefix of the keys of removed apps' rows; installed apps use the bare
 /// package name.
 pub const REMOVED_PREFIX: &str = "removed:";
@@ -67,6 +69,7 @@ const NOTICE: i32 = 4;
 const GROUP: i32 = 5;
 const CHART: i32 = 6;
 const BUBBLES: i32 = 7;
+const PAGE: i32 = 8;
 
 /// Android keeps roughly this much usage history.
 const USAGE_HISTORY: u64 = 2 * 365 * 24 * 60 * 60;
@@ -90,8 +93,8 @@ pub enum AppsState {
 /// Everything besides the app data that changes the home screen.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options<'a> {
-    /// Which group of apps the list shows.
-    pub view: View,
+    /// The group of apps opened as its own page; none shows the home screen.
+    pub page: Option<View>,
     /// A new measurement is running; the previous one stays on screen.
     pub refreshing: bool,
     pub storage_access: bool,
@@ -118,6 +121,9 @@ pub struct HubCard {
 }
 
 pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
+    if let (Some(view), AppsState::Ready(report)) = (options.page, apps) {
+        return page_rows(report, view, options);
+    }
     let mut rows = vec![heading("Choose a drive or folder to analyze", "", None)];
     rows.extend(
         locations::list()
@@ -173,101 +179,116 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
             }
             rows.extend(chart_row(report));
             rows.extend(free_up_rows(report, options));
+            rows.push(heading("Your apps", "", None));
             rows.extend(
                 View::ALL
                     .into_iter()
-                    .filter_map(|view| group_row(report, view, options.view)),
+                    .filter_map(|view| group_row(report, view)),
             );
-            let view = options.view;
-            let toggle = if view == View::Removed {
-                None
-            } else if options.bubbles {
-                Some(("List", TOGGLE_BUBBLES))
-            } else {
-                Some(("Bubbles", TOGGLE_BUBBLES))
-            };
-            rows.push(heading(view.title(), &explanation(view, options), toggle));
-            let before = rows.len();
-            if options.bubbles && view != View::Removed {
-                // The bubbles themselves come from `appbubbles`; this row
-                // holds them, with the app zoomed into above them.
-                let zoomed = options
-                    .zoom
-                    .and_then(|p| report.apps.iter().find(|a| a.package == p));
-                rows.push(HomeRow {
-                    kind: BUBBLES,
-                    title: zoomed
-                        .map(|app| {
-                            let name = if app.label.is_empty() {
-                                &app.package
-                            } else {
-                                &app.label
-                            };
-                            format!("{name} · {}", format_size(app.size()))
-                        })
-                        .unwrap_or_default()
-                        .into(),
-                    subtitle: if zoomed.is_some() {
-                        "Tap a part for the app's details; Saved files opens them.".into()
-                    } else {
-                        "Tap an app to see what its space is made of.".into()
-                    },
-                    action: if zoomed.is_some() { "Back" } else { "" }.into(),
-                    key: ZOOM_OUT.into(),
-                    ..Default::default()
-                });
-            } else if view == View::Removed {
-                rows.extend(report.removed.iter().map(|e| removed_row(e, report.now)));
-            } else if view == View::Cache {
-                let mut apps: Vec<&AppUsage> = report
-                    .apps
-                    .iter()
-                    .filter(|app| in_view(report, app, view))
-                    .collect();
-                apps.sort_by_key(|app| std::cmp::Reverse(app.cache_bytes));
-                let largest = apps.first().map_or(1, |a| a.cache_bytes.max(1));
-                rows.extend(apps.into_iter().map(|app| {
-                    let mut row = app_row(app, largest, report);
-                    row.detail = format_size(app.cache_bytes).into();
-                    row.fraction = share(app.cache_bytes, largest);
-                    row
-                }));
-            } else if view == View::Growing {
-                let mut apps: Vec<(&AppUsage, u64)> = report
-                    .apps
-                    .iter()
-                    .filter(|app| in_view(report, app, view))
-                    .map(|app| (app, grown(app)))
-                    .collect();
-                apps.sort_by_key(|&(_, grew)| std::cmp::Reverse(grew));
-                let largest = apps.first().map_or(1, |&(_, grew)| grew.max(1));
-                rows.extend(apps.into_iter().map(|(app, grew)| {
-                    let mut row = app_row(app, largest, report);
-                    row.detail = format!("+{}", format_size(grew)).into();
-                    row.fraction = share(grew, largest);
-                    row
-                }));
-            } else if view == View::Media {
-                let media: Vec<(&MediaUse, &AppUsage)> = media_apps(report).collect();
-                let largest = media.first().map_or(1, |(m, _)| m.bytes.max(1));
-                rows.extend(
-                    media
-                        .into_iter()
-                        .map(|(media, app)| media_row(media, app, largest, report)),
-                );
-            } else {
-                let apps: Vec<&AppUsage> = report
-                    .apps
-                    .iter()
-                    .filter(|app| app.size() > 0 && in_view(report, app, view))
-                    .collect();
-                let largest = apps.first().map_or(1, |a| a.size().max(1));
-                rows.extend(apps.into_iter().map(|app| app_row(app, largest, report)));
-            }
-            if rows.len() == before {
-                rows.push(notice("Nothing left in this group.", "", None));
-            }
         }
+    }
+    rows
+}
+
+/// A group of apps on its own page: a header with the way back, then the
+/// apps, as a list or as bubbles.
+fn page_rows(report: &AppReport, view: View, options: Options<'_>) -> Vec<HomeRow> {
+    let toggle = if view == View::Removed {
+        ""
+    } else if options.bubbles {
+        "List"
+    } else {
+        "Bubbles"
+    };
+    let (count, bytes) = group_size(report, view);
+    let mut rows = vec![HomeRow {
+        kind: PAGE,
+        title: view.title().into(),
+        detail: group_detail(view, count, bytes).into(),
+        subtitle: explanation(view, options).into(),
+        action: toggle.into(),
+        key: TOGGLE_BUBBLES.into(),
+        ..Default::default()
+    }];
+    let before = rows.len();
+    if options.bubbles && view != View::Removed {
+        // The bubbles themselves come from `appbubbles`; this row
+        // holds them, with the app zoomed into above them.
+        let zoomed = options
+            .zoom
+            .and_then(|p| report.apps.iter().find(|a| a.package == p));
+        rows.push(HomeRow {
+            kind: BUBBLES,
+            title: zoomed
+                .map(|app| {
+                    let name = if app.label.is_empty() {
+                        &app.package
+                    } else {
+                        &app.label
+                    };
+                    format!("{name} · {}", format_size(app.size()))
+                })
+                .unwrap_or_default()
+                .into(),
+            subtitle: if zoomed.is_some() {
+                "Tap a part for the app's details; Saved files opens them.".into()
+            } else {
+                "Tap an app to see what its space is made of.".into()
+            },
+            action: if zoomed.is_some() { "Back" } else { "" }.into(),
+            key: ZOOM_OUT.into(),
+            ..Default::default()
+        });
+    } else if view == View::Removed {
+        rows.extend(report.removed.iter().map(|e| removed_row(e, report.now)));
+    } else if view == View::Cache {
+        let mut apps: Vec<&AppUsage> = report
+            .apps
+            .iter()
+            .filter(|app| in_view(report, app, view))
+            .collect();
+        apps.sort_by_key(|app| std::cmp::Reverse(app.cache_bytes));
+        let largest = apps.first().map_or(1, |a| a.cache_bytes.max(1));
+        rows.extend(apps.into_iter().map(|app| {
+            let mut row = app_row(app, largest, report);
+            row.detail = format_size(app.cache_bytes).into();
+            row.fraction = share(app.cache_bytes, largest);
+            row
+        }));
+    } else if view == View::Growing {
+        let mut apps: Vec<(&AppUsage, u64)> = report
+            .apps
+            .iter()
+            .filter(|app| in_view(report, app, view))
+            .map(|app| (app, grown(app)))
+            .collect();
+        apps.sort_by_key(|&(_, grew)| std::cmp::Reverse(grew));
+        let largest = apps.first().map_or(1, |&(_, grew)| grew.max(1));
+        rows.extend(apps.into_iter().map(|(app, grew)| {
+            let mut row = app_row(app, largest, report);
+            row.detail = format!("+{}", format_size(grew)).into();
+            row.fraction = share(grew, largest);
+            row
+        }));
+    } else if view == View::Media {
+        let media: Vec<(&MediaUse, &AppUsage)> = media_apps(report).collect();
+        let largest = media.first().map_or(1, |(m, _)| m.bytes.max(1));
+        rows.extend(
+            media
+                .into_iter()
+                .map(|(media, app)| media_row(media, app, largest, report)),
+        );
+    } else {
+        let apps: Vec<&AppUsage> = report
+            .apps
+            .iter()
+            .filter(|app| app.size() > 0 && in_view(report, app, view))
+            .collect();
+        let largest = apps.first().map_or(1, |a| a.size().max(1));
+        rows.extend(apps.into_iter().map(|app| app_row(app, largest, report)));
+    }
+    if rows.len() == before {
+        rows.push(notice("Nothing left in this group.", "", None));
     }
     rows
 }
@@ -779,10 +800,9 @@ fn media_row(media: &MediaUse, app: &AppUsage, largest: u64, report: &AppReport)
     }
 }
 
-/// A row that switches the list to `view`. Groups with nothing in them are
-/// left out, unless selected.
-fn group_row(report: &AppReport, view: View, selected: View) -> Option<HomeRow> {
-    let (count, bytes) = if view == View::Removed {
+/// How many apps are in a group and how much they hold (or grew, or saved).
+fn group_size(report: &AppReport, view: View) -> (usize, u64) {
+    if view == View::Removed {
         (report.removed.len(), 0)
     } else if view == View::Media {
         media_apps(report).fold((0, 0), |(n, b), (media, _)| (n + 1, b + media.bytes))
@@ -804,24 +824,33 @@ fn group_row(report: &AppReport, view: View, selected: View) -> Option<HomeRow> 
             .iter()
             .filter(|app| app.size() > 0 && in_view(report, app, view))
             .fold((0, 0), |(n, b), app| (n + 1, b + app.size()))
-    };
-    if count == 0 && view != View::All && view != selected {
-        return None;
     }
+}
+
+/// "40 apps · 4.82 GB"
+fn group_detail(view: View, count: usize, bytes: u64) -> String {
     let apps = if count == 1 { "app" } else { "apps" };
-    let detail = if bytes > 0 && view == View::Growing {
+    if bytes > 0 && view == View::Growing {
         format!("{count} {apps} · +{}", format_size(bytes))
     } else if bytes > 0 {
         format!("{count} {apps} · {}", format_size(bytes))
     } else {
         format!("{count} {apps}")
-    };
+    }
+}
+
+/// A row that opens `view` as a page. Groups with nothing in them are left
+/// out.
+fn group_row(report: &AppReport, view: View) -> Option<HomeRow> {
+    let (count, bytes) = group_size(report, view);
+    if count == 0 && view != View::All {
+        return None;
+    }
     Some(HomeRow {
         kind: GROUP,
         title: view.title().into(),
-        detail: detail.into(),
+        detail: group_detail(view, count, bytes).into(),
         key: format!("{VIEW_PREFIX}{}", view.id()).into(),
-        selected: view == selected,
         ..Default::default()
     })
 }
@@ -1281,9 +1310,9 @@ mod tests {
         }
     }
 
-    fn options(view: View) -> Options<'static> {
+    /// The home screen.
+    fn options() -> Options<'static> {
         Options {
-            view,
             storage_access: true,
             abilities: Abilities {
                 uninstall: true,
@@ -1293,6 +1322,14 @@ mod tests {
                 save_apk: true,
             },
             ..Options::default()
+        }
+    }
+
+    /// The page of a group of apps.
+    fn page(view: View) -> Options<'static> {
+        Options {
+            page: Some(view),
+            ..options()
         }
     }
 
@@ -1327,7 +1364,7 @@ mod tests {
 
     #[test]
     fn all_apps_lists_by_size_and_skips_empty_ones() {
-        let rows = rows(&AppsState::Ready(report()), options(View::All));
+        let rows = rows(&AppsState::Ready(report()), page(View::All));
         let apps = of_kind(&rows, APP);
         assert_eq!(apps.len(), 2);
         assert_eq!(apps[0].key, "big.app");
@@ -1340,29 +1377,60 @@ mod tests {
     }
 
     #[test]
-    fn groups_show_counts_and_switch_the_list() {
-        let rows = rows(&AppsState::Ready(report()), options(View::Unused));
-        let groups: Vec<_> = of_kind(&rows, GROUP)
+    fn groups_show_counts_and_open_as_pages() {
+        let home = rows(&AppsState::Ready(report()), options());
+        let groups: Vec<_> = of_kind(&home, GROUP)
             .iter()
-            .map(|r| (r.title.to_string(), r.detail.to_string(), r.selected))
+            .map(|r| (r.title.to_string(), r.detail.to_string(), r.key.to_string()))
             .collect();
         assert_eq!(
             groups,
             [
-                ("All apps".into(), "2 apps · 1.01 KB".into(), false),
-                ("Not opened in 3 months".into(), "1 app · 30 B".into(), true),
-                ("Not from an app store".into(), "1 app · 30 B".into(), false),
-                ("Removed apps".into(), "1 app".into(), false),
+                (
+                    "All apps".into(),
+                    "2 apps · 1.01 KB".into(),
+                    "view:all".into()
+                ),
+                (
+                    "Not opened in 3 months".into(),
+                    "1 app · 30 B".into(),
+                    "view:unused".into()
+                ),
+                (
+                    "Not from an app store".into(),
+                    "1 app · 30 B".into(),
+                    "view:not-from-store".into()
+                ),
+                ("Removed apps".into(), "1 app".into(), "view:removed".into()),
             ]
         );
-        let apps = of_kind(&rows, APP);
+        // The apps are on the groups' pages, not under the groups.
+        assert!(of_kind(&home, APP).is_empty());
+
+        let unused = rows(&AppsState::Ready(report()), page(View::Unused));
+        assert_eq!(unused[0].kind, PAGE);
+        assert_eq!(unused[0].title, "Not opened in 3 months");
+        assert_eq!(unused[0].detail, "1 app · 30 B");
+        assert_eq!(unused[0].action, "Bubbles");
+        assert!(of_kind(&unused, GROUP).is_empty());
+        assert!(of_kind(&unused, DRIVE).is_empty());
+        let apps = of_kind(&unused, APP);
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].key, "tool.app");
     }
 
     #[test]
+    fn a_page_needs_the_apps_measured() {
+        let rows = rows(&AppsState::Loading, page(View::Cache));
+        assert!(of_kind(&rows, PAGE).is_empty());
+        assert_eq!(of_kind(&rows, NOTICE)[0].title, "Measuring apps…");
+    }
+
+    #[test]
     fn removed_view_lists_history() {
-        let rows = rows(&AppsState::Ready(report()), options(View::Removed));
+        let rows = rows(&AppsState::Ready(report()), page(View::Removed));
+        // Removed apps have no bubbles.
+        assert_eq!(rows[0].action, "");
         let apps = of_kind(&rows, APP);
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].key, "removed:gone.app");
@@ -1373,13 +1441,13 @@ mod tests {
     fn clear_cache_only_offers_what_android_can_clear() {
         const MB: u64 = 1024 * 1024;
         let mut report = report();
-        let rows_now = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let rows_now = rows(&AppsState::Ready(report.clone()), options());
         assert!(!rows_now.iter().any(|r| r.title.starts_with("App caches")));
         report.apps[0].cache_bytes = 100 * MB;
         report.apps[0].data_bytes = 200 * MB;
         // All of it private: Android's cleaner can't reach it, so the card
         // points to clearing app by app.
-        let rows_now = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let rows_now = rows(&AppsState::Ready(report.clone()), options());
         let card = rows_now
             .iter()
             .find(|r| r.title == "App caches: 100 MB")
@@ -1388,21 +1456,18 @@ mod tests {
         assert!(card.subtitle.contains("Only 0 B is in shared storage"));
         // Enough in shared storage: the cleaner, for that much.
         report.apps[0].external_cache_bytes = 60 * MB;
-        let rows_now = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let rows_now = rows(&AppsState::Ready(report.clone()), options());
         let card = rows_now.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
         assert_eq!(card.action, "Clear 60.0 MB");
-        assert_eq!(
-            clearable_cache(&report, options(View::All).abilities),
-            60 * MB
-        );
+        assert_eq!(clearable_cache(&report, options().abilities), 60 * MB);
         // Before Android 12 the split is unknown: offered, with the caveat.
-        let mut old = options(View::All);
+        let mut old = options();
         old.abilities.shared_cache_known = false;
         let rows_now = rows(&AppsState::Ready(report.clone()), old);
         let card = rows_now.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
         assert_eq!(card.action, "Clear shared cache");
         assert!(card.subtitle.contains("usually small"));
-        let mut no_access = options(View::All);
+        let mut no_access = options();
         no_access.storage_access = false;
         let rows_now = rows(&AppsState::Ready(report), no_access);
         assert!(rows_now.iter().any(|r| r.key == GRANT_STORAGE));
@@ -1411,7 +1476,7 @@ mod tests {
     #[test]
     fn sheet_offers_saving_apps_no_store_has() {
         let report = report();
-        let abilities = options(View::All).abilities;
+        let abilities = options().abilities;
         let ids = |app: &AppUsage| -> Vec<&str> {
             app_sheet(app, &report, abilities)
                 .actions
@@ -1486,7 +1551,7 @@ mod tests {
                 ],
             },
         ];
-        let home = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let home = rows(&AppsState::Ready(report.clone()), options());
         // Too few old screenshots to suggest.
         assert!(home.iter().all(|r| r.key != "review:screenshots"));
         let chat = home.iter().find(|r| r.key == "review:chat-media").unwrap();
@@ -1525,7 +1590,7 @@ mod tests {
             junk(JunkKind::Thumbnails, 1000, &["t"]),
             junk(JunkKind::Leftovers, 2 * MB, &["Gone"]),
         ];
-        let home = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let home = rows(&AppsState::Ready(report.clone()), options());
         let keys: Vec<_> = of_kind(&home, NOTICE)
             .iter()
             .map(|r| r.key.to_string())
@@ -1539,7 +1604,7 @@ mod tests {
             "Permanently delete 1 folder left by removed apps (2.00 MB)? Their files can't \
              be restored."
         );
-        let mut no_access = options(View::All);
+        let mut no_access = options();
         no_access.storage_access = false;
         let limited = rows(&AppsState::Ready(report), no_access);
         let keys: Vec<_> = of_kind(&limited, NOTICE)
@@ -1570,16 +1635,15 @@ mod tests {
                 in_app_data: false,
             },
         ];
-        let rows = rows(&AppsState::Ready(report.clone()), options(View::Media));
-        let group = rows.iter().find(|r| r.kind == GROUP && r.selected).unwrap();
-        assert_eq!(group.detail, "1 app · 300 MB");
+        let rows = rows(&AppsState::Ready(report.clone()), page(View::Media));
+        assert_eq!(rows[0].detail, "1 app · 300 MB");
         let apps = of_kind(&rows, APP);
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].subtitle, "12 files, mostly in Pictures/Big");
         assert_eq!(apps[0].detail, "300 MB");
         assert!(apps[0].tags.ends_with("300 MB of files"));
 
-        let sheet = app_sheet(&report.apps[0], &report, options(View::All).abilities);
+        let sheet = app_sheet(&report.apps[0], &report, options().abilities);
         assert!(
             sheet
                 .facts
@@ -1597,14 +1661,14 @@ mod tests {
         report.apps[0].data_bytes = 900 * MB;
         report.apps[1].cache_bytes = 40 * MB;
         report.apps[1].data_bytes = 60 * MB;
-        let home = rows(&AppsState::Ready(report.clone()), options(View::Cache));
-        let group = home.iter().find(|r| r.kind == GROUP && r.selected).unwrap();
-        assert_eq!(group.detail, "2 apps · 340 MB");
+        let home = rows(&AppsState::Ready(report.clone()), page(View::Cache));
+        assert_eq!(home[0].title, "Biggest caches");
+        assert_eq!(home[0].detail, "2 apps · 340 MB");
         let apps = of_kind(&home, APP);
         assert_eq!(apps[0].detail, "300 MB");
         assert_eq!(apps[1].detail, "40.0 MB");
 
-        let mut cleared = options(View::All);
+        let mut cleared = options();
         cleared.cache_freed = Some(2 * MB);
         let home = rows(&AppsState::Ready(report), cleared);
         let card = home
@@ -1631,9 +1695,8 @@ mod tests {
             bytes: 20 * MB as i64,
             days: 30,
         });
-        let home = rows(&AppsState::Ready(report.clone()), options(View::Growing));
-        let group = home.iter().find(|r| r.kind == GROUP && r.selected).unwrap();
-        assert_eq!(group.detail, "1 app · +300 MB");
+        let home = rows(&AppsState::Ready(report.clone()), page(View::Growing));
+        assert_eq!(home[0].detail, "1 app · +300 MB");
         let apps = of_kind(&home, APP);
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].detail, "+300 MB");
@@ -1644,6 +1707,7 @@ mod tests {
                 .facts
                 .contains(&"Grew 300 MB over the last 30 days.".to_string())
         );
+        let home = rows(&AppsState::Ready(report.clone()), options());
         assert!(of_kind(&home, CHART).is_empty());
 
         let sample = |day: u64| StorageSample {
@@ -1654,7 +1718,7 @@ mod tests {
             files: 100 * MB,
         };
         report.storage = vec![sample(20_000), sample(20_010)];
-        let home = rows(&AppsState::Ready(report), options(View::All));
+        let home = rows(&AppsState::Ready(report), options());
         let chart = of_kind(&home, CHART);
         assert_eq!(chart.len(), 1);
         assert_eq!(chart[0].subtitle, "Used space hardly changed in 10 days.");

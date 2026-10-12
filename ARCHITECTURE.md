@@ -427,8 +427,11 @@ are ignored, so a replaced disk starts a new history.
 `appbubbles.rs` lays out an app group as bubbles sized by what the group
 ranks apps by (size, cache, growth, saved files), and an app's parts when
 zoomed in. `home.rs` turns all of this into the home screen's rows (drives, the breakdown
-bar, the Free up space cards, the groups, then the selected group's apps) and
-into the app sheet: the facts and buttons shown when an app is tapped.
+bar, the Free up space cards, the groups), the rows of a group's page (a
+header with the way back, then the group's apps) and the app sheet: the facts
+and buttons shown when an app is tapped. A group opens as a page in place of
+the home screen, so a tap visibly does something; the controller keeps the
+home screen's scroll position meanwhile and puts it back on Back.
 
 Android's clear-cache dialog (MediaProvider's) only empties
 `Android/data/*/cache` in shared storage, never the cache in apps' private

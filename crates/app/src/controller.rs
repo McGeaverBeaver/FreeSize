@@ -257,8 +257,10 @@ pub struct Controller {
     apps_job: Option<Slot<Result<AppReport, String>>>,
     /// Waiting for the user to come back from the Usage access screen.
     awaiting_usage_access: bool,
-    /// Which group of apps the home screen lists.
-    view: View,
+    /// The group of apps opened as its own page over the home screen.
+    page: Option<View>,
+    /// Where the home screen was scrolled to when the page opened.
+    home_scroll: f32,
     sheet: Option<SheetTarget>,
     /// The connection to a DiskTree Hub, if paired.
     hub: Hub,
@@ -409,7 +411,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             apps: AppsState::Unsupported,
             apps_job: None,
             awaiting_usage_access: false,
-            view: View::All,
+            page: None,
+            home_scroll: 0.0,
             sheet: None,
             hub: new_hub(&hub_junk),
             hub_status: String::new(),
@@ -1086,13 +1089,18 @@ impl Controller {
     /// the list keeps its scroll position and the measured heights of rows
     /// that stay the same.
     fn refresh_home(&self) {
+        // A page lists measured apps; until they are, the home screen shows.
+        let page = self.page.filter(|_| self.report().is_some());
+        if let Some(ui) = self.ui() {
+            ui.set_home_page_open(page.is_some());
+        }
         let card = home::HubCard {
             hub: self.hub.state().map(|s| s.hub_name),
             status: self.hub_status.clone(),
             waiting: self.prompts.len(),
         };
         let options = home::Options {
-            view: self.view,
+            page,
             refreshing: self.apps_job.is_some() && matches!(self.apps, AppsState::Ready(_)),
             storage_access: storage_access(),
             abilities: apps::abilities(),
@@ -1117,7 +1125,8 @@ impl Controller {
     /// they grow in, as after zooming; otherwise only changes are applied.
     fn update_app_bubbles(&self, fresh: bool) {
         let (width, height) = self.app_bubble_size;
-        let Some(report) = self.report().filter(|_| self.app_bubbles) else {
+        let (Some(report), Some(view)) = (self.report().filter(|_| self.app_bubbles), self.page)
+        else {
             self.app_bubble_rows.clear();
             return;
         };
@@ -1125,7 +1134,7 @@ impl Controller {
             return;
         }
         let items: Vec<BubbleItem> =
-            appbubbles::bubbles(report, self.view, self.app_zoom.as_deref(), width, height)
+            appbubbles::bubbles(report, view, self.app_zoom.as_deref(), width, height)
                 .into_iter()
                 .map(|b| {
                     let r = b.circle.r;
@@ -1298,12 +1307,10 @@ impl Controller {
                 self.refresh_home();
                 self.update_app_bubbles(true);
             }
+            home::BACK => self.home_back(),
             _ => {
                 if let Some(view) = id.strip_prefix(home::VIEW_PREFIX).and_then(View::from_id) {
-                    self.view = view;
-                    self.app_zoom = None;
-                    self.refresh_home();
-                    self.update_app_bubbles(true);
+                    self.open_page(view);
                 } else if let Some(kind) = id
                     .strip_prefix(home::CLEAN_PREFIX)
                     .and_then(JunkKind::from_id)
@@ -1315,6 +1322,37 @@ impl Controller {
                 {
                     self.review(kind);
                 }
+            }
+        }
+    }
+
+    /// Opens a group of apps as its own page, from the top.
+    fn open_page(&mut self, view: View) {
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        if self.page.is_none() {
+            self.home_scroll = ui.get_home_scroll();
+        }
+        self.page = Some(view);
+        self.app_zoom = None;
+        self.refresh_home();
+        self.update_app_bubbles(true);
+        ui.set_home_scroll(0.0);
+    }
+
+    /// Back on a group's page: out of the app the bubbles zoomed into, else
+    /// back to the home screen where it was left.
+    fn home_back(&mut self) {
+        if self.app_zoom.take().is_some() {
+            self.refresh_home();
+            self.update_app_bubbles(true);
+            return;
+        }
+        if self.page.take().is_some() {
+            self.refresh_home();
+            if let Some(ui) = self.ui() {
+                ui.set_home_scroll(self.home_scroll);
             }
         }
     }
