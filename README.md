@@ -601,8 +601,10 @@ PKCE), so Authentik's MFA and policies apply.
 1. In Authentik, **Applications → Providers → Create → OAuth2/OpenID
    Provider**: client type **Confidential**, redirect URI
    `https://disktree.home.lan/auth/callback` (your Hub address plus
-   `/auth/callback`), and a signing key (Authentik's self-signed
-   certificate is fine).
+   `/auth/callback`), and under **Advanced protocol settings** a signing
+   key (Authentik's self-signed certificate is fine). Without one,
+   Authentik signs with the client secret (HS256), which the Hub also
+   accepts from 0.8.4 on; 0.8.3 couldn't sign in that way.
 2. **Applications → Create**: name it, slug `disktree`, with that provider.
    The issuer is then `https://auth.home.lan/application/o/disktree/`.
 3. **Directory → Groups**: make `disktree-admins` and `disktree-viewers`,

@@ -138,7 +138,10 @@ fn discover(http: &ureq::Agent, issuer: &str) -> Result<Provider, String> {
             found.issuer
         ));
     }
-    let jwks: JwkSet = get_json(http, &found.jwks_uri)?;
+    let published: PublishedKeys = get_json(http, &found.jwks_uri)?;
+    let jwks = JwkSet {
+        keys: published.keys,
+    };
     Ok(Provider {
         issuer: found.issuer,
         authorization_endpoint: found.authorization_endpoint,
@@ -147,6 +150,14 @@ fn discover(http: &ureq::Agent, issuer: &str) -> Result<Provider, String> {
         jwks,
         fetched: Instant::now(),
     })
+}
+
+/// The provider's published keys. One without a signing key (Authentik's
+/// default) publishes `{}` and signs ID tokens with the client secret.
+#[derive(Deserialize)]
+struct PublishedKeys {
+    #[serde(default)]
+    keys: Vec<jsonwebtoken::jwk::Jwk>,
 }
 
 /// What the Hub reads from an ID token.
@@ -674,6 +685,19 @@ mod tests {
             &EncodingKey::from_secret(secret.as_bytes()),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn providers_without_keys_publish_an_empty_set() {
+        let keys: PublishedKeys = serde_json::from_str("{}").unwrap();
+        assert!(keys.keys.is_empty());
+        let keys: PublishedKeys = serde_json::from_value(json!({ "keys": [{
+            "kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256",
+            "n": "sXchDaQebHnPiGvyDOAT4saGEUetSyo9MKLOoWFsueri23bOdgWp4Dy1WlUzewbgBHod5pcM9H95GQRV3JDXboIRROSBigeC5yjU1hGzHHyXss8UDprecbAYxknTcQkhslANGRUZmdTOQ5qTRsLAt6BTYuyvVRdhS8exSZEy_c4gs_7svlJJQ4H9_NxsiIoLwAEk7-Q3UXERGYw_75IDrGA84-lA_-Ct4eTlXHBIY2EaV7t7LjJaynVJCpkv4LKjTTAumiGUIuQhrNhZLuF_RJLqHpM2kgWFLU7-VTdL1VbC2tejvcI2BlMkEpk1BzBZI0KQB0GaDWFLN-aEAw3vRw",
+            "e": "AQAB"
+        }]}))
+        .unwrap();
+        assert_eq!(keys.keys.len(), 1);
     }
 
     #[test]
