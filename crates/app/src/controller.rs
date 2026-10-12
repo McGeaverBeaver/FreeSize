@@ -13,9 +13,10 @@ use disktree_core::bubbles::{self, BubbleOptions};
 use disktree_core::snapshot::{self, Snapshot};
 use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
-    DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
-    ScanResult, SizeMode, Tree, disk_space, duplicate_candidates, extension_stats, format_count,
-    format_size, has_extension, kinds, largest_files, largest_files_where, rebuildable, scan,
+    Bin, DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
+    ScanResult, SizeMode, Tree, age_bins, disk_space, duplicate_candidates, extension_stats,
+    format_count, format_size, has_extension, kinds, largest_files, largest_files_where,
+    rebuildable, scan, size_bins,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel,
@@ -40,8 +41,35 @@ use crate::{
 /// Icons beyond the kinds of content (see `Icons.of` in the UI).
 const ICON_REBUILD: i32 = 12;
 const ICON_MORE: i32 = 13;
-/// Most files listed when the list is limited to one type.
+/// Most files listed when the list is limited to one group.
 const MAX_OF_TYPE: usize = 1000;
+/// Keys of the Types tab's rows: a type by extension, an age or size group
+/// by position.
+const TYPE_KEY: &str = "type:";
+const AGE_KEY: &str = "age:";
+const SIZE_KEY: &str = "size:";
+
+/// What the files list is limited to.
+#[derive(Clone, Debug, PartialEq)]
+enum FileFilter {
+    Type(String),
+    Modified(Bin),
+    Size(Bin),
+}
+
+impl FileFilter {
+    fn matches(&self, tree: &Tree, id: NodeId, mode: SizeMode) -> bool {
+        let node = tree.node(id);
+        match self {
+            FileFilter::Type(ext) => has_extension(tree, id, ext),
+            FileFilter::Modified(bin) => bin.from <= node.modified && node.modified < bin.to,
+            FileFilter::Size(bin) => {
+                let size = i64::try_from(node.size_in(mode)).unwrap_or(i64::MAX);
+                bin.from <= size && size < bin.to
+            }
+        }
+    }
+}
 
 /// Result handed from a worker thread to the UI thread.
 type Slot<T> = Arc<Mutex<Option<T>>>;
@@ -130,8 +158,10 @@ pub struct Controller {
     app_zoom: Option<String>,
     app_bubble_size: (f32, f32),
     app_bubble_rows: Rc<VecModel<BubbleItem>>,
-    /// The file type the files list is limited to.
-    type_filter: Option<String>,
+    /// What the files list is limited to.
+    file_filter: Option<FileFilter>,
+    /// The age and size groups last shown, for tapping them.
+    bins: RefCell<(Vec<Bin>, Vec<Bin>)>,
     /// Folder sizes of earlier scans of the scanned folder, oldest first,
     /// and the one the Changes tab compares with.
     earlier: Vec<Snapshot>,
@@ -209,7 +239,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             app_zoom: None,
             app_bubble_size: (0.0, 0.0),
             app_bubble_rows: Rc::new(VecModel::default()),
-            type_filter: None,
+            file_filter: None,
+            bins: RefCell::default(),
             earlier: Vec::new(),
             compare: None,
             change_rows: Rc::new(VecModel::default()),
@@ -262,8 +293,10 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
         .bubbles_resized(w, h));
     on!(ui, on_map_view_changed, weak, |c| c.update_map());
     on!(ui, on_app_bubble, weak, |c, key| c.app_bubble(key.as_str()));
-    on!(ui, on_type_picked, weak, |c, key| c.pick_type(key.as_str()));
-    on!(ui, on_clear_files_filter, weak, |c| c.clear_type_filter());
+    on!(ui, on_type_picked, weak, |c, key| c
+        .pick_group(key.as_str()));
+    on!(ui, on_clear_files_filter, weak, |c| c.clear_file_filter());
+    on!(ui, on_types_view_changed, weak, |c| c.update_lists());
     on!(ui, on_compare_scan, weak, |c, index| c.compare_with(index));
     on!(ui, on_app_bubbles_resized, weak, |c, w, h| c
         .app_bubbles_resized(w, h));
@@ -654,7 +687,7 @@ impl Controller {
             cancelled: result.cancelled,
         });
         self.owners.clear();
-        self.type_filter = None;
+        self.file_filter = None;
         let tree = self.tree.insert(result.tree);
         self.rebuildable = rebuildable(tree, tree.root())
             .into_iter()
@@ -1703,37 +1736,68 @@ impl Controller {
         };
         let folder_total = tree.node(self.focus).size_in(self.mode).max(1) as f64;
         let stats = extension_stats(tree, self.focus, self.mode);
-        // Bars compare a listed file with all files of its type when the
-        // list shows one type, else with the whole folder.
-        let total = self
-            .type_filter
-            .as_ref()
-            .and_then(|ext| stats.iter().find(|s| &s.extension == ext))
-            .map_or(folder_total, |s| s.size.max(1) as f64);
+        let now = apps::now() as i64;
+        let ages = age_bins(tree, self.focus, self.mode, now);
+        let sizes = size_bins(tree, self.focus, self.mode);
 
-        let found = match &self.type_filter {
-            Some(ext) => largest_files_where(tree, self.focus, self.mode, MAX_OF_TYPE, |id| {
-                has_extension(tree, id, ext)
+        // The group the files list is limited to: its name, file count and
+        // bytes, and which files belong to it.
+        let group: Option<(String, u64, u64)> = self.file_filter.as_ref().map(|filter| {
+            let (name, found) = match filter {
+                FileFilter::Type(ext) => (
+                    if ext.is_empty() {
+                        "Files without an extension".to_string()
+                    } else {
+                        format!("Only .{ext}")
+                    },
+                    stats
+                        .iter()
+                        .find(|s| &s.extension == ext)
+                        .map(|s| (s.files, s.size)),
+                ),
+                FileFilter::Modified(bin) => (
+                    match bin.label.as_str() {
+                        "No date" => "Files without a date".to_string(),
+                        label if label.starts_with("Before") => {
+                            format!("Changed {}", label.to_lowercase())
+                        }
+                        label => format!("Changed in {label}"),
+                    },
+                    ages.iter()
+                        .find(|b| b.from == bin.from)
+                        .map(|b| (b.files, b.size)),
+                ),
+                FileFilter::Size(bin) => (
+                    // "Sized under 1 MB", "Sized 1 GB and up".
+                    format!("Sized {}{}", bin.label[..1].to_lowercase(), &bin.label[1..]),
+                    sizes
+                        .iter()
+                        .find(|b| b.from == bin.from)
+                        .map(|b| (b.files, b.size)),
+                ),
+            };
+            let (files, bytes) = found.unwrap_or((0, 0));
+            (name, files, bytes)
+        });
+        // Bars compare a listed file with its group, else with the folder.
+        let total = group
+            .as_ref()
+            .map_or(folder_total, |&(_, _, bytes)| bytes.max(1) as f64);
+
+        let found = match &self.file_filter {
+            Some(filter) => largest_files_where(tree, self.focus, self.mode, MAX_OF_TYPE, |id| {
+                filter.matches(tree, id, self.mode)
             }),
             None => largest_files(tree, self.focus, self.mode, 100),
         };
-        ui.set_files_filter(match &self.type_filter {
-            Some(ext) => {
-                let name = if ext.is_empty() {
-                    "Files without an extension".to_string()
-                } else {
-                    format!("Only .{ext}")
-                };
-                let (count, bytes) = stats
-                    .iter()
-                    .find(|s| &s.extension == ext)
-                    .map_or((0, 0), |s| (s.files, s.size));
+        ui.set_files_filter(match &group {
+            Some((name, count, bytes)) => {
                 let mut text = format!(
                     "{name} · {}, {}",
-                    plural(count, "file", "files"),
-                    format_size(bytes)
+                    plural(*count, "file", "files"),
+                    format_size(*bytes)
                 );
-                if count > MAX_OF_TYPE as u64 {
+                if *count > MAX_OF_TYPE as u64 {
                     text.push_str(&format!(
                         " · biggest {} shown",
                         format_count(MAX_OF_TYPE as u64)
@@ -1764,28 +1828,70 @@ impl Controller {
             .collect();
         ui.set_largest_files(ModelRc::new(VecModel::from(files)));
 
-        let types: Vec<TypeRow> = stats
-            .into_iter()
-            .take(60)
-            .map(|stat| TypeRow {
-                key: stat.extension.as_str().into(),
-                label: if stat.extension.is_empty() {
-                    "(no extension)".into()
-                } else {
-                    format!(".{}", stat.extension).into()
-                },
-                size: format_size(stat.size).into(),
-                files: plural(stat.files, "file", "files").into(),
-                fraction: (stat.size as f64 / folder_total) as f32,
-                color: extension_color(&stat.extension),
-            })
-            .collect();
-        ui.set_file_types(ModelRc::new(VecModel::from(types)));
+        // The Types tab shows types, ages or sizes; tapping a row lists its
+        // files (see `pick_group`).
+        let bin_row = |prefix: &str, i: usize, bin: &Bin, color: Color| TypeRow {
+            key: format!("{prefix}{i}").into(),
+            label: bin.label.as_str().into(),
+            size: format_size(bin.size).into(),
+            files: plural(bin.files, "file", "files").into(),
+            fraction: (bin.size as f64 / folder_total) as f32,
+            color,
+        };
+        let rows: Vec<TypeRow> = match ui.get_types_view() {
+            1 => ages
+                .iter()
+                .enumerate()
+                .map(|(i, bin)| {
+                    // Newer is bluer, older greyer.
+                    let fade = (i as f32 / ages.len().max(1) as f32).min(1.0);
+                    bin_row(
+                        AGE_KEY,
+                        i,
+                        bin,
+                        hsl(210.0, 0.65 * (1.0 - fade) + 0.05, 0.55),
+                    )
+                })
+                .collect(),
+            2 => sizes
+                .iter()
+                .enumerate()
+                .map(|(i, bin)| bin_row(SIZE_KEY, i, bin, hsl(25.0 + 30.0 * i as f32, 0.7, 0.55)))
+                .collect(),
+            _ => stats
+                .iter()
+                .take(60)
+                .map(|stat| TypeRow {
+                    key: format!("{TYPE_KEY}{}", stat.extension).into(),
+                    label: if stat.extension.is_empty() {
+                        "(no extension)".into()
+                    } else {
+                        format!(".{}", stat.extension).into()
+                    },
+                    size: format_size(stat.size).into(),
+                    files: plural(stat.files, "file", "files").into(),
+                    fraction: (stat.size as f64 / folder_total) as f32,
+                    color: extension_color(&stat.extension),
+                })
+                .collect(),
+        };
+        ui.set_file_types(ModelRc::new(VecModel::from(rows)));
+        *self.bins.borrow_mut() = (ages, sizes);
     }
 
-    /// Lists the files of one type, from the file types list.
-    fn pick_type(&mut self, extension: &str) {
-        self.type_filter = Some(extension.to_string());
+    /// Lists the files of one row of the Types tab: a type, an age or a size.
+    fn pick_group(&mut self, key: &str) {
+        let (ages, sizes) = self.bins.borrow().clone();
+        let index = |rest: &str| rest.parse::<usize>().ok();
+        self.file_filter = if let Some(ext) = key.strip_prefix(TYPE_KEY) {
+            Some(FileFilter::Type(ext.to_string()))
+        } else if let Some(i) = key.strip_prefix(AGE_KEY).and_then(index) {
+            ages.get(i).cloned().map(FileFilter::Modified)
+        } else if let Some(i) = key.strip_prefix(SIZE_KEY).and_then(index) {
+            sizes.get(i).cloned().map(FileFilter::Size)
+        } else {
+            None
+        };
         self.update_lists();
         if let Some(ui) = self.ui() {
             // Show the files: the "Largest files" tab, or "Files" on phones.
@@ -1794,8 +1900,8 @@ impl Controller {
         }
     }
 
-    fn clear_type_filter(&mut self) {
-        self.type_filter = None;
+    fn clear_file_filter(&mut self) {
+        self.file_filter = None;
         self.update_lists();
     }
 

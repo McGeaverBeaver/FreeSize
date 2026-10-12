@@ -817,65 +817,121 @@ component ChangesPane inherits VerticalLayout {
 }
 
 
-/// Size by file type. Tapping a type lists its files.
-component TypesPane inherits Rectangle {
-    in property <[TypeRow]> types;
-    callback pick(string);
+/// A row of options, one of them chosen.
+component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in-out property <int> current;
+    callback changed();
 
-    ListView {
-        for t in root.types: Rectangle {
-            height: 36px;
-            background: type-touch.has-hover ? Palette.alternate-background : transparent;
-            type-touch := TouchArea {
-                clicked => {
-                    root.pick(t.key);
+    width: choices.preferred-width;
+    height: 30px;
+    border-radius: 15px;
+    background: Palette.background.transparentize(8%);
+    border-width: 1px;
+    border-color: Palette.border;
+    choices := HorizontalLayout {
+        padding: 3px;
+        spacing: 2px;
+        for option[i] in root.options: choice := Rectangle {
+            property <bool> on: i == root.current;
+            border-radius: 12px;
+            background: self.on ? Palette.accent-background : transparent;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                Text {
+                    text: option;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    color: choice.on ? Palette.accent-foreground : Palette.foreground;
                 }
             }
 
-            HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                spacing: 8px;
-                Rectangle {
-                    width: 12px;
+            TouchArea {
+                clicked => {
+                    root.current = i;
+                    root.changed();
+                }
+            }
+        }
+    }
+}
+
+/// Size by file type, by year changed, or by size. Tapping a row lists its
+/// files.
+component TypesPane inherits Rectangle {
+    in property <[TypeRow]> types;
+    in-out property <int> view;
+    callback pick(string);
+    callback view-changed();
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 6px;
+            alignment: start;
+            Segmented {
+                options: ["Types", "Age", "Size"];
+                current <=> root.view;
+                changed => {
+                    root.view-changed();
+                }
+            }
+        }
+        ListView {
+            for t in root.types: Rectangle {
+                height: 36px;
+                background: type-touch.has-hover ? Palette.alternate-background : transparent;
+                type-touch := TouchArea {
+                    clicked => {
+                        root.pick(t.key);
+                    }
+                }
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
                     Rectangle {
                         width: 12px;
-                        height: 12px;
-                        border-radius: 3px;
-                        background: t.color;
+                        Rectangle {
+                            width: 12px;
+                            height: 12px;
+                            border-radius: 3px;
+                            background: t.color;
+                        }
                     }
-                }
 
-                Text {
-                    text: t.label;
-                    width: 110px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-
-                Text {
-                    text: t.files;
-                    horizontal-stretch: 1;
-                    vertical-alignment: center;
-                    color: Theme.dim;
-                    font-size: 12px;
-                    overflow: elide;
-                }
-
-                Rectangle {
-                    width: 80px;
-                    SizeBar {
-                        width: 100%;
-                        fraction: t.fraction;
-                        fill: t.color;
+                    Text {
+                        text: t.label;
+                        width: 110px;
+                        vertical-alignment: center;
+                        overflow: elide;
                     }
-                }
 
-                Text {
-                    text: t.size;
-                    width: 70px;
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
+                    Text {
+                        text: t.files;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        color: Theme.dim;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+
+                    Rectangle {
+                        width: 80px;
+                        SizeBar {
+                            width: 100%;
+                            fraction: t.fraction;
+                            fill: t.color;
+                        }
+                    }
+
+                    Text {
+                        text: t.size;
+                        width: 70px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -1417,6 +1473,8 @@ export component AppWindow inherits Window {
     in-out property <bool> bubbles-view;
     in property <[BubbleItem]> app-bubbles;
     in property <string> files-filter;
+    /// What the Types tab shows: 0 types, 1 ages, 2 sizes.
+    in-out property <int> types-view;
     in property <[string]> change-scans;
     in-out property <int> change-scan-index;
     in property <[CleanRow]> change-rows;
@@ -1470,6 +1528,7 @@ export component AppWindow inherits Window {
     callback app-bubble(string);
     callback type-picked(string);
     callback clear-files-filter();
+    callback types-view-changed();
     callback compare-scan(int);
     callback app-bubbles-resized(length, length);
     callback size-mode-changed();
@@ -1727,8 +1786,12 @@ export component AppWindow inherits Window {
                             title: "File types";
                             TypesPane {
                                 types: root.file-types;
+                                view <=> root.types-view;
                                 pick(key) => {
                                     root.type-picked(key);
+                                }
+                                view-changed => {
+                                    root.types-view-changed();
                                 }
                             }
                         }
@@ -1836,8 +1899,12 @@ export component AppWindow inherits Window {
                     title: "Types";
                     TypesPane {
                         types: root.file-types;
+                        view <=> root.types-view;
                         pick(key) => {
                             root.type-picked(key);
+                        }
+                        view-changed => {
+                            root.types-view-changed();
                         }
                     }
                 }

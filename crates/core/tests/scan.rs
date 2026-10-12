@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use disktree_core::{
-    NodeId, NodeKind, ScanOptions, ScanProgress, SizeMode, SortKey, Tree, extension_stats, flags,
-    has_extension, largest_files, largest_files_where, scan,
+    NodeId, NodeKind, ScanOptions, ScanProgress, SizeMode, SortKey, Tree, age_bins,
+    extension_stats, flags, has_extension, largest_files, largest_files_where, scan, size_bins,
 };
 
 fn write(path: &Path, len: usize) {
@@ -113,6 +113,41 @@ fn largest_files_and_extensions() {
         has_extension(&tree, id, "")
     });
     assert_eq!(named(none), [".hidden"]);
+}
+
+#[test]
+fn files_by_age_and_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = |name: &str, bytes: usize, modified: i64| {
+        let path = dir.path().join(name);
+        write(&path, bytes);
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(modified as u64);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    };
+    // 2026-06-01, 2024-03-01, 2001-01-01
+    file("new.bin", 2 * 1024 * 1024, 1_780_272_000);
+    file("mid.bin", 500, 1_709_251_200);
+    file("old.bin", 700, 978_307_200);
+    let tree = scan_dir(dir.path());
+    let now = 1_791_763_200; // 2026-10-12
+
+    let ages = age_bins(&tree, tree.root(), SizeMode::Logical, now);
+    let labels: Vec<(&str, u64)> = ages.iter().map(|b| (b.label.as_str(), b.files)).collect();
+    assert_eq!(labels, [("2026", 1), ("2024", 1), ("Before 2017", 1)]);
+    let old = largest_files_where(&tree, tree.root(), SizeMode::Logical, 10, |id| {
+        let m = tree.node(id).modified;
+        ages[2].from <= m && m < ages[2].to
+    });
+    assert_eq!(tree.name(old[0]), "old.bin");
+
+    let sizes = size_bins(&tree, tree.root(), SizeMode::Logical);
+    let labels: Vec<(&str, u64)> = sizes.iter().map(|b| (b.label.as_str(), b.files)).collect();
+    assert_eq!(labels, [("1 to 10 MB", 1), ("Under 1 MB", 2)]);
 }
 
 #[test]
