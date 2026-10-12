@@ -32,6 +32,37 @@ pub fn browse(_start: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Saves an exported report or scan file: through a save dialog on
+/// desktops, into `Download/DiskTree` on phones. `None` when cancelled.
+pub fn save_export(name: &str, bytes: &[u8]) -> Result<Option<PathBuf>, String> {
+    #[cfg(not(target_os = "android"))]
+    let path = {
+        let extension = Path::new(name)
+            .extension()
+            .map(|e| e.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match rfd::FileDialog::new()
+            .set_title("Export")
+            .set_file_name(name)
+            .add_filter(extension.to_uppercase(), &[extension.as_str()])
+            .save_file()
+        {
+            Some(path) => path,
+            None => return Ok(None),
+        }
+    };
+    #[cfg(target_os = "android")]
+    let path = {
+        let dir = crate::locations::default_path()
+            .join("Download")
+            .join("DiskTree");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        dir.join(name)
+    };
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some(path))
+}
+
 /// Asks where to move things to.
 #[cfg(not(target_os = "android"))]
 pub fn pick_destination() -> Option<PathBuf> {

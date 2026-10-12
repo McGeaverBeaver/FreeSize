@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use disktree_core::{
-    DuplicateProgress, NodeId, ScanOptions, ScanProgress, SizeMode, SortKey, Tree,
-    duplicate_candidates, extension_stats, flags, format_count, format_size, largest_files,
+    DuplicateProgress, NodeId, ScanOptions, ScanProgress, ScanResult, SizeMode, SortKey, Tree,
+    duplicate_candidates, extension_stats, flags, format_count, format_size, largest_files, ncdu,
     old_files, rebuildable, scan,
 };
 
@@ -55,6 +55,19 @@ struct Args {
     /// takes a while. Nothing is deleted.
     #[arg(long)]
     duplicates: bool,
+
+    /// Print the results as JSON instead of text.
+    #[arg(long)]
+    json: bool,
+
+    /// Save the scan to a file in ncdu's JSON format, to open later in
+    /// DiskTree or ncdu.
+    #[arg(long, value_name = "FILE")]
+    export: Option<PathBuf>,
+
+    /// Open a saved scan (DiskTree's or `ncdu -o`'s) instead of scanning.
+    #[arg(long, value_name = "FILE")]
+    import: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -67,8 +80,27 @@ fn main() -> ExitCode {
     let show_progress = std::io::stderr().is_terminal();
 
     let result = std::thread::scope(|s| {
-        let handle = s.spawn(|| scan(&args.path, &options, &progress));
+        let handle = s.spawn(|| match &args.import {
+            Some(file) => {
+                let started = std::time::Instant::now();
+                std::fs::File::open(file)
+                    .and_then(|f| ncdu::import(std::io::BufReader::new(f)))
+                    .map(|tree| ScanResult {
+                        tree,
+                        elapsed: started.elapsed(),
+                        errors: 0,
+                        cancelled: false,
+                    })
+            }
+            None => scan(&args.path, &options, &progress),
+        });
         while show_progress && !handle.is_finished() {
+            if args.import.is_some() {
+                eprint!("\r\x1b[2KOpening the saved scan…");
+                let _ = std::io::stderr().flush();
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
             let snap = progress.snapshot();
             eprint!(
                 "\r\x1b[2KScanning… {} files, {} folders, {}",
@@ -88,10 +120,23 @@ fn main() -> ExitCode {
     let result = match result {
         Ok(result) => result,
         Err(err) => {
-            eprintln!("disktree: {}: {err}", args.path.display());
+            let source = args.import.as_ref().unwrap_or(&args.path);
+            eprintln!("disktree: {}: {err}", source.display());
             return ExitCode::FAILURE;
         }
     };
+
+    if let Some(file) = &args.export {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let written = std::fs::File::create(file)
+            .and_then(|f| ncdu::export(&result.tree, now, std::io::BufWriter::new(f)));
+        if let Err(err) = written {
+            eprintln!("disktree: {}: {err}", file.display());
+            return ExitCode::FAILURE;
+        }
+    }
 
     let tree = &result.tree;
     let mode = if args.apparent {
@@ -99,11 +144,27 @@ fn main() -> ExitCode {
     } else {
         SizeMode::Allocated
     };
+    if args.json {
+        let report = json_report(tree, mode, &args, &result, show_progress);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
+        return if result.cancelled {
+            ExitCode::FAILURE
+        } else {
+            ExitCode::SUCCESS
+        };
+    }
     let root = tree.node(tree.root());
+    let scanned = match &args.import {
+        Some(file) => format!("Saved scan ({})", file.display()),
+        None => format!("Scanned in {:.2}s", result.elapsed.as_secs_f64()),
+    };
     println!(
-        "Scanned {} in {:.2}s: {} files, {} folders{}",
+        "{}: {}: {} files, {} folders{}",
         tree.name(tree.root()),
-        result.elapsed.as_secs_f64(),
+        scanned,
         format_count(u64::from(root.files)),
         format_count(u64::from(root.dirs)),
         if result.errors > 0 {
@@ -173,6 +234,82 @@ fn main() -> ExitCode {
 }
 
 const MB: u64 = 1024 * 1024;
+
+/// Everything the text output shows, as JSON.
+fn json_report(
+    tree: &Tree,
+    mode: SizeMode,
+    args: &Args,
+    result: &ScanResult,
+    show_progress: bool,
+) -> serde_json::Value {
+    use serde_json::json;
+    let root = tree.node(tree.root());
+    let entry = |id: NodeId| {
+        let node = tree.node(id);
+        json!({
+            "name": tree.name(id),
+            "kind": if node.is_dir() { "folder" } else { "file" },
+            "size": node.size,
+            "size_on_disk": node.allocated,
+            "files": node.files,
+        })
+    };
+    let mut report = json!({
+        "path": tree.path(tree.root()),
+        "size": root.size,
+        "size_on_disk": root.allocated,
+        "files": root.files,
+        "folders": root.dirs,
+        "unreadable": result.errors,
+        "seconds": result.elapsed.as_secs_f64(),
+        "complete": !result.cancelled,
+        "contents": tree
+            .children_sorted(tree.root(), SortKey::Size(mode))
+            .into_iter()
+            .map(entry)
+            .collect::<Vec<_>>(),
+        "largest_files": largest_files(tree, tree.root(), mode, args.top)
+            .into_iter()
+            .map(|id| json!({"path": tree.path(id), "size": tree.node(id).size_in(mode)}))
+            .collect::<Vec<_>>(),
+        "types": extension_stats(tree, tree.root(), mode)
+            .into_iter()
+            .take(args.types)
+            .map(|s| json!({"extension": s.extension, "size": s.size, "files": s.files}))
+            .collect::<Vec<_>>(),
+    });
+    if args.cleanup {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        report["rebuildable"] = rebuildable(tree, tree.root())
+            .into_iter()
+            .map(|r| {
+                json!({"path": tree.path(r.node), "what": r.what, "how": r.how,
+                       "size": tree.node(r.node).size_in(mode)})
+            })
+            .collect();
+        report["old_files"] = old_files(tree, tree.root(), mode, now - YEAR, 20)
+            .into_iter()
+            .map(|id| {
+                json!({"path": tree.path(id), "size": tree.node(id).size_in(mode),
+                             "modified": tree.node(id).modified})
+            })
+            .collect();
+    }
+    if args.duplicates {
+        report["duplicates"] = find_groups(tree, show_progress)
+            .into_iter()
+            .map(|g| {
+                json!({"size": g.size,
+                       "paths": g.nodes.iter().map(|&id| tree.path(id)).collect::<Vec<_>>()})
+            })
+            .collect();
+    }
+    report
+}
+
 const YEAR: i64 = 365 * 24 * 60 * 60;
 
 fn print_cleanup(tree: &Tree, mode: SizeMode) {
@@ -209,9 +346,14 @@ fn print_cleanup(tree: &Tree, mode: SizeMode) {
 }
 
 fn print_duplicates(tree: &Tree, show_progress: bool) {
+    let groups = find_groups(tree, show_progress);
+    print_groups(tree, &groups);
+}
+
+fn find_groups(tree: &Tree, show_progress: bool) -> Vec<disktree_core::DuplicateGroup> {
     let candidates = duplicate_candidates(tree, tree.root(), MB);
     let progress = DuplicateProgress::new();
-    let groups = std::thread::scope(|s| {
+    std::thread::scope(|s| {
         let handle = s.spawn(|| candidates.find(&progress));
         while show_progress && !handle.is_finished() {
             eprint!(
@@ -226,14 +368,18 @@ fn print_duplicates(tree: &Tree, show_progress: bool) {
             eprint!("\r\x1b[2K");
         }
         handle.join().expect("duplicate finder panicked")
-    });
+    })
+}
+
+fn print_groups(tree: &Tree, groups: &[disktree_core::DuplicateGroup]) {
     let wasted: u64 = groups.iter().map(|g| g.wasted()).sum();
     println!(
-        "\nDuplicate files: {} sets, {} in extra copies",
+        "\nDuplicate files: {} set{}, {} in extra copies",
         format_count(groups.len() as u64),
+        if groups.len() == 1 { "" } else { "s" },
         format_size(wasted)
     );
-    for group in &groups {
+    for group in groups {
         println!(
             "  {} copies of {}",
             group.nodes.len(),

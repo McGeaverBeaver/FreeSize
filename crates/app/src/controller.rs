@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use disktree_core::bubbles::{self, BubbleOptions};
+use disktree_core::ncdu;
 use disktree_core::snapshot::{self, Snapshot};
 use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
@@ -33,12 +34,25 @@ use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
 use crate::moves;
 use crate::owners::Owners;
+use crate::report;
 use crate::rows::{self, TreeRows};
 use crate::scans;
 use crate::{
     AppWindow, BasketRow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction,
     TypeRow, actions, locations,
 };
+
+/// The Export sheet's buttons.
+const EXPORT_HTML: &str = "export-html";
+const EXPORT_CSV: &str = "export-csv";
+const EXPORT_JSON: &str = "export-json";
+
+/// A saved scan to open rather than a folder to scan.
+fn is_scan_file(path: &std::path::Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+        && path.is_file()
+}
 
 /// Icons beyond the kinds of content (see `Icons.of` in the UI).
 const ICON_REBUILD: i32 = 12;
@@ -99,6 +113,8 @@ struct Scanned {
     /// For a whole drive: its used space and what the system says about
     /// space outside the files.
     hidden: Option<Hidden>,
+    /// Opened from a scan file rather than scanned here.
+    imported: bool,
 }
 
 struct RunningDelete {
@@ -199,6 +215,9 @@ pub struct Controller {
     put_back_job: Option<Slot<(usize, Vec<String>)>>,
     /// Folders offered as move destinations on phones.
     move_targets: Vec<PathBuf>,
+    /// The tree came from a scan file: its files may not be on this device,
+    /// so nothing can be opened, deleted or moved.
+    imported: bool,
     change_rows: Rc<VecModel<CleanRow>>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
@@ -283,6 +302,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             last_move: moves::last(),
             put_back_job: None,
             move_targets: Vec::new(),
+            imported: false,
             change_rows: Rc::new(VecModel::default()),
             summary: None,
             scan: None,
@@ -360,8 +380,28 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_open_app, weak, |c, package| c
         .open_app(package.as_str()));
     on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
-    on!(ui, on_sheet_action, weak, |c, id| c
-        .sheet_action(id.as_str()));
+    // Export buttons save through a modal dialog, so they run without
+    // holding the controller; other sheet buttons go to the controller.
+    let sheet_weak = weak.clone();
+    ui.on_sheet_action(move |id| {
+        let id = id.to_string();
+        if [EXPORT_HTML, EXPORT_CSV, EXPORT_JSON].contains(&id.as_str()) {
+            let Some(rc) = sheet_weak.upgrade() else {
+                return;
+            };
+            let prepared = rc
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut c| c.prepare_export(&id));
+            if let Some((name, bytes)) = prepared {
+                let saved = actions::save_export(&name, &bytes);
+                Controller::run(&sheet_weak, move |c| c.finish_export(saved));
+            }
+            return;
+        }
+        Controller::run(&sheet_weak, move |c| c.sheet_action(&id));
+    });
+    on!(ui, on_export, weak, |c| c.open_export());
     on!(ui, on_cleanup_action, weak, |c| c.cleanup_action());
 
     // Folder pickers are modal, so they run without holding the controller.
@@ -683,6 +723,29 @@ impl Controller {
             std::thread::Builder::new()
                 .name("disktree-scan".into())
                 .spawn(move || {
+                    // A saved scan file opens instead of being scanned.
+                    if is_scan_file(&root) {
+                        let started = std::time::Instant::now();
+                        let opened = std::fs::File::open(&root)
+                            .and_then(|f| ncdu::import(std::io::BufReader::new(f)))
+                            .map(|tree| {
+                                let kinds = kinds(&tree);
+                                Scanned {
+                                    result: ScanResult {
+                                        tree,
+                                        elapsed: started.elapsed(),
+                                        errors: 0,
+                                        cancelled: false,
+                                    },
+                                    kinds,
+                                    earlier: Vec::new(),
+                                    hidden: None,
+                                    imported: true,
+                                }
+                            });
+                        put(&result, opened);
+                        return;
+                    }
                     // Kinds take a pass over the whole tree; do it here
                     // rather than on the UI thread.
                     let scanned = scan(&root, &ScanOptions::default(), &progress).map(|r| {
@@ -707,6 +770,7 @@ impl Controller {
                             kinds,
                             earlier,
                             hidden,
+                            imported: false,
                         }
                     });
                     put(&result, scanned)
@@ -768,6 +832,7 @@ impl Controller {
                 self.kinds = scanned.kinds;
                 self.earlier = scanned.earlier;
                 self.hidden = scanned.hidden;
+                self.imported = scanned.imported;
                 self.compare = self.earlier.len().checked_sub(1);
                 scanned.result
             }
@@ -1069,6 +1134,12 @@ impl Controller {
                 home::app_sheet(app, report, apps::abilities()),
             )
         };
+        self.show_sheet(content, Some(target));
+    }
+
+    /// Shows the sheet of facts and buttons; `target` is what its buttons
+    /// act on.
+    fn show_sheet(&mut self, content: home::Sheet, target: Option<SheetTarget>) {
         let Some(ui) = self.ui() else {
             return;
         };
@@ -1088,7 +1159,106 @@ impl Controller {
             .collect();
         ui.set_sheet_actions(ModelRc::new(VecModel::from(buttons)));
         ui.set_sheet_open(true);
-        self.sheet = Some(target);
+        self.sheet = target;
+    }
+
+    // ----- Export -----------------------------------------------------------
+
+    fn open_export(&mut self) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        let name = if self.focus == tree.root() {
+            self.root_label(tree)
+        } else {
+            tree.name(self.focus).into_owned()
+        };
+        let content = home::Sheet {
+            title: "Export".into(),
+            subtitle: format!(
+                "{name} · {}",
+                format_size(tree.node(self.focus).size_in(self.mode))
+            ),
+            facts: vec![
+                "Report: a page with the biggest folders and files, file types, ages, \
+                 clean-up suggestions and changes, to read or share."
+                    .into(),
+                "Spreadsheet: the biggest folders and files as a CSV table.".into(),
+                "Scan file: the whole scan in ncdu's JSON format. Open it again in DiskTree \
+                 by typing its path and pressing Scan, or with `ncdu -f`."
+                    .into(),
+            ],
+            note: if cfg!(target_os = "android") {
+                "Files are saved to Download/DiskTree.".into()
+            } else {
+                String::new()
+            },
+            actions: vec![
+                (EXPORT_HTML, "Report (HTML)".into(), true),
+                (EXPORT_CSV, "Spreadsheet (CSV)".into(), false),
+                (EXPORT_JSON, "Scan file (JSON)".into(), false),
+                (sheet::CLOSE, "Close".into(), false),
+            ],
+        };
+        self.show_sheet(content, None);
+    }
+
+    /// The file for an export button: its suggested name and contents.
+    fn prepare_export(&mut self, kind: &str) -> Option<(String, Vec<u8>)> {
+        self.close_sheet();
+        let tree = self.tree.as_ref()?;
+        let now = apps::now() as i64;
+        let label = if self.focus == tree.root() {
+            self.root_label(tree)
+        } else {
+            tree.name(self.focus).into_owned()
+        };
+        let stem: String = label
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+        let name = |ext: &str| format!("{stem}-{}.{ext}", report::iso_date(now));
+        match kind {
+            EXPORT_HTML => {
+                let cleanup: Vec<CleanRow> = self.cleanup_rows.iter().collect();
+                let changes: Vec<CleanRow> = self.change_rows.iter().collect();
+                let extras = report::Extras {
+                    title: &label,
+                    now,
+                    cleanup: &cleanup,
+                    changes: &changes,
+                };
+                let page = report::html(tree, self.focus, self.mode, &extras);
+                Some((name("html"), page.into_bytes()))
+            }
+            EXPORT_CSV => Some((name("csv"), report::csv(tree, self.focus).into_bytes())),
+            EXPORT_JSON => {
+                let mut bytes = Vec::new();
+                ncdu::export(tree, now, &mut bytes).ok()?;
+                Some((name("json"), bytes))
+            }
+            _ => None,
+        }
+    }
+
+    fn finish_export(&mut self, saved: Result<Option<PathBuf>, String>) {
+        match saved {
+            Ok(Some(path)) => {
+                self.set_status(&format!("Saved {}", path.display()));
+                // On a phone, show the report right away.
+                if cfg!(target_os = "android") && path.extension().is_some_and(|e| e == "html") {
+                    match actions::open(&path) {
+                        Ok(actions::Open::TryAgain) => {
+                            self.pending_open = Some((path, 0));
+                            self.ensure_ticking();
+                        }
+                        Ok(actions::Open::Done) | Err(_) => {}
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(err) => self.set_status(&format!("Could not save: {err}")),
+        }
     }
 
     fn close_sheet(&mut self) {
@@ -1277,11 +1447,15 @@ impl Controller {
         };
         let root = tree.node(tree.root());
         let mut status = format!(
-            "{} in {} and {} · scanned in {:.1}s",
+            "{} in {} and {} · {}",
             format_size(root.size_in(self.mode)),
             plural(u64::from(root.files), "file", "files"),
             plural(u64::from(root.dirs), "folder", "folders"),
-            summary.seconds
+            if self.imported {
+                "a saved scan, so nothing can be opened or deleted".to_string()
+            } else {
+                format!("scanned in {:.1}s", summary.seconds)
+            }
         );
         if summary.errors > 0 {
             status.push_str(&format!(
@@ -1427,9 +1601,9 @@ impl Controller {
         ui.set_selected_id(id as i32);
         ui.set_selected_title(title.into());
         ui.set_selected_detail(parts.join(" · ").into());
-        ui.set_can_delete(id != tree.root() && self.deletion.is_none());
+        ui.set_can_delete(id != tree.root() && self.deletion.is_none() && !self.imported);
         // Android has no file manager to open a folder in.
-        ui.set_can_open(!(cfg!(target_os = "android") && node.is_dir()));
+        ui.set_can_open(!self.imported && !(cfg!(target_os = "android") && node.is_dir()));
         ui.set_in_basket(self.basket.contains(&id));
         ui.set_can_go_up(self.focus != tree.root());
     }
@@ -2028,7 +2202,7 @@ impl Controller {
             return;
         };
         let id = self.selected;
-        if id == tree.root() {
+        if id == tree.root() || self.imported {
             return;
         }
         if let Some(pos) = self.basket.iter().position(|&b| b == id) {

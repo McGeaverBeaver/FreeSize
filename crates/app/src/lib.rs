@@ -19,6 +19,7 @@ mod insights;
 mod locations;
 mod moves;
 mod owners;
+mod report;
 mod rows;
 mod scans;
 #[cfg(windows)]

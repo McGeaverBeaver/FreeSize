@@ -1546,6 +1546,7 @@ export component AppWindow inherits Window {
     callback type-picked(string);
     callback clear-files-filter();
     callback collect();
+    callback export();
     callback basket-review();
     callback basket-remove(int);
     callback basket-delete-all();
@@ -1693,6 +1694,12 @@ export component AppWindow inherits Window {
                     font-size: 12px;
                 }
 
+                if root.has-tree: Button {
+                    text: "Export";
+                    clicked => {
+                        root.export();
+                    }
+                }
                 if root.has-tree: ComboBox {
                     width: 150px;
                     model: ["Size on disk", "File size"];
