@@ -334,8 +334,10 @@ if [ -n "$image" ]; then
     labels=(--label "org.opencontainers.image.version=$version"
         --label "org.opencontainers.image.revision=$commit")
     if [ -n "$repo" ]; then
-        # Links the package to the repository on GitHub.
-        labels+=(--label "org.opencontainers.image.source=https://github.com/$repo")
+        # Links the package to the repository on GitHub, which reads it from
+        # the index of an image for several platforms, not their labels.
+        labels+=(--label "org.opencontainers.image.source=https://github.com/$repo"
+            --annotation "index:org.opencontainers.image.source=https://github.com/$repo")
     fi
     output=(--output type=cacheonly)
     if $publish; then
