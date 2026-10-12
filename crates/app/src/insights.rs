@@ -9,6 +9,8 @@ const DAY: u64 = 24 * 60 * 60;
 pub const UNUSED_AFTER: u64 = 90 * DAY;
 /// Apps installed more recently than this aren't called "never opened" yet.
 const GRACE: u64 = 14 * DAY;
+/// Smaller caches aren't worth clearing by hand.
+const CACHE_WORTH_LISTING: u64 = 10 * 1024 * 1024;
 
 /// Where an app was installed from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,15 +96,21 @@ pub enum View {
     Unused,
     NeverOpened,
     NotFromStore,
+    /// Apps by the files they saved to shared storage.
+    Media,
+    /// Apps by cache size.
+    Cache,
     Removed,
 }
 
 impl View {
-    pub const ALL: [View; 5] = [
+    pub const ALL: [View; 7] = [
         View::All,
         View::Unused,
         View::NeverOpened,
         View::NotFromStore,
+        View::Media,
+        View::Cache,
         View::Removed,
     ];
 
@@ -112,6 +120,8 @@ impl View {
             View::Unused => "unused",
             View::NeverOpened => "never-opened",
             View::NotFromStore => "not-from-store",
+            View::Media => "media",
+            View::Cache => "cache",
             View::Removed => "removed",
         }
     }
@@ -126,6 +136,8 @@ impl View {
             View::Unused => "Not opened in 3 months",
             View::NeverOpened => "Never opened",
             View::NotFromStore => "Not from an app store",
+            View::Media => "Files saved by apps",
+            View::Cache => "Biggest caches",
             View::Removed => "Removed apps",
         }
     }
@@ -152,7 +164,9 @@ impl View {
                         .is_none_or(|t| now.saturating_sub(t) >= GRACE)
             }
             View::NotFromStore => !app.own && !Source::of(app).reinstallable() && !app.system,
-            View::Removed => false,
+            View::Cache => app.cache_bytes >= CACHE_WORTH_LISTING,
+            // Listed from the report's media and history, not per app.
+            View::Media | View::Removed => false,
         }
     }
 }

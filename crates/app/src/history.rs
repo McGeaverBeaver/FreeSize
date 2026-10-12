@@ -12,7 +12,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::apps::{AppReport, AppUsage};
+use crate::apps::{AppReport, AppUsage, Breakdown};
+
+const DAY: u64 = 24 * 60 * 60;
+/// Daily size samples kept per app, about four months.
+const APP_SAMPLES: usize = 120;
+/// Daily samples of the whole storage, a year.
+const STORAGE_SAMPLES: usize = 365;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,6 +35,9 @@ pub struct Entry {
     pub removed_at: Option<u64>,
     /// Its size when last seen.
     pub size: u64,
+    /// `[day, bytes]` pairs, one per day DiskTree measured the app; days
+    /// count from 1970. Oldest first.
+    pub sizes: Vec<[u64; 2]>,
 }
 
 impl Entry {
@@ -45,10 +54,38 @@ impl Entry {
     }
 }
 
+/// How the storage divided up on one day.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageSample {
+    pub day: u64,
+    pub total: u64,
+    pub free: u64,
+    pub apps: u64,
+    pub files: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct History {
     #[serde(default)]
     pub apps: Vec<Entry>,
+    /// Oldest first.
+    #[serde(default)]
+    pub storage: Vec<StorageSample>,
+}
+
+/// Adds today's sample, replacing an earlier one from the same day, and
+/// drops the oldest beyond `keep`.
+fn add_sample<T>(samples: &mut Vec<T>, sample: T, keep: usize, day_of: impl Fn(&T) -> u64) {
+    if samples
+        .last()
+        .is_some_and(|last| day_of(last) == day_of(&sample))
+    {
+        samples.pop();
+    }
+    samples.push(sample);
+    if samples.len() > keep {
+        samples.drain(..samples.len() - keep);
+    }
 }
 
 impl History {
@@ -80,6 +117,12 @@ impl History {
             entry.last_seen = now;
             entry.removed_at = None;
             entry.size = app.size();
+            add_sample(
+                &mut entry.sizes,
+                [now / DAY, app.size()],
+                APP_SAMPLES,
+                |s| s[0],
+            );
         }
         // Judge removal by the full package list, not by the measured apps:
         // an app whose stats couldn't be read is still installed.
@@ -90,6 +133,18 @@ impl History {
                 entry.removed_at = Some(now);
             }
         }
+    }
+
+    /// Records how the storage divides up today.
+    pub fn record_storage(&mut self, now: u64, breakdown: Breakdown) {
+        let sample = StorageSample {
+            day: now / DAY,
+            total: breakdown.total,
+            free: breakdown.free,
+            apps: breakdown.apps,
+            files: breakdown.files,
+        };
+        add_sample(&mut self.storage, sample, STORAGE_SAMPLES, |s| s.day);
     }
 
     /// Apps that are no longer installed, most recently removed first.
@@ -108,8 +163,12 @@ impl History {
         self.apps.retain(|entry| entry.package != package);
     }
 
-    /// Combines two copies, keeping the most recently updated entry of each app.
+    /// Combines two copies, keeping the most recently updated entry of each
+    /// app, and the longer storage record.
     fn merge(mut self, other: History) -> History {
+        if other.storage.len() > self.storage.len() {
+            self.storage = other.storage;
+        }
         for entry in other.apps {
             match self.apps.iter_mut().find(|e| e.package == entry.package) {
                 Some(existing) if existing.last_seen >= entry.last_seen => {}
@@ -132,7 +191,8 @@ pub fn load(paths: &[PathBuf]) -> History {
 
 /// Writes every copy it can. Fails only if none could be written.
 pub fn save(history: &History, paths: &[PathBuf]) -> Result<(), String> {
-    let json = serde_json::to_vec_pretty(history).map_err(|e| e.to_string())?;
+    // Compact: with size samples the pretty form is several times bigger.
+    let json = serde_json::to_vec(history).map_err(|e| e.to_string())?;
     let mut last_error = None;
     let mut saved = false;
     for path in paths {
@@ -200,6 +260,41 @@ mod tests {
         history.record(&report(300, vec![app("a", false), app("b", false)]));
         assert!(history.removed().is_empty());
         assert_eq!(history.apps.len(), 2);
+    }
+
+    #[test]
+    fn keeps_one_size_sample_per_day() {
+        let mut history = History::default();
+        let mut app = app("a", false);
+        history.record(&report(DAY * 10, vec![app.clone()]));
+        app.data_bytes = 50;
+        history.record(&report(DAY * 10 + 3600, vec![app.clone()]));
+        history.record(&report(DAY * 11, vec![app.clone()]));
+        assert_eq!(history.apps[0].sizes, [[10, 60], [11, 60]]);
+        for day in 12..(12 + APP_SAMPLES as u64) {
+            history.record(&report(DAY * day, vec![app.clone()]));
+        }
+        assert_eq!(history.apps[0].sizes.len(), APP_SAMPLES);
+        assert_eq!(history.apps[0].sizes[0][0], 12);
+    }
+
+    #[test]
+    fn records_storage_per_day() {
+        let mut history = History::default();
+        let breakdown = |free| Breakdown {
+            total: 100,
+            free,
+            apps: 50,
+            cache: 0,
+            files: 10,
+            system: 40 - free,
+            outside: 0,
+        };
+        history.record_storage(DAY * 5, breakdown(20));
+        history.record_storage(DAY * 5 + 60, breakdown(15));
+        history.record_storage(DAY * 6, breakdown(10));
+        let free: Vec<_> = history.storage.iter().map(|s| (s.day, s.free)).collect();
+        assert_eq!(free, [(5, 15), (6, 10)]);
     }
 
     #[test]

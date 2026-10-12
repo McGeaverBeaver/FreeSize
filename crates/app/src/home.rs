@@ -4,7 +4,10 @@
 
 use disktree_core::{DiskSpace, disk_space, format_size};
 
+use std::path::Path;
+
 use crate::apps::{Abilities, AppReport, AppUsage};
+use crate::cleanup::{Junk, JunkKind, MediaUse, SAVED_APKS};
 use crate::history::Entry;
 use crate::insights::{self, Source, View, ago, date, duration};
 use crate::{HomeRow, locations};
@@ -20,12 +23,20 @@ pub const VIEW_PREFIX: &str = "view:";
 /// Prefix of the keys of removed apps' rows; installed apps use the bare
 /// package name.
 pub const REMOVED_PREFIX: &str = "removed:";
+/// Prefix of the action ids that delete a kind of junk (see `JunkKind::id`).
+pub const CLEAN_PREFIX: &str = "clean:";
+
+/// Junk and app media smaller than this isn't worth a row.
+const WORTH_SHOWING: u64 = 1024 * 1024;
+/// Media from this size on is mentioned in an app's tags.
+const MEDIA_TAG: u64 = 100 * 1024 * 1024;
 
 /// Action ids of the app sheet's buttons.
 pub mod sheet {
     pub const UNINSTALL: &str = "uninstall";
     pub const ARCHIVE: &str = "archive";
     pub const SAVE_APK: &str = "save-apk";
+    pub const BROWSE: &str = "browse";
     pub const STORE: &str = "store";
     pub const SEARCH_STORE: &str = "search-store";
     pub const APP_INFO: &str = "app-info";
@@ -66,6 +77,8 @@ pub struct Options {
     pub refreshing: bool,
     pub storage_access: bool,
     pub abilities: Abilities,
+    /// What Android's clear-cache dialog freed the last time it was used.
+    pub cache_freed: Option<u64>,
 }
 
 pub fn rows(apps: &AppsState, options: Options) -> Vec<HomeRow> {
@@ -115,7 +128,7 @@ pub fn rows(apps: &AppsState, options: Options) -> Vec<HomeRow> {
             if let Some(space) = disk_space(&locations::default_path()) {
                 rows.push(breakdown_row(report, space));
             }
-            rows.extend(clear_cache_row(report, options));
+            rows.extend(free_up_rows(report, options));
             rows.extend(
                 View::ALL
                     .into_iter()
@@ -126,6 +139,28 @@ pub fn rows(apps: &AppsState, options: Options) -> Vec<HomeRow> {
             let before = rows.len();
             if view == View::Removed {
                 rows.extend(report.removed.iter().map(|e| removed_row(e, report.now)));
+            } else if view == View::Cache {
+                let mut apps: Vec<&AppUsage> = report
+                    .apps
+                    .iter()
+                    .filter(|app| in_view(report, app, view))
+                    .collect();
+                apps.sort_by_key(|app| std::cmp::Reverse(app.cache_bytes));
+                let largest = apps.first().map_or(1, |a| a.cache_bytes.max(1));
+                rows.extend(apps.into_iter().map(|app| {
+                    let mut row = app_row(app, largest, report);
+                    row.detail = format_size(app.cache_bytes).into();
+                    row.fraction = share(app.cache_bytes, largest);
+                    row
+                }));
+            } else if view == View::Media {
+                let media: Vec<(&MediaUse, &AppUsage)> = media_apps(report).collect();
+                let largest = media.first().map_or(1, |(m, _)| m.bytes.max(1));
+                rows.extend(
+                    media
+                        .into_iter()
+                        .map(|(media, app)| media_row(media, app, largest, report)),
+                );
             } else {
                 let apps: Vec<&AppUsage> = report
                     .apps
@@ -203,24 +238,198 @@ fn in_view(report: &AppReport, app: &AppUsage, view: View) -> bool {
     view.contains(app, report.usage_known, report.now)
 }
 
-fn clear_cache_row(report: &AppReport, options: Options) -> Option<HomeRow> {
-    const WORTH_IT: u64 = 50 * 1024 * 1024;
-    let cache: u64 = report.apps.iter().map(|a| a.cache_bytes).sum();
-    if !options.abilities.clear_cache || cache < WORTH_IT {
-        return None;
+/// The "Free up space" section: clearing every app's cache, the trash, old
+/// installers, the thumbnail cache and leftovers of removed apps.
+fn free_up_rows(report: &AppReport, options: Options) -> Vec<HomeRow> {
+    const CACHE_WORTH_IT: u64 = 50 * 1024 * 1024;
+    let title = "Free up space";
+    if !options.storage_access {
+        return vec![
+            heading(title, "", None),
+            notice(
+                "Find the trash, old installers and more",
+                "DiskTree needs All files access to look through your files for space you \
+                 can free, and to clear every app's cache.",
+                Some(("Grant access", GRANT_STORAGE)),
+            ),
+        ];
     }
-    let title = format!("Clear every app's cache: {}", format_size(cache));
-    let text = "Apps rebuild their cache as they need it, so some of it comes back. \
-                Android asks you to confirm first.";
-    Some(if options.storage_access {
-        notice(&title, text, Some(("Clear cache", CLEAR_CACHE)))
+    let mut cards = Vec::new();
+    let cache: u64 = report.apps.iter().map(|a| a.cache_bytes).sum();
+    if options.abilities.clear_cache && cache >= CACHE_WORTH_IT {
+        let text = match options.cache_freed {
+            // Android decides how much to clear and may leave most of it.
+            Some(freed) if freed < cache / 10 => format!(
+                "Android's cache cleaner only freed {} last time: it decides how much to \
+                 clear. To clear more, open the apps under Biggest caches below and use \
+                 Clear cache on their info pages.",
+                format_size(freed)
+            ),
+            Some(freed) => format!(
+                "Android cleared {} last time. Apps rebuild some cache as they run.",
+                format_size(freed)
+            ),
+            None => "Android's own cache cleaner; it asks you to confirm first and decides \
+                     how much to clear. Apps rebuild their cache as they need it."
+                .into(),
+        };
+        cards.push(notice(
+            &format!("Clear every app's cache: {}", format_size(cache)),
+            &text,
+            Some(("Clear cache", CLEAR_CACHE)),
+        ));
+    }
+    for kind in JunkKind::ALL {
+        if let Some(junk) = report
+            .junk
+            .iter()
+            .find(|j| j.kind == kind && j.bytes >= WORTH_SHOWING)
+        {
+            cards.push(junk_row(junk));
+        }
+    }
+    if cards.is_empty() {
+        return cards;
+    }
+    let mut rows = vec![heading(title, "", None)];
+    rows.extend(cards);
+    rows
+}
+
+/// "a.jpg, b.jpg and 3 more".
+fn some_names(names: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let shown = names
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    match names.len().saturating_sub(SHOWN) {
+        0 => shown,
+        more => format!("{shown} and {more} more"),
+    }
+}
+
+fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+fn junk_row(junk: &Junk) -> HomeRow {
+    let size = format_size(junk.bytes);
+    let n = junk.paths.len();
+    let (title, text, button) = match junk.kind {
+        JunkKind::Trash => (
+            format!("Empty the trash: {size}"),
+            format!(
+                "{} you deleted in the last 30 days, such as {}. They still take space until \
+                 Android removes them for good.",
+                count(n, "item", "items"),
+                some_names(&junk.names)
+            ),
+            "Empty trash",
+        ),
+        JunkKind::Installers => (
+            format!("Delete old app installers: {size}"),
+            format!(
+                "{} in Download: {}. Installers you saved with DiskTree in {SAVED_APKS} are \
+                 kept.",
+                count(n, "APK file", "APK files"),
+                some_names(&junk.names)
+            ),
+            "Delete",
+        ),
+        JunkKind::Thumbnails => (
+            format!("Clear the thumbnail cache: {size}"),
+            "Old preview images in DCIM/.thumbnails. Gallery apps make new ones when they \
+             need them."
+                .to_string(),
+            "Clear",
+        ),
+        JunkKind::Leftovers => (
+            format!("Delete leftovers of removed apps: {size}"),
+            format!(
+                "{} in Android/media from apps that are no longer installed: {}.",
+                count(n, "folder", "folders"),
+                some_names(&junk.names)
+            ),
+            "Delete",
+        ),
+    };
+    let key = format!("{CLEAN_PREFIX}{}", junk.kind.id());
+    notice(&title, &text, Some((button, &key)))
+}
+
+/// The question asked before deleting a kind of junk.
+pub fn junk_confirm(junk: &Junk) -> String {
+    let size = format_size(junk.bytes);
+    let n = junk.paths.len();
+    match junk.kind {
+        JunkKind::Trash => format!(
+            "Permanently delete {} from the trash ({size})? They can't be restored afterwards.",
+            count(n, "item", "items")
+        ),
+        JunkKind::Installers => format!(
+            "Permanently delete {} from Download ({size})?",
+            count(n, "APK file", "APK files")
+        ),
+        JunkKind::Thumbnails => {
+            format!("Delete the thumbnail cache ({size})? Gallery apps rebuild it as needed.")
+        }
+        JunkKind::Leftovers => format!(
+            "Permanently delete {} left by removed apps ({size})? Their files can't be \
+             restored.",
+            count(n, "folder", "folders")
+        ),
+    }
+}
+
+/// Media owners that are installed apps, with enough media to list.
+fn media_apps(report: &AppReport) -> impl Iterator<Item = (&MediaUse, &AppUsage)> {
+    report
+        .media
+        .iter()
+        .filter(|media| media.bytes >= WORTH_SHOWING)
+        .filter_map(|media| {
+            let app = report
+                .apps
+                .iter()
+                .find(|app| app.package == media.package)?;
+            Some((media, app))
+        })
+}
+
+/// `path` relative to the storage root when it's inside it.
+fn folder_name(path: &Path) -> String {
+    let root = locations::default_path();
+    path.strip_prefix(&root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn media_row(media: &MediaUse, app: &AppUsage, largest: u64, report: &AppReport) -> HomeRow {
+    let title = if app.label.is_empty() {
+        &app.package
     } else {
-        notice(
-            &title,
-            &format!("{text} This needs All files access."),
-            Some(("Grant access", GRANT_STORAGE)),
+        &app.label
+    };
+    HomeRow {
+        kind: APP,
+        title: title.as_str().into(),
+        subtitle: format!(
+            "{}, mostly in {}",
+            count(media.files as usize, "file", "files"),
+            folder_name(&media.folder)
         )
-    })
+        .into(),
+        tags: tags(app, report).into(),
+        warn: hard_to_get_back(app),
+        detail: format_size(media.bytes).into(),
+        fraction: share(media.bytes, largest),
+        key: app.package.as_str().into(),
+        ..Default::default()
+    }
 }
 
 /// A row that switches the list to `view`. Groups with nothing in them are
@@ -228,6 +437,14 @@ fn clear_cache_row(report: &AppReport, options: Options) -> Option<HomeRow> {
 fn group_row(report: &AppReport, view: View, selected: View) -> Option<HomeRow> {
     let (count, bytes) = if view == View::Removed {
         (report.removed.len(), 0)
+    } else if view == View::Media {
+        media_apps(report).fold((0, 0), |(n, b), (media, _)| (n + 1, b + media.bytes))
+    } else if view == View::Cache {
+        report
+            .apps
+            .iter()
+            .filter(|app| in_view(report, app, view))
+            .fold((0, 0), |(n, b), app| (n + 1, b + app.cache_bytes))
     } else {
         report
             .apps
@@ -279,6 +496,14 @@ fn explanation(view: View, options: Options) -> String {
                                can give them back. Save an app's APK before uninstalling it \
                                if you might want it again."
             .into(),
+        View::Media => "Photos, videos, downloads and other files each app saved to your \
+                        storage, biggest first. Tap an app to browse its files and delete \
+                        what you don't need."
+            .into(),
+        View::Cache => "Cache is temporary data apps rebuild when they need it, so it's \
+                        safe to clear. Tap an app, choose App info, then Storage & cache → \
+                        Clear cache."
+            .into(),
         View::Removed => "Apps DiskTree has seen that are no longer installed. Tap one to \
                           find it again."
             .into(),
@@ -300,7 +525,14 @@ fn tags(app: &AppUsage, report: &AppReport) -> String {
             None => never_opened(app, report.now).into(),
         });
     }
+    if let Some(media) = media_of(report, &app.package).filter(|m| m.bytes >= MEDIA_TAG) {
+        tags.push(format!("{} of files", format_size(media.bytes)));
+    }
     tags.join(" · ")
+}
+
+fn media_of<'a>(report: &'a AppReport, package: &str) -> Option<&'a MediaUse> {
+    report.media.iter().find(|media| media.package == package)
 }
 
 fn never_opened(app: &AppUsage, now: u64) -> &'static str {
@@ -462,9 +694,9 @@ pub fn app_sheet(app: &AppUsage, report: &AppReport, abilities: Abilities) -> Sh
         });
         facts.push(match app.screen_time {
             Some(secs) if secs > 0 => {
-                format!("On screen {} in the last 30 days.", duration(secs))
+                format!("On screen {} in the last month.", duration(secs))
             }
-            _ => "Not on screen in the last 30 days.".into(),
+            _ => "Not on screen in the last month.".into(),
         });
     }
     if source == Source::Preinstalled {
@@ -473,6 +705,23 @@ pub fn app_sheet(app: &AppUsage, report: &AppReport, abilities: Abilities) -> Sh
         facts.push(match app.installed_at {
             Some(t) => format!("Installed {} from {}.", date(t), source_phrase(app)),
             None => format!("Installed from {}.", source_phrase(app)),
+        });
+    }
+    let media = media_of(report, &app.package).filter(|m| m.bytes >= WORTH_SHOWING);
+    if let Some(media) = media {
+        facts.push(if media.in_app_data {
+            format!(
+                "{} of its data is files in {}, which you can browse and delete.",
+                format_size(media.bytes),
+                folder_name(&media.folder)
+            )
+        } else {
+            format!(
+                "Saved {} to your storage ({}), mostly in {}.",
+                format_size(media.bytes),
+                count(media.files as usize, "file", "files"),
+                folder_name(&media.folder)
+            )
         });
     }
     if let Some(category) = insights::category(app.category) {
@@ -504,6 +753,9 @@ pub fn app_sheet(app: &AppUsage, report: &AppReport, abilities: Abilities) -> Sh
     }
     if removable && abilities.archive && source == Source::Play && !app.archived {
         actions.push((sheet::ARCHIVE, "Archive (keeps its data)".into(), false));
+    }
+    if media.is_some() {
+        actions.push((sheet::BROWSE, "Browse its files".into(), false));
     }
     if source.reinstallable() {
         actions.push((sheet::STORE, format!("Open in {}", source.tag()), false));
@@ -776,6 +1028,117 @@ mod tests {
                 .any(|f| f.starts_with("Last opened 13 months ago"))
         );
         assert!(facts.iter().any(|f| f.starts_with("No app store has it")));
+    }
+
+    fn junk(kind: JunkKind, bytes: u64, names: &[&str]) -> Junk {
+        Junk {
+            kind,
+            bytes,
+            paths: names.iter().map(|n| format!("/x/{n}").into()).collect(),
+            names: names.iter().map(|n| n.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn free_up_space_lists_junk_worth_showing() {
+        const MB: u64 = 1024 * 1024;
+        let mut report = report();
+        report.junk = vec![
+            junk(
+                JunkKind::Trash,
+                5 * MB,
+                &["a.jpg", "b.jpg", "c.jpg", "d.jpg"],
+            ),
+            junk(JunkKind::Thumbnails, 1000, &["t"]),
+            junk(JunkKind::Leftovers, 2 * MB, &["Gone"]),
+        ];
+        let home = rows(&AppsState::Ready(report.clone()), options(View::All));
+        let keys: Vec<_> = of_kind(&home, NOTICE)
+            .iter()
+            .map(|r| r.key.to_string())
+            .collect();
+        assert_eq!(keys, ["clean:trash", "clean:leftovers"]);
+        let trash = home.iter().find(|r| r.key == "clean:trash").unwrap();
+        assert_eq!(trash.title, "Empty the trash: 5.00 MB");
+        assert!(trash.subtitle.contains("a.jpg, b.jpg, c.jpg and 1 more"));
+        assert_eq!(
+            junk_confirm(&report.junk[2]),
+            "Permanently delete 1 folder left by removed apps (2.00 MB)? Their files can't \
+             be restored."
+        );
+        let mut no_access = options(View::All);
+        no_access.storage_access = false;
+        let limited = rows(&AppsState::Ready(report), no_access);
+        let keys: Vec<_> = of_kind(&limited, NOTICE)
+            .iter()
+            .map(|r| r.key.to_string())
+            .collect();
+        assert_eq!(keys, [GRANT_STORAGE]);
+    }
+
+    #[test]
+    fn media_view_and_sheet() {
+        const MB: u64 = 1024 * 1024;
+        let mut report = report();
+        let root = locations::default_path();
+        report.media = vec![
+            MediaUse {
+                package: "big.app".into(),
+                bytes: 300 * MB,
+                files: 12,
+                folder: root.join("Pictures/Big"),
+                in_app_data: false,
+            },
+            MediaUse {
+                package: "not.installed".into(),
+                bytes: 900 * MB,
+                files: 1,
+                folder: root.join("Movies"),
+                in_app_data: false,
+            },
+        ];
+        let rows = rows(&AppsState::Ready(report.clone()), options(View::Media));
+        let group = rows.iter().find(|r| r.kind == GROUP && r.selected).unwrap();
+        assert_eq!(group.detail, "1 app · 300 MB");
+        let apps = of_kind(&rows, APP);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].subtitle, "12 files, mostly in Pictures/Big");
+        assert_eq!(apps[0].detail, "300 MB");
+        assert!(apps[0].tags.ends_with("300 MB of files"));
+
+        let sheet = app_sheet(&report.apps[0], &report, options(View::All).abilities);
+        assert!(
+            sheet
+                .facts
+                .iter()
+                .any(|f| f == "Saved 300 MB to your storage (12 files), mostly in Pictures/Big.")
+        );
+        assert!(sheet.actions.iter().any(|a| a.0 == sheet::BROWSE));
+    }
+
+    #[test]
+    fn biggest_caches_and_what_clearing_freed() {
+        const MB: u64 = 1024 * 1024;
+        let mut report = report();
+        report.apps[0].cache_bytes = 300 * MB;
+        report.apps[0].data_bytes = 900 * MB;
+        report.apps[1].cache_bytes = 40 * MB;
+        report.apps[1].data_bytes = 60 * MB;
+        let home = rows(&AppsState::Ready(report.clone()), options(View::Cache));
+        let group = home.iter().find(|r| r.kind == GROUP && r.selected).unwrap();
+        assert_eq!(group.detail, "2 apps · 340 MB");
+        let apps = of_kind(&home, APP);
+        assert_eq!(apps[0].detail, "300 MB");
+        assert_eq!(apps[1].detail, "40.0 MB");
+
+        let mut cleared = options(View::All);
+        cleared.cache_freed = Some(2 * MB);
+        let home = rows(&AppsState::Ready(report), cleared);
+        let card = home.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
+        assert!(
+            card.subtitle
+                .starts_with("Android's cache cleaner only freed 2.00 MB")
+        );
     }
 
     #[test]

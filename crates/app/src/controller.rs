@@ -15,6 +15,7 @@ use disktree_core::{
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::apps::{self, AppReport};
+use crate::cleanup::JunkKind;
 use crate::home::{self, AppsState, sheet};
 use crate::insights::View;
 use crate::rows::{self, TreeRows};
@@ -88,6 +89,18 @@ pub struct Controller {
     sheet: Option<SheetTarget>,
     return_watch: Option<ReturnWatch>,
     apk_job: Option<Slot<Result<String, String>>>,
+    /// Junk waiting for the user to confirm deleting it.
+    pending_cleanup: Option<JunkKind>,
+    /// Bytes freed and failures of a running cleanup.
+    cleanup_job: Option<Slot<(u64, Vec<String>)>>,
+    /// Total cache when Android's clear-cache dialog was opened, and
+    /// whether the user is back from it.
+    cache_check: Option<(u64, bool)>,
+    /// What that dialog freed the last time.
+    cache_freed: Option<u64>,
+    /// Measure the apps again when the running measurement ends, because it
+    /// started before something changed.
+    remeasure: bool,
     timer: Timer,
     ticks: u64,
 }
@@ -129,6 +142,11 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             sheet: None,
             return_watch: None,
             apk_job: None,
+            pending_cleanup: None,
+            cleanup_job: None,
+            cache_check: None,
+            cache_freed: None,
+            remeasure: false,
             timer: Timer::default(),
             ticks: 0,
         })
@@ -293,6 +311,19 @@ impl Controller {
                 Ok(report) => AppsState::Ready(report),
                 Err(err) => AppsState::Failed(err),
             };
+            if self.remeasure {
+                self.remeasure = false;
+                self.start_apps_job();
+            } else if let (Some((before, true)), Some(report)) = (self.cache_check, self.report()) {
+                let after: u64 = report.apps.iter().map(|a| a.cache_bytes).sum();
+                let freed = before.saturating_sub(after);
+                self.cache_check = None;
+                self.cache_freed = Some(freed);
+                self.set_status(&format!(
+                    "Android's cache cleaner freed {}.",
+                    format_size(freed)
+                ));
+            }
             self.refresh_home();
         }
 
@@ -313,9 +344,33 @@ impl Controller {
                     self.return_watch = None;
                 }
                 if back {
+                    if let Some((_, back_from_cache)) = &mut self.cache_check {
+                        *back_from_cache = true;
+                    }
+                    // A measurement already running started before the
+                    // change; measure again after it.
+                    if self.apps_job.is_some() {
+                        self.remeasure = true;
+                    }
                     self.start_apps_job();
                 }
             }
+        }
+
+        if let Some(job) = &self.cleanup_job
+            && let Some((freed, errors)) = take(job)
+        {
+            self.cleanup_job = None;
+            let mut text = format!("Freed {}.", format_size(freed));
+            if !errors.is_empty() {
+                text.push_str(&format!(
+                    " {} couldn't be deleted, for example {}",
+                    plural(errors.len() as u64, "item", "items"),
+                    errors[0]
+                ));
+            }
+            self.set_status(&text);
+            self.start_apps_job();
         }
 
         if let Some(job) = &self.apk_job
@@ -333,7 +388,8 @@ impl Controller {
             || self.apps_job.is_some()
             || self.awaiting_usage_access
             || self.return_watch.is_some()
-            || self.apk_job.is_some();
+            || self.apk_job.is_some()
+            || self.cleanup_job.is_some();
         if !busy {
             self.timer.stop();
         }
@@ -470,6 +526,7 @@ impl Controller {
             refreshing: self.apps_job.is_some() && matches!(self.apps, AppsState::Ready(_)),
             storage_access: storage_access(),
             abilities: apps::abilities(),
+            cache_freed: self.cache_freed,
         };
         let rows = home::rows(&self.apps, options);
         let model = &self.home_rows;
@@ -531,7 +588,11 @@ impl Controller {
             }
             home::REFRESH_APPS => self.start_apps_job(),
             home::CLEAR_CACHE => {
+                let before: u64 = self
+                    .report()
+                    .map_or(0, |r| r.apps.iter().map(|a| a.cache_bytes).sum());
                 if apps::clear_all_cache() {
+                    self.cache_check = Some((before, false));
                     self.watch_return();
                 } else {
                     self.set_status(
@@ -544,6 +605,11 @@ impl Controller {
                 if let Some(view) = id.strip_prefix(home::VIEW_PREFIX).and_then(View::from_id) {
                     self.view = view;
                     self.refresh_home();
+                } else if let Some(kind) = id
+                    .strip_prefix(home::CLEAN_PREFIX)
+                    .and_then(JunkKind::from_id)
+                {
+                    self.request_cleanup(kind);
                 }
             }
         }
@@ -644,6 +710,15 @@ impl Controller {
                 apps::search_store(&label);
             }
             (sheet::SAVE_APK, SheetTarget::App(package)) => self.save_apk(package),
+            (sheet::BROWSE, SheetTarget::App(package)) => {
+                let folder = self
+                    .report()
+                    .and_then(|r| r.media.iter().find(|m| &m.package == package))
+                    .map(|m| m.folder.to_string_lossy().into_owned());
+                if let Some(folder) = folder {
+                    self.start_scan(folder);
+                }
+            }
             (sheet::FORGET, SheetTarget::Removed(package)) => {
                 if let Err(err) = apps::forget(package) {
                     self.set_status(&format!("Couldn't update the app history: {err}"));
@@ -707,6 +782,53 @@ impl Controller {
                 self.set_status(&saving);
             }
             Err(err) => self.set_status(&format!("Couldn't save the APK: {err}")),
+        }
+    }
+
+    /// Asks before deleting a kind of junk, with the shared confirmation
+    /// dialog.
+    fn request_cleanup(&mut self, kind: JunkKind) {
+        if self.cleanup_job.is_some() {
+            self.set_status("Still deleting…");
+            return;
+        }
+        let Some(junk) = self
+            .report()
+            .and_then(|r| r.junk.iter().find(|j| j.kind == kind))
+        else {
+            return;
+        };
+        let text = home::junk_confirm(junk);
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        ui.set_confirm_text(text.into());
+        ui.set_delete_label("Delete".into());
+        ui.set_confirm_open(true);
+        self.pending_cleanup = Some(kind);
+    }
+
+    /// Deletes the junk the user confirmed, on a worker thread.
+    fn run_cleanup(&mut self, kind: JunkKind) {
+        let Some(junk) = self
+            .report()
+            .and_then(|r| r.junk.iter().find(|j| j.kind == kind))
+            .cloned()
+        else {
+            return;
+        };
+        let result: Slot<(u64, Vec<String>)> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("disktree-cleanup".into())
+            .spawn(move || put(&worker_result, apps::delete_junk(&junk)));
+        match spawned {
+            Ok(_) => {
+                self.cleanup_job = Some(result);
+                self.ensure_ticking();
+                self.set_status("Deleting…");
+            }
+            Err(err) => self.set_status(&format!("Couldn't delete: {err}")),
         }
     }
 
@@ -1042,12 +1164,22 @@ impl Controller {
     }
 
     fn cancel_delete(&mut self) {
+        self.pending_cleanup = None;
         if let Some(ui) = self.ui() {
             ui.set_confirm_open(false);
+            ui.set_delete_label(actions::DELETE_LABEL.into());
         }
     }
 
     fn confirm_delete(&mut self) {
+        if let Some(kind) = self.pending_cleanup.take() {
+            if let Some(ui) = self.ui() {
+                ui.set_confirm_open(false);
+                ui.set_delete_label(actions::DELETE_LABEL.into());
+            }
+            self.run_cleanup(kind);
+            return;
+        }
         let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
             return;
         };

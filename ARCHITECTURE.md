@@ -190,11 +190,17 @@ skipped. For each app it also asks:
 
 | Call | Result |
 |---|---|
-| `UsageStatsManager.queryAndAggregateUsageStats` | when the app was last on screen (two years back) and its screen time over 30 days |
+| `UsageStatsManager.queryUsageStats` | when the app was last on screen (two years back) and its screen time over about a month |
 | `getPackageInfo` | install date and version |
 | `getInstallSourceInfo` | the installer: Play Store, another store, a downloaded file |
 | `getLaunchIntentForPackage` | whether it has an icon |
 | `ApplicationInfo.isArchived` (Android 15+) | archived apps, listed with `MATCH_ARCHIVED_PACKAGES` |
+
+Usage history is read once per interval type (yearly, monthly, weekly,
+daily) and merged. A single two-year query looks simpler, but when none of
+Android's records start that far back, Android answers it from the daily
+records alone, which cover about a week; every app used before that then
+looked never opened.
 
 Once per report it collects the apps that work without being opened: the
 default home screen and browser (`resolveActivity`), SMS and phone apps,
@@ -230,9 +236,27 @@ JSON in `Documents/DiskTree/` (survives uninstalling DiskTree) and in the
 app's private storage (works without All files access); both copies are read
 and merged.
 
+`cleanup.rs` finds space that can go without touching any app, under the
+shared storage root: old `.apk` files in Download (except DiskTree's own
+`Download/DiskTree`), `DCIM/.thumbnails`, and `Android/media/<package>`
+folders of packages that aren't installed (only when the installed list looks
+complete). Android's trash comes from MediaStore's Files collection queried
+with `QUERY_ARG_MATCH_TRASHED`. The same collection's `owner_package_name`
+column says which app saved each file; `media_by_owner` adds those up per app
+and picks the folder holding most of them for the Browse button. Deleting
+runs on a worker thread after the shared confirmation dialog.
+
+The history also keeps a daily size sample per app (about four months) and a
+daily snapshot of the storage breakdown (a year), for showing growth later.
+It is written as compact JSON.
+
 `home.rs` turns all of this into the home screen's rows (drives, the breakdown
-bar, the clear-cache card, the groups, then the selected group's apps) and
+bar, the Free up space cards, the groups, then the selected group's apps) and
 into the app sheet: the facts and buttons shown when an app is tapped.
+
+Android's clear-cache dialog decides itself how much to clear, so the
+controller notes the total cache before opening it and compares after the
+user comes back; the card then says what was freed.
 
 The actions go through intents: `ACTION_DELETE` to uninstall (needs
 `REQUEST_DELETE_PACKAGES`), `market://` links for the store, the app's info
@@ -324,14 +348,10 @@ script only publishes a clean checkout that matches GitHub, and lets
 - **Windows MFT reader**: reading the NTFS Master File Table directly is how
   WizTree scans a whole drive in seconds. It needs admin rights, so it would be
   an optional fast path next to the current scanner.
-- **Apps' media in shared storage**: attribute photos and videos to the app
-  that saved them (MediaStore's owner package, `Android/media/<app>`).
-- **Growth tracking**: record app sizes over time ("Signal grew 1.2 GB this
-  month"), using the app history file.
-- **Leftovers and trash**: folders left by uninstalled apps, and trashed
-  media that still takes space for 30 days.
+- **Growth screens**: "Signal grew 1.2 GB this month" and a storage chart,
+  from the samples the app history already records.
+- **Duplicate finder** and **big old files**, on every platform.
 - **Scan history and compare** ("what grew since last week").
-- **Duplicate finder** (group by size, then hash).
 - **Export** to CSV or JSON.
 - **Windows installer and macOS `.app` bundle** (the latter needs a Mac to
   build).

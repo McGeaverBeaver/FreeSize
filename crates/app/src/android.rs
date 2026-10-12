@@ -18,6 +18,7 @@ use jni::{Env, JavaVM, jni_sig, jni_str};
 use slint::android::AndroidApp;
 
 use crate::apps::{self, Abilities, AppReport, AppUsage};
+use crate::cleanup::{self, Junk, JunkKind};
 
 type JniResult<T> = jni::errors::Result<T>;
 
@@ -606,27 +607,126 @@ fn label_of(env: &mut Env, packages: &JObject, info: &JObject) -> JniResult<Stri
     java_string(env, label)
 }
 
-/// Usage maps (package name to UsageStats): over the last two years, about
-/// as far back as Android keeps, and over the last 30 days.
-fn usage_maps<'local>(
-    env: &mut Env<'local>,
-    activity: &JObject,
-    now_ms: i64,
-) -> JniResult<(JObject<'local>, JObject<'local>)> {
-    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
-    let manager = system_service(env, activity, "usagestats")?;
-    let query = |env: &mut Env<'local>, days: i64| {
-        env.call_method(
-            &manager,
-            jni_str!("queryAndAggregateUsageStats"),
-            jni_sig!("(JJ)Ljava/util/Map;"),
-            &[JValue::Long(now_ms - days * DAY_MS), JValue::Long(now_ms)],
+/// When each app was last on screen and how long it was on screen lately,
+/// from Android's usage history (which Usage access allows reading).
+#[derive(Default)]
+struct Usage {
+    /// Package to seconds since 1970.
+    last_opened: HashMap<String, u64>,
+    /// Package to seconds on screen over about the last month.
+    screen_time: HashMap<String, u64>,
+}
+
+/// `(package, last time on screen in ms, time on screen in ms)` from every
+/// record of one interval type (daily, weekly, monthly or yearly) that
+/// overlaps the time range.
+fn usage_stats(
+    env: &mut Env,
+    manager: &JObject,
+    interval: i32,
+    begin_ms: i64,
+    end_ms: i64,
+    sdk: i32,
+) -> JniResult<Vec<(String, i64, i64)>> {
+    let list = env
+        .call_method(
+            manager,
+            jni_str!("queryUsageStats"),
+            jni_sig!("(IJJ)Ljava/util/List;"),
+            &[
+                JValue::Int(interval),
+                JValue::Long(begin_ms),
+                JValue::Long(end_ms),
+            ],
         )?
-        .l()
-    };
-    let years = query(env, 2 * 365)?;
-    let month = query(env, 30)?;
-    Ok((years, month))
+        .l()?;
+    if list.is_null() {
+        return Ok(Vec::new());
+    }
+    let count = env
+        .call_method(&list, jni_str!("size"), jni_sig!("()I"), &[])?
+        .i()?;
+    let mut rows = Vec::new();
+    for i in 0..count {
+        let row = env.with_local_frame(8, |env| -> JniResult<_> {
+            let stats = env
+                .call_method(
+                    &list,
+                    jni_str!("get"),
+                    jni_sig!("(I)Ljava/lang/Object;"),
+                    &[JValue::Int(i)],
+                )?
+                .l()?;
+            let package = env
+                .call_method(
+                    &stats,
+                    jni_str!("getPackageName"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let package = java_string(env, package)?;
+            // "Visible" (Android 10+) means on screen; "used" also counts
+            // background work.
+            let (last, total) = if sdk >= 29 {
+                (
+                    jni_str!("getLastTimeVisible"),
+                    jni_str!("getTotalTimeVisible"),
+                )
+            } else {
+                (
+                    jni_str!("getLastTimeUsed"),
+                    jni_str!("getTotalTimeInForeground"),
+                )
+            };
+            let last = env.call_method(&stats, last, jni_sig!("()J"), &[])?.j()?;
+            let total = env.call_method(&stats, total, jni_sig!("()J"), &[])?.j()?;
+            Ok((package, last, total))
+        })?;
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+/// Reads the usage history. Each interval type is asked for on its own:
+/// asked for two years at once, Android falls back to its daily records
+/// when none of its records start that far back, and those only cover
+/// about a week.
+fn usage_history(env: &mut Env, activity: &JObject, now_ms: i64, sdk: i32) -> JniResult<Usage> {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    // UsageStatsManager.INTERVAL_DAILY, _WEEKLY, _MONTHLY, _YEARLY
+    const DAILY: i32 = 0;
+    const WEEKLY: i32 = 1;
+    const MONTHLY: i32 = 2;
+    const YEARLY: i32 = 3;
+    let manager = system_service(env, activity, "usagestats")?;
+    let mut usage = Usage::default();
+    // Android keeps about a week of daily records, four weekly, six monthly
+    // and two yearly ones; together they reach two years back.
+    for interval in [YEARLY, MONTHLY, WEEKLY, DAILY] {
+        for (package, last_ms, _) in usage_stats(
+            env,
+            &manager,
+            interval,
+            now_ms - 2 * 365 * DAY_MS,
+            now_ms,
+            sdk,
+        )? {
+            if let Some(last) = secs(last_ms) {
+                let entry = usage.last_opened.entry(package).or_default();
+                *entry = (*entry).max(last);
+            }
+        }
+    }
+    // The weekly records of the last four weeks give time on screen over
+    // about a month.
+    for (package, _, total_ms) in
+        usage_stats(env, &manager, WEEKLY, now_ms - 28 * DAY_MS, now_ms, sdk)?
+    {
+        *usage.screen_time.entry(package).or_default() +=
+            u64::try_from(total_ms / 1000).unwrap_or(0);
+    }
+    Ok(usage)
 }
 
 /// The package of the app that handles an intent by default, if one is set.
@@ -885,6 +985,222 @@ fn installed_applications<'local>(
     .l()
 }
 
+/// Queries MediaStore's Files collection, which indexes every file in
+/// shared storage. Returns a Cursor.
+fn files_query<'local>(
+    env: &mut Env<'local>,
+    activity: &JObject,
+    projection: &[&str],
+    selection: Option<&str>,
+    match_trashed: Option<i32>,
+) -> JniResult<JObject<'local>> {
+    let volume = env.new_string("external")?;
+    let uri = env
+        .call_static_method(
+            jni_str!("android/provider/MediaStore$Files"),
+            jni_str!("getContentUri"),
+            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+            &[JValue::Object(&volume)],
+        )?
+        .l()?;
+    let columns = env.new_object_array(
+        projection.len() as i32,
+        jni_str!("java/lang/String"),
+        JObject::null(),
+    )?;
+    for (i, name) in projection.iter().enumerate() {
+        let name = env.new_string(name)?;
+        columns.set_element(env, i, &name)?;
+    }
+    let args = env.new_object(jni_str!("android/os/Bundle"), jni_sig!("()V"), &[])?;
+    if let Some(selection) = selection {
+        // ContentResolver.QUERY_ARG_SQL_SELECTION
+        let key = env.new_string("android:query-arg-sql-selection")?;
+        let value = env.new_string(selection)?;
+        env.call_method(
+            &args,
+            jni_str!("putString"),
+            jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(&key), JValue::Object(&value)],
+        )?;
+    }
+    if let Some(mode) = match_trashed {
+        // MediaStore.QUERY_ARG_MATCH_TRASHED
+        let key = env.new_string("android:query-arg-match-trashed")?;
+        env.call_method(
+            &args,
+            jni_str!("putInt"),
+            jni_sig!("(Ljava/lang/String;I)V"),
+            &[JValue::Object(&key), JValue::Int(mode)],
+        )?;
+    }
+    let resolver = env
+        .call_method(
+            activity,
+            jni_str!("getContentResolver"),
+            jni_sig!("()Landroid/content/ContentResolver;"),
+            &[],
+        )?
+        .l()?;
+    env.call_method(
+        &resolver,
+        jni_str!("query"),
+        jni_sig!("(Landroid/net/Uri;[Ljava/lang/String;Landroid/os/Bundle;Landroid/os/CancellationSignal;)Landroid/database/Cursor;"),
+        &[
+            JValue::Object(&uri),
+            JValue::Object(&columns),
+            JValue::Object(&args),
+            JValue::Object(&JObject::null()),
+        ],
+    )?
+    .l()
+}
+
+fn column_index(env: &mut Env, cursor: &JObject, name: &str) -> JniResult<i32> {
+    let name = env.new_string(name)?;
+    env.call_method(
+        cursor,
+        jni_str!("getColumnIndexOrThrow"),
+        jni_sig!("(Ljava/lang/String;)I"),
+        &[JValue::Object(&name)],
+    )?
+    .i()
+}
+
+/// Reads `(text column, size, path)` from every row of a cursor, then
+/// closes it. `text` is `None` to read only sizes and paths.
+fn read_rows(
+    env: &mut Env,
+    cursor: &JObject,
+    text: Option<&str>,
+) -> JniResult<Vec<(Option<String>, u64, PathBuf)>> {
+    let read = |env: &mut Env| -> JniResult<Vec<(Option<String>, u64, PathBuf)>> {
+        let text_column = match text {
+            Some(name) => Some(column_index(env, cursor, name)?),
+            None => None,
+        };
+        let size_column = column_index(env, cursor, "_size")?;
+        let path_column = column_index(env, cursor, "_data")?;
+        let mut rows = Vec::new();
+        while env
+            .call_method(cursor, jni_str!("moveToNext"), jni_sig!("()Z"), &[])?
+            .z()?
+        {
+            // A frame per row frees each row's strings right away.
+            let row = env.with_local_frame(8, |env| -> JniResult<_> {
+                let string_at = |env: &mut Env, column: i32| -> JniResult<Option<String>> {
+                    let value = env
+                        .call_method(
+                            cursor,
+                            jni_str!("getString"),
+                            jni_sig!("(I)Ljava/lang/String;"),
+                            &[JValue::Int(column)],
+                        )?
+                        .l()?;
+                    java_string_opt(env, value)
+                };
+                let text = match text_column {
+                    Some(column) => string_at(env, column)?,
+                    None => None,
+                };
+                let path = string_at(env, path_column)?;
+                let size = env
+                    .call_method(
+                        cursor,
+                        jni_str!("getLong"),
+                        jni_sig!("(I)J"),
+                        &[JValue::Int(size_column)],
+                    )?
+                    .j()?;
+                Ok((text, u64::try_from(size).unwrap_or(0), path))
+            })?;
+            if let (text, size, Some(path)) = row {
+                rows.push((text, size, PathBuf::from(path)));
+            }
+        }
+        Ok(rows)
+    };
+    let rows = read(env);
+    // Close the cursor even when reading failed.
+    if rows.is_err() {
+        env.exception_clear();
+    }
+    let _ = optional(env, |env| {
+        env.call_method(cursor, jni_str!("close"), jni_sig!("()V"), &[])
+            .map(|_| ())
+    });
+    rows
+}
+
+/// `(owner package, size, path)` for every file in shared storage that
+/// Android knows the saving app of (Android 10+). Needs All files access.
+pub fn media_rows() -> Vec<(String, u64, PathBuf)> {
+    if sdk() < 29 {
+        return Vec::new();
+    }
+    let result = with_activity(|env, activity| {
+        let cursor = files_query(
+            env,
+            activity,
+            &["owner_package_name", "_size", "_data"],
+            Some("owner_package_name IS NOT NULL AND _size > 0"),
+            None,
+        )?;
+        if cursor.is_null() {
+            return Ok(Vec::new());
+        }
+        read_rows(env, &cursor, Some("owner_package_name"))
+    });
+    match result {
+        Ok(rows) => rows
+            .into_iter()
+            .filter_map(|(owner, size, path)| Some((owner?, size, path)))
+            .collect(),
+        Err(err) => {
+            log(&format!("could not read the media index: {err}"));
+            Vec::new()
+        }
+    }
+}
+
+/// Photos, videos and other files in Android's trash (Android 11+). They
+/// stay on the phone for 30 days after being deleted.
+pub fn trash() -> Option<Junk> {
+    // MediaStore.MATCH_ONLY
+    const MATCH_ONLY: i32 = 3;
+    if sdk() < 30 {
+        return None;
+    }
+    let result = with_activity(|env, activity| {
+        let cursor = files_query(env, activity, &["_size", "_data"], None, Some(MATCH_ONLY))?;
+        if cursor.is_null() {
+            return Ok(Vec::new());
+        }
+        read_rows(env, &cursor, None)
+    });
+    let rows = match result {
+        Ok(rows) => rows,
+        Err(err) => {
+            log(&format!("could not read the trash: {err}"));
+            return None;
+        }
+    };
+    let mut junk = Junk {
+        kind: JunkKind::Trash,
+        ..Junk::default()
+    };
+    for (_, size, path) in rows {
+        let name = path
+            .file_name()
+            .map(|name| cleanup::untrashed_name(&name.to_string_lossy()).to_string())
+            .unwrap_or_default();
+        junk.bytes += size;
+        junk.names.push(name);
+        junk.paths.push(path);
+    }
+    (!junk.paths.is_empty()).then_some(junk)
+}
+
 /// Storage used by every installed app, plus Android's own totals, when
 /// each app was installed and last used, and where it came from. Slow (a
 /// few system calls per app), so call it off the UI thread.
@@ -937,14 +1253,8 @@ pub fn collect_app_report() -> Result<AppReport, String> {
         });
 
         let now_ms = i64::try_from(apps::now() * 1000).unwrap_or(i64::MAX);
-        let usage = optional(env, |env| usage_maps(env, activity, now_ms));
-        let usage_known = usage.as_ref().is_some_and(|(years, _)| {
-            optional(env, |env| {
-                env.call_method(years, jni_str!("size"), jni_sig!("()I"), &[])?
-                    .i()
-            })
-            .is_some_and(|size| size > 0)
-        });
+        let usage = optional(env, |env| usage_history(env, activity, now_ms, sdk));
+        let usage_known = usage.as_ref().is_some_and(|u| !u.last_opened.is_empty());
         let protected = env
             .with_local_frame(64, |env| -> JniResult<_> {
                 Ok(protected_packages(env, activity, &packages))
@@ -961,7 +1271,7 @@ pub fn collect_app_report() -> Result<AppReport, String> {
             stats: &stats,
             packages: &packages,
             user: &user,
-            usage: usage.as_ref().map(|(years, month)| (years, month)),
+            usage: usage.as_ref(),
             sdk,
         };
         let mut names = Vec::new();
@@ -1020,8 +1330,8 @@ struct Lookup<'a, 'local> {
     stats: &'a JObject<'local>,
     packages: &'a JObject<'local>,
     user: &'a JObject<'local>,
-    /// Usage over two years and over 30 days, if Android reported it.
-    usage: Option<(&'a JObject<'local>, &'a JObject<'local>)>,
+    /// The usage history, if Android reported it.
+    usage: Option<&'a Usage>,
     sdk: i32,
 }
 
@@ -1057,60 +1367,6 @@ fn installer_of(
         .l()?
     };
     java_string_opt(env, name)
-}
-
-/// `map.get(key)` for a `java.util.Map`.
-fn map_get<'local>(
-    env: &mut Env<'local>,
-    map: &JObject,
-    key: &JObject,
-) -> JniResult<JObject<'local>> {
-    env.call_method(
-        map,
-        jni_str!("get"),
-        jni_sig!("(Ljava/lang/Object;)Ljava/lang/Object;"),
-        &[JValue::Object(key)],
-    )?
-    .l()
-}
-
-/// When the app was last on screen, and for how long over the last 30 days.
-fn usage_of(
-    env: &mut Env,
-    years: &JObject,
-    month: &JObject,
-    package: &JObject,
-    sdk: i32,
-) -> JniResult<(Option<u64>, Option<u64>)> {
-    let last = map_get(env, years, package)?;
-    let last_opened = if last.is_null() {
-        None
-    } else {
-        // "Visible" (Android 10+) means on screen; "used" also counts
-        // background work.
-        let method = if sdk >= 29 {
-            jni_str!("getLastTimeVisible")
-        } else {
-            jni_str!("getLastTimeUsed")
-        };
-        secs(env.call_method(&last, method, jni_sig!("()J"), &[])?.j()?)
-    };
-    let recent = map_get(env, month, package)?;
-    let screen_time = if recent.is_null() {
-        0
-    } else {
-        let method = if sdk >= 29 {
-            jni_str!("getTotalTimeVisible")
-        } else {
-            jni_str!("getTotalTimeInForeground")
-        };
-        secs(
-            env.call_method(&recent, method, jni_sig!("()J"), &[])?
-                .j()?,
-        )
-        .unwrap_or(0)
-    };
-    Ok((last_opened, Some(screen_time)))
 }
 
 /// One app's facts. Returns its package name, and `None` instead of the
@@ -1214,9 +1470,10 @@ fn app_usage(
     let installer =
         optional(env, |env| installer_of(env, lookup.packages, &package, sdk)).flatten();
     let (last_opened, screen_time) = match lookup.usage {
-        Some((years, month)) => {
-            optional(env, |env| usage_of(env, years, month, &package, sdk)).unwrap_or_default()
-        }
+        Some(usage) => (
+            usage.last_opened.get(&name).copied(),
+            Some(usage.screen_time.get(&name).copied().unwrap_or(0)),
+        ),
         None => (None, None),
     };
 

@@ -7,11 +7,13 @@
 //! access"; that is what this module surfaces. Other platforms have no
 //! equivalent, so there it reports itself as unsupported.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use disktree_core::DiskSpace;
+use disktree_core::{DiskSpace, disk_space};
 
+use crate::cleanup::{self, Junk, MediaUse};
 use crate::history::{self, Entry};
 use crate::locations;
 
@@ -39,7 +41,7 @@ pub struct AppUsage {
     pub version: String,
     /// When the user last had it on screen; `None` if Android has no record.
     pub last_opened: Option<u64>,
-    /// Time on screen over the last 30 days.
+    /// Time on screen over about the last month.
     pub screen_time: Option<u64>,
     /// Has an icon in the app drawer.
     pub has_launcher: bool,
@@ -83,6 +85,10 @@ pub struct AppReport {
     pub usage_known: bool,
     /// Apps seen before that are no longer installed, newest first.
     pub removed: Vec<Entry>,
+    /// Media in shared storage by the app that saved it, biggest first.
+    pub media: Vec<MediaUse>,
+    /// Trash, old installers and other files that can go.
+    pub junk: Vec<Junk>,
     /// When the report was made.
     pub now: u64,
 }
@@ -170,11 +176,49 @@ pub fn collect() -> Result<AppReport, String> {
         history = demo::history(report.now);
     }
     history.record(&report);
+    if let Some(space) = disk_space(&locations::default_path()) {
+        history.record_storage(report.now, report.breakdown(space));
+    }
     if let Err(err) = history::save(&history, &paths) {
         log(&format!("could not save the app history: {err}"));
     }
     report.removed = history.removed();
+
+    // Media and junk are in shared storage, which needs All files access.
+    if demo::enabled() {
+        report.media = demo::media();
+        report.junk = demo::junk();
+    } else if platform::storage_access() {
+        let installed: HashSet<String> = report.installed.iter().cloned().collect();
+        let labels: HashMap<String, String> = history
+            .apps
+            .iter()
+            .map(|entry| (entry.package.clone(), entry.label.clone()))
+            .collect();
+        report.junk = platform::trash()
+            .into_iter()
+            .chain(cleanup::find(
+                &locations::default_path(),
+                &installed,
+                &labels,
+            ))
+            .collect();
+        report.media = cleanup::media_by_owner(platform::media_rows());
+    }
+    report
+        .media
+        .sort_by_key(|media| std::cmp::Reverse(media.bytes));
     Ok(report)
+}
+
+/// Deletes one kind of junk. Returns the bytes freed and the items that
+/// couldn't be deleted. Slow for big folders, so call it off the UI thread.
+pub fn delete_junk(junk: &Junk) -> (u64, Vec<String>) {
+    if demo::enabled() {
+        demo::clean(junk.kind);
+        return (junk.bytes, Vec::new());
+    }
+    cleanup::delete(&junk.paths)
 }
 
 /// Removes an app from the history of removed apps.
@@ -353,9 +397,10 @@ fn log(message: &str) {
 mod platform {
     pub use crate::android::{
         abilities, apk_files, clear_all_cache, collect_app_report as collect,
-        has_usage_access as has_access, open_app_settings as open, open_in_store,
-        open_own_app_settings as open_own_settings, private_dir,
-        request_usage_access as request_access, search_store, uninstall, window_has_focus,
+        has_storage_access as storage_access, has_usage_access as has_access, media_rows,
+        open_app_settings as open, open_in_store, open_own_app_settings as open_own_settings,
+        private_dir, request_usage_access as request_access, search_store, trash, uninstall,
+        window_has_focus,
     };
 }
 
@@ -364,9 +409,22 @@ mod platform {
     use std::path::PathBuf;
 
     use super::{Abilities, AppReport};
+    use crate::cleanup::Junk;
 
     pub fn has_access() -> bool {
         false
+    }
+
+    pub fn storage_access() -> bool {
+        false
+    }
+
+    pub fn trash() -> Option<Junk> {
+        None
+    }
+
+    pub fn media_rows() -> Vec<(String, u64, PathBuf)> {
+        Vec::new()
     }
 
     pub fn request_access() {}
@@ -410,10 +468,103 @@ mod platform {
 /// with `DISKTREE_FAKE_APPS=1` show it on the home screen, and
 /// `DISKTREE_FAKE_APPS=no-access` shows the Usage access prompt.
 mod demo {
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
     use super::{AppReport, AppUsage};
+    use crate::cleanup::{Junk, JunkKind, MediaUse};
     use crate::history::{Entry, History};
+    use crate::locations;
 
     const DAY: u64 = 24 * 60 * 60;
+    const MB: u64 = 1024 * 1024;
+
+    /// Junk "deleted" in this run; nothing real is touched.
+    static CLEANED: Mutex<Vec<JunkKind>> = Mutex::new(Vec::new());
+
+    pub fn clean(kind: JunkKind) {
+        CLEANED.lock().unwrap_or_else(|e| e.into_inner()).push(kind);
+    }
+
+    pub fn junk() -> Vec<Junk> {
+        let cleaned = CLEANED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let junk = |kind, mb: u64, names: &[&str]| Junk {
+            kind,
+            bytes: mb * MB,
+            paths: if names.is_empty() {
+                vec![PathBuf::from("/demo/DCIM/.thumbnails")]
+            } else {
+                names
+                    .iter()
+                    .map(|n| PathBuf::from("/demo").join(n))
+                    .collect()
+            },
+            names: names.iter().map(|n| n.to_string()).collect(),
+        };
+        [
+            junk(
+                JunkKind::Trash,
+                2_450,
+                &["PXL_20260901.mp4", "PXL_20260902.jpg", "IMG_0042.jpg"],
+            ),
+            junk(
+                JunkKind::Installers,
+                1_130,
+                &["Insta360_v1.2.apk", "Bambu Handy.apk"],
+            ),
+            junk(JunkKind::Thumbnails, 320, &[]),
+            junk(
+                JunkKind::Leftovers,
+                2_040,
+                &["Snapseed", "org.example.camerahelper"],
+            ),
+        ]
+        .into_iter()
+        .filter(|j| !cleaned.contains(&j.kind))
+        .collect()
+    }
+
+    pub fn media() -> Vec<MediaUse> {
+        let root = locations::default_path();
+        let media = |package: &str, mb: u64, files, folder: &str, in_app_data| MediaUse {
+            package: package.into(),
+            bytes: mb * MB,
+            files,
+            folder: root.join(folder),
+            in_app_data,
+        };
+        vec![
+            media(
+                "com.whatsapp",
+                9_200,
+                3_400,
+                "Android/media/com.whatsapp",
+                true,
+            ),
+            media(
+                "com.arashivision.insta360akiko",
+                12_300,
+                210,
+                "DCIM/Insta360",
+                false,
+            ),
+            media(
+                "com.google.android.apps.photos",
+                800,
+                95,
+                "Pictures/Photos",
+                false,
+            ),
+        ]
+        .into_iter()
+        .map(|mut m| {
+            if !m.folder.is_absolute() {
+                m.folder = PathBuf::from("/").join(&m.folder);
+            }
+            m
+        })
+        .collect()
+    }
 
     pub fn enabled() -> bool {
         cfg!(debug_assertions) && std::env::var_os("DISKTREE_FAKE_APPS").is_some()
@@ -424,7 +575,6 @@ mod demo {
     }
 
     pub fn report() -> AppReport {
-        const MB: u64 = 1024 * 1024;
         let now = super::now();
         let app =
             |label: &str, package: &str, code: u64, data: u64, cache: u64, opened: u64| AppUsage {
@@ -521,7 +671,8 @@ mod demo {
             first_seen: now - 300 * DAY,
             last_seen: now - days * DAY,
             removed_at: Some(now - days * DAY),
-            size: 850 * 1024 * 1024,
+            size: 850 * MB,
+            sizes: Vec::new(),
         };
         History {
             apps: vec![
@@ -538,6 +689,7 @@ mod demo {
                     95,
                 ),
             ],
+            ..History::default()
         }
     }
 }

@@ -217,6 +217,8 @@ back is easy to find:
 | Not opened in 3 months | Apps you haven't had on screen for 3 months. |
 | Never opened | Apps with no use recorded since they were installed (Android keeps about 2 years of usage history). |
 | Not from an app store | Apps installed from a downloaded file or a computer. No store can give them back, so save the APK first. |
+| Files saved by apps | Photos, videos, downloads and other files each app saved to your storage, with where most of them are. |
+| Biggest caches | Apps by cache size, to clear the big ones in their info pages. |
 | Removed apps | Apps DiskTree has seen before that are gone, so you can find one again by name. |
 
 Apps that work without being opened are never suggested for removal:
@@ -225,9 +227,9 @@ messaging and phone apps, keyboards, accessibility services, apps that read
 notifications (such as watch apps), device admin apps, and archived apps.
 
 Tapping an app shows its size, when it was installed and last opened, its time
-on screen over the last 30 days, where it came from, and tips for a few
-well-known apps (for example that clearing Signal's storage deletes your
-messages). Its buttons:
+on screen over about the last month, where it came from, the files it saved to
+your storage, and tips for a few well-known apps (for example that clearing
+Signal's storage deletes your messages). Its buttons:
 
 - **Uninstall**: Android asks you to confirm.
 - **Archive** (Android 15+, Play Store apps): opens the app's info page, where
@@ -236,12 +238,27 @@ messages). Its buttons:
 - **Save APK to Downloads** (apps not from a store): copies the app's install
   file to `Download/DiskTree`, so you can install it again later. The app's
   data isn't included.
+- **Browse its files** (apps that saved files to your storage): scans the
+  folder holding most of them, so you can see and delete them in DiskTree.
 - **Open in Play Store** (or the store it came from).
 - **App info**: Android's page for clearing the app's cache or data.
 
-**Clear every app's cache** (Android 11+) opens Android's own dialog that
-clears all apps' cache at once. It needs All files access. Apps rebuild some of
-their cache as they run.
+**Free up space** lists what can go without touching any app. It needs All
+files access:
+
+- **Clear every app's cache** (Android 11+) opens Android's own cache cleaner.
+  Android decides how much it clears, and on some phones that's very little;
+  the card says what it freed last time. To clear more, use *Biggest caches*
+  and each app's info page. No app can clear other apps' cache directly.
+- **Empty the trash** (Android 11+): photos and videos deleted in the last 30
+  days still take space until Android removes them for good.
+- **Delete old app installers**: `.apk` files in Download. APKs saved with
+  DiskTree in `Download/DiskTree` are kept.
+- **Clear the thumbnail cache**: `DCIM/.thumbnails`, which gallery apps
+  rebuild.
+- **Delete leftovers of removed apps**: their folders in `Android/media`.
+
+DiskTree asks before deleting anything, then measures again.
 
 After you come back from uninstalling an app or from its info page, DiskTree
 measures the apps again.
@@ -320,34 +337,30 @@ the linker fails with "Bus error" or "No space left on device".
 `cargo clean` deletes all build files when space runs low; the next build
 then takes longer.
 
-**More space from a host disk.** To use a disk of the VM's host (an Unraid
-SSD, say), give the VM a second virtual disk stored on it rather than
-building in a shared folder. Shared folders (9p, virtiofs) are slow for the
-tens of thousands of small files a build writes, and a 9p share with caching
-has been seen to return corrupted file contents. On Unraid, create the disk
-file in the Unraid terminal and add it to the VM as a second VirtIO vDisk
-(Manual location):
+**Building on a shared folder.** A VM can keep the project on a folder its
+host shares over 9p, such as an Unraid share with mount tag `ssdbobbybuilds`.
+Mount it with `cache=mmap`: the linker needs memory-mapped files, which 9p
+doesn't fully support without caching, while `cache=loose` (which also
+caches writes) returned corrupted file contents in a real build.
 
 ```sh
-mkdir -p /mnt/disks/SSD_CACHE/vdisks
-qemu-img create -f raw /mnt/disks/SSD_CACHE/vdisks/bobby-builds.img 100G
+sudo mkdir -p /mnt/ssdbuilds
+echo 'ssdbobbybuilds /mnt/ssdbuilds 9p trans=virtio,version=9p2000.L,msize=262144,cache=mmap,nofail 0 0' | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount /mnt/ssdbuilds
+git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git /mnt/ssdbuilds/TreeSizeCloneAndroid
+ln -s /mnt/ssdbuilds/TreeSizeCloneAndroid ~/TreeSizeCloneAndroid
 ```
 
-Then, in the VM (check with `lsblk` that the new, empty disk is `vdb`, since
-formatting erases it):
+To check that every file arrived intact, make git re-read them all; this
+should print nothing:
 
 ```sh
-sudo mkfs.ext4 -L builds /dev/vdb
-sudo mkdir -p /mnt/builds
-echo 'LABEL=builds /mnt/builds ext4 defaults,noatime,nofail 0 2' | sudo tee -a /etc/fstab
-sudo systemctl daemon-reload
-sudo mount /mnt/builds && sudo chown "$USER": /mnt/builds
-git clone https://github.com/McGeaverBeaver/TreeSizeCloneAndroid.git /mnt/builds/TreeSizeCloneAndroid
-ln -s /mnt/builds/TreeSizeCloneAndroid ~/TreeSizeCloneAndroid
+cd ~/TreeSizeCloneAndroid
+find . -path ./.git -prune -o -type f -exec touch {} +
+git status --short
 ```
 
-Rust, the Android SDK and the signing key stay on the VM's own disk. A shared
-folder is still handy for copying files and keeping a backup of the key.
+Rust, the Android SDK and the signing key stay on the VM's own disk.
 
 ### Publishing a release
 

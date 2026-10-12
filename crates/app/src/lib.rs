@@ -6,6 +6,7 @@ mod actions;
 #[cfg(target_os = "android")]
 mod android;
 mod apps;
+mod cleanup;
 mod controller;
 mod history;
 mod home;
