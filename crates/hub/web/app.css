@@ -82,7 +82,7 @@ code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; 
   display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 5px;
   border-radius: 9px; background: var(--danger); color: #fff; font-size: 12px; text-align: center;
 }
-.user { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.user { display: flex; align-items: center; gap: 10px; white-space: nowrap; margin-left: auto; }
 .user .who { color: var(--dim); font-size: 13px; }
 
 main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
@@ -94,7 +94,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 16px;
 }
-.card + .card, .stack > * + * { margin-top: 14px; }
+.stack > * + * { margin-top: 14px; }
 .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row .grow { flex: 1; min-width: 0; }

@@ -5,9 +5,13 @@
 pub mod api;
 pub mod audit;
 pub mod auth;
+pub mod commands;
 pub mod config;
+pub mod dashboard;
 pub mod db;
+pub mod devices;
 pub mod error;
+pub mod history;
 pub mod web;
 
 use std::net::SocketAddr;
@@ -16,6 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -34,6 +39,9 @@ pub struct Shared {
     /// The Hub's own key: it signs commands and pairing answers.
     pub key: KeyPair,
     pub oidc: auth::Oidc,
+    /// Wakes devices' waiting polls.
+    pub wakers: devices::Wakers,
+    pub pair_limiter: devices::PairLimiter,
 }
 
 impl Deref for AppState {
@@ -52,6 +60,8 @@ impl AppState {
             db,
             key,
             oidc,
+            wakers: devices::Wakers::default(),
+            pair_limiter: devices::PairLimiter::default(),
         }))
     }
 
@@ -117,6 +127,35 @@ pub fn router(state: AppState) -> Router {
         .route("/api/me", get(api::me))
         .route("/api/audit", get(api::audit_log))
         .route("/api/audit/verify", get(api::audit_verify))
+        .route("/api/devices", get(dashboard::list))
+        .route(
+            "/api/devices/{id}",
+            get(dashboard::detail)
+                .patch(dashboard::update)
+                .delete(dashboard::remove),
+        )
+        .route("/api/devices/{id}/audit", get(dashboard::device_audit))
+        .route("/api/scans/{id}/folders", get(dashboard::folder))
+        .route("/api/scans/{id}/files", get(dashboard::files))
+        .route(
+            "/api/groups",
+            get(dashboard::list_groups).post(dashboard::create_group),
+        )
+        .route(
+            "/api/groups/{id}",
+            axum::routing::patch(dashboard::update_group).delete(dashboard::delete_group),
+        )
+        .route("/api/pairing-codes", post(dashboard::pairing_code))
+        // Devices.
+        .route("/api/v1/hello", get(devices::hello))
+        .route("/api/v1/pair", post(devices::pair))
+        .route(
+            "/api/v1/report",
+            // A whole drive's scan can be a few MB.
+            post(devices::report).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
+        .route("/api/v1/poll", post(devices::poll))
+        .route("/api/v1/devices/{fingerprint}", get(devices::device_key))
         .layer(axum::middleware::from_fn(web::security_headers))
         .with_state(state)
 }

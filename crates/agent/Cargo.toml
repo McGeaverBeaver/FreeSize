@@ -1,0 +1,26 @@
+[package]
+name = "disktree-agent"
+description = "The device side of the DiskTree Hub: pairing, reports, commands and approvals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+# An HTTP client for desktops and servers. Android brings its own (Java's).
+ureq = ["dep:ureq"]
+
+[dependencies]
+base64 = "0.23.1"
+disktree-core.workspace = true
+disktree-proto.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
+# The system's TLS and certificate store on Windows and macOS, so nothing
+# needs a C compiler there; rustls with the system's certificates elsewhere.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+ureq = { version = "3.4.2", optional = true, default-features = false, features = ["native-tls-no-default"] }
+
+[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
+ureq = { version = "3.4.2", optional = true, default-features = false, features = ["rustls", "platform-verifier"] }
