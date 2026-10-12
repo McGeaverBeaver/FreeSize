@@ -163,6 +163,7 @@ const NAV = [
   { route: "devices", label: "Devices" },
   { route: "search", label: "Search" },
   { route: "requests", label: "Requests" },
+  { route: "alerts", label: "Alerts" },
   { route: "audit", label: "Audit log", admin: true },
   { route: "settings", label: "Settings" },
 ];
@@ -237,6 +238,7 @@ function deviceCard(device) {
   return h("a", { class: "card device-card", href: `#/device/${encodeURIComponent(device.id)}` },
     h("div", { class: "row" },
       h("h2", { class: "grow", style: "margin:0" }, device.name),
+      device.alerts ? h("span", { class: "badge danger" }, count(device.alerts, "alert", "alerts")) : null,
       device.waiting ? h("span", { class: "badge warn" }, count(device.waiting, "request", "requests")) : null,
       h("span", { class: "badge" }, PLATFORMS[device.platform] || device.platform)),
     h("div", { class: "platform" },
@@ -482,7 +484,9 @@ function sparkline(samples, width = 280, height = 48) {
   return svg;
 }
 
-function deviceOverview(device) {
+async function deviceOverview(device) {
+  const alerts = device.alerts ? (await api("/api/alerts").catch(() => ({ active: [] }))).active
+    .filter((a) => a.device_id === device.id && a.kind !== "request") : [];
   const history = Object.fromEntries((device.history || []).map((h) => [h.path, h.samples]));
   const disks = (device.disks || []).map((disk) => {
     const samples = history[disk.path] || [];
@@ -524,6 +528,8 @@ function deviceOverview(device) {
           ? "Upload a scan file made with ncdu to see this machine's folders."
           : "The device sends a summary after each scan: folder sizes and the biggest files."));
   return h("div", { class: "stack" },
+    alerts.length ? h("div", { class: "callout danger" }, alerts.map((a) =>
+      h("div", {}, h("strong", {}, a.title.replace(`${device.name}: `, "")), " ", h("span", { class: "dim" }, a.message)))) : null,
     disks.length ? h("div", { class: "grid" }, disks) : device.agentless ? null : h("div", { class: "card dim" }, "No disks reported yet."),
     scans);
 }
@@ -843,6 +849,148 @@ PAGES.audit = async () => {
       h("div", { class: "row" }, result, h("button", { onclick: verify }, "Check the chain"))),
     list,
   ];
+};
+
+// ----- Alerts -----------------------------------------------------------------
+
+const SEVERITY = { critical: "danger", warning: "warn", info: "accent" };
+const CHANNEL_KINDS = {
+  ntfy: { label: "ntfy", fields: [["server", "Server", "https://ntfy.sh"], ["topic", "Topic", "e.g. disktree-a8f3"], ["token", "Access token (for a protected topic)", "", true]] },
+  gotify: { label: "Gotify", fields: [["server", "Server", "https://gotify.example.lan"], ["token", "Application token", "", true]] },
+  pushover: { label: "Pushover", fields: [["user", "User key", ""], ["token", "Application API token", "", true]] },
+  webhook: { label: "Webhook", fields: [["url", "Address", "https://homeassistant.lan/api/webhook/disktree"], ["secret", "Signing secret (optional)", "", true]] },
+};
+
+function alertRow(a) {
+  const link = a.device_id ? `#/device/${encodeURIComponent(a.device_id)}` : null;
+  return h("div", { class: "alert-row" },
+    h("span", { class: `badge ${a.resolved ? "" : SEVERITY[a.severity] || ""}` }, a.resolved ? "over" : a.severity),
+    h("div", { class: "grow" },
+      link ? h("a", { href: link }, a.title) : h("strong", {}, a.title),
+      h("div", { class: "sub" }, a.message)),
+    h("span", { class: "dim small" }, a.resolved ? `over ${ago(a.resolved)}` : `since ${ago(a.opened)}`));
+}
+
+function channelDialog(channel) {
+  dialog((close) => {
+    let kind = channel ? channel.target.kind : "ntfy";
+    const name = h("input", { type: "text", id: "ch-name", maxlength: 60, value: channel ? channel.name : "", placeholder: "e.g. My phone" });
+    const kindSelect = h("select", { id: "ch-kind", disabled: !!channel, onchange: (e) => { kind = e.target.value; drawFields(); } },
+      Object.entries(CHANNEL_KINDS).map(([value, k]) => h("option", { value, selected: value === kind }, k.label)));
+    const fields = h("div");
+    const inputs = {};
+    const drawFields = () => {
+      fields.replaceChildren();
+      for (const [key, label, placeholder, secret] of CHANNEL_KINDS[kind].fields) {
+        const value = channel && channel.target.kind === kind ? channel.target[key] || "" : key === "server" && kind === "ntfy" ? "https://ntfy.sh" : "";
+        inputs[key] = h("input", {
+          type: secret ? "password" : "text", id: `ch-${key}`, value, autocomplete: "off",
+          placeholder: secret && channel && channel.has_secret ? "Stored; leave empty to keep it" : placeholder,
+        });
+        fields.append(h("label", { for: `ch-${key}` }, label), inputs[key]);
+      }
+      if (kind === "ntfy") fields.append(h("p", { class: "hint" }, "Anyone who knows a topic on ntfy.sh can read it: pick a long, random one, or use your own server with an access token."));
+      if (kind === "webhook") fields.append(h("p", { class: "hint" }, "Gets a JSON POST. With a secret, an X-DiskTree-Signature header carries sha256= and the HMAC-SHA256 of the body."));
+    };
+    drawFields();
+    const save = async () => {
+      const target = { kind };
+      for (const [key] of CHANNEL_KINDS[kind].fields) target[key] = inputs[key].value.trim();
+      try {
+        if (channel) await api(`/api/alerts/channels/${channel.id}`, { method: "PATCH", body: { name: name.value, target } });
+        else await api("/api/alerts/channels", { method: "POST", body: { name: name.value, target } });
+        close();
+        render();
+      } catch (e) { toast(e.message, true); }
+    };
+    return [h("h2", {}, channel ? `Edit ${channel.name}` : "Send alerts to…"),
+      h("label", { for: "ch-name" }, "Name"), name,
+      h("label", { for: "ch-kind" }, "Service"), kindSelect,
+      fields,
+      h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: save }, "Save"))];
+  });
+}
+
+function channelTarget(t) {
+  if (t.kind === "ntfy") return `${t.server.replace(/\/$/, "")}/${t.topic}`;
+  if (t.kind === "gotify") return t.server;
+  if (t.kind === "pushover") return `user ${t.user}`;
+  return t.url;
+}
+
+function rulesCard(rules) {
+  const number = (key, min, max) => h("input", { type: "number", min, max, value: rules[key], class: "inline-number", "aria-label": key });
+  const fields = {
+    disk_full_percent: number("disk_full_percent", 0, 99),
+    growth_week_percent: number("growth_week_percent", 0, 100),
+    forecast_days: number("forecast_days", 0, 365),
+    offline_hours: number("offline_hours", 0, 720),
+  };
+  const requests = h("input", { type: "checkbox", id: "rule-requests", checked: rules.requests });
+  const editable = state.me.admin;
+  for (const input of [...Object.values(fields), requests]) input.disabled = !editable;
+  const save = async () => {
+    const body = { requests: requests.checked };
+    for (const [key, input] of Object.entries(fields)) body[key] = Number(input.value) || 0;
+    try {
+      await api("/api/alerts/rules", { method: "PUT", body });
+      toast("Saved. Alerts are checked every minute.");
+    } catch (e) { toast(e.message, true); }
+  };
+  return h("div", { class: "card rules" },
+    h("h2", {}, "When to alert"),
+    h("p", {}, "A disk is at least ", fields.disk_full_percent, " % full."),
+    h("p", {}, "A disk grew by ", fields.growth_week_percent, " % of its size within a week."),
+    h("p", {}, "A disk will be full within ", fields.forecast_days, " days at the past month's rate."),
+    h("p", {}, "A server (a device nobody is at) hasn't reported for ", fields.offline_hours, " hours."),
+    h("p", {}, h("label", { class: "check", for: "rule-requests" }, requests,
+      " A request has waited 2 minutes for its device or approver. The DiskTree app on a phone only hears from the Hub while it's open; this tells you to open it.")),
+    h("p", { class: "hint" }, "0 turns a rule off."),
+    editable ? h("button", { class: "primary", onclick: save }, "Save") : null);
+}
+
+PAGES.alerts = async () => {
+  const [alerts, rules, channels] = await Promise.all([
+    api("/api/alerts"), api("/api/alerts/rules"),
+    state.me.admin ? api("/api/alerts/channels") : Promise.resolve(null),
+  ]);
+  const active = alerts.active.length
+    ? h("div", { class: "card" }, h("h2", {}, "Now"), alerts.active.map(alertRow))
+    : h("div", { class: "card empty" }, h("h2", {}, "All quiet"), h("p", {}, "No disk is near full, growing fast or about to fill, and every server is reporting."));
+  const recent = alerts.recent.length
+    ? h("div", { class: "card" }, h("h2", {}, "Over in the past 30 days"), alerts.recent.slice(0, 30).map(alertRow))
+    : null;
+  const channelCard = channels ? h("div", { class: "card table-wrap" },
+    h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Where alerts go"),
+      h("button", { onclick: () => channelDialog() }, "Add")),
+    channels.length ? h("table", { style: "margin-top:8px" }, h("tbody", {}, channels.map((c) => h("tr", {},
+      h("td", {}, c.name, h("div", { class: "sub" }, `${CHANNEL_KINDS[c.target.kind].label} · ${channelTarget(c.target)}`)),
+      h("td", { class: "small hide-narrow" }, !c.enabled ? h("span", { class: "dim" }, "off")
+        : c.last_error ? h("span", { class: "badge danger", title: c.last_error }, "failed")
+        : c.last_sent ? h("span", { class: "dim" }, `sent ${ago(c.last_sent)}`) : h("span", { class: "dim" }, "nothing sent yet")),
+      h("td", { class: "num" },
+        h("button", { class: "link", onclick: async () => {
+          try { await api(`/api/alerts/channels/${c.id}/test`, { method: "POST" }); toast(`Sent a test to ${c.name}.`); } catch (e) { toast(e.message, true); }
+          render();
+        } }, "Test"),
+        h("button", { class: "link", onclick: () => channelDialog(c) }, "Edit"),
+        h("button", { class: "link", onclick: async () => {
+          try { await api(`/api/alerts/channels/${c.id}`, { method: "PATCH", body: { enabled: !c.enabled } }); render(); } catch (e) { toast(e.message, true); }
+        } }, c.enabled ? "Turn off" : "Turn on"),
+        h("button", { class: "link", onclick: async () => {
+          try { await api(`/api/alerts/channels/${c.id}`, { method: "DELETE" }); render(); } catch (e) { toast(e.message, true); }
+        } }, "Remove")))))) : h("p", { class: "dim", style: "margin-top:8px" }, "Nowhere yet: alerts only show here. Add ntfy, Gotify, Pushover or a webhook to get them on your phone."),
+    h("p", { class: "hint" }, "Tokens and secrets stay on the Hub; they're never shown again.")) : null;
+  return [
+    h("div", { class: "page-head" }, h("div", { class: "grow" }, h("h1", {}, "Alerts"),
+      h("p", { class: "dim" }, "Checked every minute. You hear when something starts and when it's over."))),
+    h("div", { class: "stack" }, active, recent,
+      rulesCard(rules),
+      channelCard,
+      h("div", { class: "card" }, h("h2", {}, "Prometheus and Home Assistant"),
+        h("p", {}, "With DISKTREE_METRICS_TOKEN set, ", h("code", {}, "/metrics"), " serves Prometheus metrics and ",
+          h("code", {}, "/metrics/json"), " the same as JSON for a Home Assistant REST sensor. Both want the token as ",
+          h("code", {}, "Authorization: Bearer <token>"), ".")))];
 };
 
 // ----- Search -----------------------------------------------------------------

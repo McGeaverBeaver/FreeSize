@@ -191,6 +191,33 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX saved_searches_by_subject ON saved_searches (subject);
     ",
+    // 3: alerts and where they're sent.
+    "
+    CREATE TABLE alerts (
+        id INTEGER PRIMARY KEY,
+        -- The same while the problem lasts, e.g. disk_full:DEVICE:/mnt/user.
+        key TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        device_id TEXT,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        opened INTEGER NOT NULL,
+        resolved INTEGER
+    );
+    CREATE INDEX alerts_by_state ON alerts (resolved, key);
+
+    CREATE TABLE alert_channels (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        -- Where and how, with its token, as JSON.
+        target TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created INTEGER NOT NULL,
+        last_sent INTEGER,
+        last_error TEXT
+    );
+    ",
 ];
 
 impl Db {

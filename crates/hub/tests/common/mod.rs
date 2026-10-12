@@ -28,12 +28,17 @@ impl Drop for TestHub {
 }
 
 pub async fn start_hub(name: &str) -> TestHub {
+    start_hub_with(name, &[]).await
+}
+
+/// A Hub with extra command-line settings.
+pub async fn start_hub_with(name: &str, extra: &[&str]) -> TestHub {
     let idp = MockIdp::start().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let dir = std::env::temp_dir().join(format!("disktree-hub-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let config = Config::parse_from([
+    let mut args = vec![
         "disktree-hub",
         "--data",
         dir.to_str().unwrap(),
@@ -45,7 +50,9 @@ pub async fn start_hub(name: &str) -> TestHub {
         CLIENT_ID,
         "--oidc-client-secret",
         CLIENT_SECRET,
-    ]);
+    ];
+    args.extend_from_slice(extra);
+    let config = Config::parse_from(args);
     let state = AppState::open(config).unwrap();
     tokio::spawn(disktree_hub::serve(listener, state.clone()));
     TestHub {
@@ -161,6 +168,38 @@ impl Browser {
             request = request.header("X-CSRF-Token", token);
         }
         let response = request.send(body).unwrap();
+        self.finish(response)
+    }
+
+    /// A request with a JSON body and any method, e.g. PUT or PATCH.
+    pub fn send(&mut self, method: &str, url: &str, body: &Value) -> Response {
+        let request = ureq::http::Request::builder()
+            .method(method)
+            .uri(url)
+            .header("Content-Type", "application/json");
+        let request = match &self.cookie {
+            Some(cookie) => request.header("Cookie", format!("disktree_session={cookie}")),
+            None => request,
+        };
+        let request = match &self.csrf {
+            Some(token) => request.header("X-CSRF-Token", token),
+            None => request,
+        };
+        let response = self
+            .agent
+            .run(request.body(body.to_string()).unwrap())
+            .unwrap();
+        self.finish(response)
+    }
+
+    /// A GET with a bearer token, as Prometheus sends.
+    pub fn get_bearer(&mut self, url: &str, token: &str) -> Response {
+        let response = self
+            .agent
+            .get(url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .call()
+            .unwrap();
         self.finish(response)
     }
 

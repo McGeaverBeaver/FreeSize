@@ -58,6 +58,8 @@ async fn main() {
     tokio::task::spawn_blocking(move || seed(&url, &seed_state))
         .await
         .unwrap();
+    // Alerts for what was just seeded, rather than in a minute.
+    disktree_hub::alerts::check_now(&state).await.unwrap();
     println!(
         "DiskTree Hub demo on http://{hub_addr} (data in {})",
         data.display()
@@ -465,6 +467,16 @@ fn agentless(state: &AppState) {
         )
         .unwrap();
         disktree_hub::devices::store_scan(c, "DEMOPROXMOX", report).unwrap();
+        // Where alerts would go; off, so the demo sends nothing.
+        c.execute(
+            "INSERT INTO alert_channels (name, target, enabled, created)
+             VALUES ('Robert''s phone', ?1, 0, ?2)",
+            params![
+                r#"{"kind":"ntfy","server":"https://ntfy.sh","topic":"disktree-demo-7f3k","token":""}"#,
+                now
+            ],
+        )
+        .unwrap();
     });
 }
 

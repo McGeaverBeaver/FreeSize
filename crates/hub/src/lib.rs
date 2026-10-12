@@ -2,6 +2,7 @@
 //! paired devices report about their storage, and passes on actions an
 //! admin asks for, which each device carries out only after approving them.
 
+pub mod alerts;
 pub mod api;
 pub mod audit;
 pub mod auth;
@@ -12,6 +13,7 @@ pub mod db;
 pub mod devices;
 pub mod error;
 pub mod history;
+pub mod metrics;
 pub mod reports;
 pub mod web;
 
@@ -150,6 +152,22 @@ pub fn router(state: AppState) -> Router {
         .route("/api/scans/{id}/compare", get(reports::compare))
         .route("/api/scans/{id}/export", get(reports::export_scan))
         .route("/api/search", get(reports::search))
+        .route("/api/alerts", get(alerts::list))
+        .route(
+            "/api/alerts/rules",
+            get(alerts::get_rules).put(alerts::set_rules),
+        )
+        .route(
+            "/api/alerts/channels",
+            get(alerts::list_channels).post(alerts::add_channel),
+        )
+        .route(
+            "/api/alerts/channels/{id}",
+            axum::routing::patch(alerts::update_channel).delete(alerts::remove_channel),
+        )
+        .route("/api/alerts/channels/{id}/test", post(alerts::test_channel))
+        .route("/metrics", get(metrics::prometheus))
+        .route("/metrics/json", get(metrics::summary))
         .route(
             "/api/searches",
             get(reports::saved_searches).post(reports::save_search),
@@ -206,13 +224,16 @@ pub async fn run(config: Config) -> Result<(), String> {
 
 /// Serves on an open listener (tests use a random port).
 pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
-    axum::serve(
+    let checking = tokio::spawn(alerts::run(state.clone()));
+    let served = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(shutdown())
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string());
+    checking.abort();
+    served
 }
 
 async fn shutdown() {

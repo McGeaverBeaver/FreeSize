@@ -121,6 +121,14 @@ button.small, .button.small { padding: 4px 10px; font-size: 13px; }
 .chips { gap: 6px; }
 .chip { display: inline-flex; align-items: center; padding: 2px 2px 2px 10px; border-radius: 14px; background: var(--surface-2); font-size: 13px; }
 .chip button.link { padding: 0 8px; font-size: 15px; color: var(--dim); }
+.alert-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.alert-row:last-child { border-bottom: none; }
+.alert-row .badge { margin-top: 2px; min-width: 64px; text-align: center; }
+.rules p { margin: 0 0 12px; }
+.rules input.inline-number { width: 76px; display: inline-block; padding: 4px 8px; margin: 0 4px; }
+.alert-row .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+label.check { display: flex; gap: 8px; align-items: flex-start; font-weight: normal; margin: 0; }
+label.check input { margin-top: 4px; }
 .up { color: var(--warn); }
 .down { color: var(--ok); }
 pre.command { background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0 0 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }

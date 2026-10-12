@@ -110,6 +110,8 @@ pub struct DeviceSummary {
     pub approver_name: Option<String>,
     /// No agent runs on it: its scans are uploaded as files.
     pub agentless: bool,
+    /// Alerts on now, not counting waiting requests.
+    pub alerts: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -172,7 +174,9 @@ pub(crate) fn device_summaries(
                 d.last_seen,
                 (SELECT count(*) FROM commands m WHERE m.device_id = d.id
                    AND m.state IN ('queued', 'delivered', 'shown', 'needs_approver')),
-                d.agentless
+                d.agentless,
+                (SELECT count(*) FROM alerts a WHERE a.device_id = d.id AND a.resolved IS NULL
+                   AND a.kind != 'request')
          FROM devices d JOIN device_groups g ON g.id = d.group_id
          WHERE d.removed = 0 AND (?1 IS NULL OR d.id = ?1)
          ORDER BY d.name COLLATE NOCASE",
@@ -199,6 +203,7 @@ pub(crate) fn device_summaries(
                 waiting: r.get(9)?,
                 approver_name: None,
                 agentless,
+                alerts: r.get(11)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -417,6 +422,11 @@ pub async fn remove(
             tx.execute("DELETE FROM disks WHERE device_id = ?1", [&id])?;
             tx.execute("DELETE FROM disk_samples WHERE device_id = ?1", [&id])?;
             tx.execute("DELETE FROM apps WHERE device_id = ?1", [&id])?;
+            // Its alerts end quietly.
+            tx.execute(
+                "UPDATE alerts SET resolved = ?1 WHERE device_id = ?2 AND resolved IS NULL",
+                params![now(), id],
+            )?;
             tx.execute(
                 "UPDATE commands SET state = 'cancelled', updated = ?1
                  WHERE device_id = ?2 AND state IN ('queued', 'delivered', 'shown', 'needs_approver')",
