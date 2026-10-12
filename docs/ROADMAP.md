@@ -34,6 +34,7 @@ else that can delete:
 
 - 0.4.1: Open the selected file in its usual app (on Android through
   MediaStore, so viewers can read it).
+- 0.5.1: tap a file type to list its files.
 - 0.5 (phase 2d): icons on the treemap (app, game or kind of content),
   the bubble view with zoom and a tappable path, green outlines on
   rebuildable folders, app and game icons for folders on every platform

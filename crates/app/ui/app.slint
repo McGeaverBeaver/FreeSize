@@ -92,6 +92,8 @@ export struct SheetAction {
 }
 
 export struct TypeRow {
+    /// The extension without the dot; empty for files without one.
+    key: string,
     label: string,
     size: string,
     files: string,
@@ -588,55 +590,82 @@ component MapView inherits Rectangle {
 component LargestPane inherits Rectangle {
     in property <[FileRow]> files;
     in property <int> selected-id;
+    /// Set when only one file type is listed.
+    in property <string> filter;
     callback select(int);
+    callback clear-filter();
 
-    ListView {
-        for file in root.files: Rectangle {
-            property <bool> selected: file.id == root.selected-id;
-            height: 46px;
-            background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
-            touch := TouchArea {
-                clicked => {
-                    root.select(file.id);
+    VerticalLayout {
+        if root.filter != "": Rectangle {
+            background: Palette.alternate-background;
+            HorizontalLayout {
+                padding: 6px;
+                padding-left: 10px;
+                spacing: 8px;
+                Text {
+                    text: root.filter;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                    font-weight: 600;
+                }
+
+                Button {
+                    text: "Show all";
+                    clicked => {
+                        root.clear-filter();
+                    }
                 }
             }
+        }
+        ListView {
+            for file in root.files: Rectangle {
+                property <bool> selected: file.id == root.selected-id;
+                height: 46px;
+                background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
+                touch := TouchArea {
+                    clicked => {
+                        root.select(file.id);
+                    }
+                }
 
-            HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 10px;
-                spacing: 8px;
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 1;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: file.name;
+                            overflow: elide;
+                            color: selected ? Palette.selection-foreground : Palette.foreground;
+                        }
+
+                        Text {
+                            text: file.folder;
+                            overflow: elide;
+                            font-size: 11px;
+                            color: selected ? Palette.selection-foreground : Theme.dim;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 64px;
+                        SizeBar {
+                            width: 100%;
+                            fraction: file.fraction;
+                            fill: selected ? Palette.selection-foreground : Palette.accent-background;
+                        }
+                    }
+
                     Text {
-                        text: file.name;
-                        overflow: elide;
+                        text: file.size;
+                        width: 70px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
                         color: selected ? Palette.selection-foreground : Palette.foreground;
                     }
-
-                    Text {
-                        text: file.folder;
-                        overflow: elide;
-                        font-size: 11px;
-                        color: selected ? Palette.selection-foreground : Theme.dim;
-                    }
-                }
-
-                Rectangle {
-                    width: 64px;
-                    SizeBar {
-                        width: 100%;
-                        fraction: file.fraction;
-                        fill: selected ? Palette.selection-foreground : Palette.accent-background;
-                    }
-                }
-
-                Text {
-                    text: file.size;
-                    width: 70px;
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
-                    color: selected ? Palette.selection-foreground : Palette.foreground;
                 }
             }
         }
@@ -750,12 +779,21 @@ component CleanupPane inherits Rectangle {
     }
 }
 
+/// Size by file type. Tapping a type lists its files.
 component TypesPane inherits Rectangle {
     in property <[TypeRow]> types;
+    callback pick(string);
 
     ListView {
         for t in root.types: Rectangle {
             height: 36px;
+            background: type-touch.has-hover ? Palette.alternate-background : transparent;
+            type-touch := TouchArea {
+                clicked => {
+                    root.pick(t.key);
+                }
+            }
+
             HorizontalLayout {
                 padding-left: 10px;
                 padding-right: 10px;
@@ -1340,6 +1378,10 @@ export component AppWindow inherits Window {
     in property <[BubbleItem]> bubbles;
     in-out property <bool> bubbles-view;
     in property <[BubbleItem]> app-bubbles;
+    in property <string> files-filter;
+    /// The selected tab of each layout's tabs.
+    in-out property <int> wide-tab;
+    in-out property <int> compact-tab;
     in property <int> selected-id: -1;
     in property <string> selected-title;
     in property <string> selected-detail;
@@ -1385,6 +1427,8 @@ export component AppWindow inherits Window {
     callback bubbles-resized(length, length);
     callback map-view-changed();
     callback app-bubble(string);
+    callback type-picked(string);
+    callback clear-files-filter();
     callback app-bubbles-resized(length, length);
     callback size-mode-changed();
     callback go-up();
@@ -1599,6 +1643,7 @@ export component AppWindow inherits Window {
                     }
 
                     TabWidget {
+                        current-index <=> root.wide-tab;
                         Tab {
                             title: "Map";
                             MapView {
@@ -1626,8 +1671,12 @@ export component AppWindow inherits Window {
                             LargestPane {
                                 files: root.largest-files;
                                 selected-id: root.selected-id;
+                                filter: root.files-filter;
                                 select(id) => {
                                     root.select-node(id, true);
+                                }
+                                clear-filter => {
+                                    root.clear-files-filter();
                                 }
                             }
                         }
@@ -1636,6 +1685,9 @@ export component AppWindow inherits Window {
                             title: "File types";
                             TypesPane {
                                 types: root.file-types;
+                                pick(key) => {
+                                    root.type-picked(key);
+                                }
                             }
                         }
 
@@ -1657,6 +1709,7 @@ export component AppWindow inherits Window {
             }
             if !root.scanning && root.has-tree && root.compact: TabWidget {
                 vertical-stretch: 1;
+                current-index <=> root.compact-tab;
                 Tab {
                     title: "Folders";
                     TreePane {
@@ -1711,8 +1764,12 @@ export component AppWindow inherits Window {
                     LargestPane {
                         files: root.largest-files;
                         selected-id: root.selected-id;
+                        filter: root.files-filter;
                         select(id) => {
                             root.select-node(id, true);
+                        }
+                        clear-filter => {
+                            root.clear-files-filter();
                         }
                     }
                 }
@@ -1721,6 +1778,9 @@ export component AppWindow inherits Window {
                     title: "Types";
                     TypesPane {
                         types: root.file-types;
+                        pick(key) => {
+                            root.type-picked(key);
+                        }
                     }
                 }
 

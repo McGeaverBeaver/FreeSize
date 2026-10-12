@@ -7,6 +7,17 @@ use crate::tree::{NodeId, NodeKind, SizeMode, Tree, flags};
 
 /// The `n` largest files below `under`, largest first.
 pub fn largest_files(tree: &Tree, under: NodeId, mode: SizeMode, n: usize) -> Vec<NodeId> {
+    largest_files_where(tree, under, mode, n, |_| true)
+}
+
+/// Like [`largest_files`], counting only files `keep` accepts.
+pub fn largest_files_where(
+    tree: &Tree,
+    under: NodeId,
+    mode: SizeMode,
+    n: usize,
+    keep: impl Fn(NodeId) -> bool,
+) -> Vec<NodeId> {
     if n == 0 {
         return Vec::new();
     }
@@ -14,7 +25,7 @@ pub fn largest_files(tree: &Tree, under: NodeId, mode: SizeMode, n: usize) -> Ve
     let mut heap: BinaryHeap<Reverse<(u64, NodeId)>> = BinaryHeap::with_capacity(n + 1);
     for id in tree.descendants(under) {
         let node = tree.node(id);
-        if node.kind == NodeKind::Dir || node.has(flags::HARDLINK_DUP) {
+        if node.kind == NodeKind::Dir || node.has(flags::HARDLINK_DUP) || !keep(id) {
             continue;
         }
         let size = node.size_in(mode);
@@ -73,4 +84,13 @@ pub fn extension_stats(tree: &Tree, under: NodeId, mode: SizeMode) -> Vec<Extens
             .then_with(|| a.extension.cmp(&b.extension))
     });
     out
+}
+
+/// Whether `id` has the extension `ext` (lower case, without the dot), as
+/// [`extension_stats`] groups them; an empty `ext` matches files without one.
+pub fn has_extension(tree: &Tree, id: NodeId, ext: &str) -> bool {
+    match tree.extension(id) {
+        Some(own) => own.eq_ignore_ascii_case(ext.as_bytes()),
+        None => ext.is_empty(),
+    }
 }

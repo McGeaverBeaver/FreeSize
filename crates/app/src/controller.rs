@@ -14,7 +14,7 @@ use disktree_core::treemap::{self, Rect, TreemapOptions};
 use disktree_core::{
     DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
     ScanResult, SizeMode, Tree, disk_space, duplicate_candidates, extension_stats, format_count,
-    format_size, kinds, largest_files, rebuildable, scan,
+    format_size, has_extension, kinds, largest_files, largest_files_where, rebuildable, scan,
 };
 use slint::{
     Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel,
@@ -37,6 +37,8 @@ use crate::{
 /// Icons beyond the kinds of content (see `Icons.of` in the UI).
 const ICON_REBUILD: i32 = 12;
 const ICON_MORE: i32 = 13;
+/// Most files listed when the list is limited to one type.
+const MAX_OF_TYPE: usize = 1000;
 
 /// Result handed from a worker thread to the UI thread.
 type Slot<T> = Arc<Mutex<Option<T>>>;
@@ -117,6 +119,8 @@ pub struct Controller {
     app_zoom: Option<String>,
     app_bubble_size: (f32, f32),
     app_bubble_rows: Rc<VecModel<BubbleItem>>,
+    /// The file type the files list is limited to.
+    type_filter: Option<String>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
     deletion: Option<RunningDelete>,
@@ -189,6 +193,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             app_zoom: None,
             app_bubble_size: (0.0, 0.0),
             app_bubble_rows: Rc::new(VecModel::default()),
+            type_filter: None,
             summary: None,
             scan: None,
             deletion: None,
@@ -237,6 +242,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
         .bubbles_resized(w, h));
     on!(ui, on_map_view_changed, weak, |c| c.update_map());
     on!(ui, on_app_bubble, weak, |c, key| c.app_bubble(key.as_str()));
+    on!(ui, on_type_picked, weak, |c, key| c.pick_type(key.as_str()));
+    on!(ui, on_clear_files_filter, weak, |c| c.clear_type_filter());
     on!(ui, on_app_bubbles_resized, weak, |c, w, h| c
         .app_bubbles_resized(w, h));
     on!(ui, on_size_mode_changed, weak, |c| c.size_mode_changed());
@@ -612,6 +619,7 @@ impl Controller {
             cancelled: result.cancelled,
         });
         self.owners.clear();
+        self.type_filter = None;
         let tree = self.tree.insert(result.tree);
         self.rebuildable = rebuildable(tree, tree.root())
             .into_iter()
@@ -1571,9 +1579,49 @@ impl Controller {
         let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
             return;
         };
-        let total = tree.node(self.focus).size_in(self.mode).max(1) as f64;
+        let folder_total = tree.node(self.focus).size_in(self.mode).max(1) as f64;
+        let stats = extension_stats(tree, self.focus, self.mode);
+        // Bars compare a listed file with all files of its type when the
+        // list shows one type, else with the whole folder.
+        let total = self
+            .type_filter
+            .as_ref()
+            .and_then(|ext| stats.iter().find(|s| &s.extension == ext))
+            .map_or(folder_total, |s| s.size.max(1) as f64);
 
-        let files: Vec<FileRow> = largest_files(tree, self.focus, self.mode, 100)
+        let found = match &self.type_filter {
+            Some(ext) => largest_files_where(tree, self.focus, self.mode, MAX_OF_TYPE, |id| {
+                has_extension(tree, id, ext)
+            }),
+            None => largest_files(tree, self.focus, self.mode, 100),
+        };
+        ui.set_files_filter(match &self.type_filter {
+            Some(ext) => {
+                let name = if ext.is_empty() {
+                    "Files without an extension".to_string()
+                } else {
+                    format!("Only .{ext}")
+                };
+                let (count, bytes) = stats
+                    .iter()
+                    .find(|s| &s.extension == ext)
+                    .map_or((0, 0), |s| (s.files, s.size));
+                let mut text = format!(
+                    "{name} · {}, {}",
+                    plural(count, "file", "files"),
+                    format_size(bytes)
+                );
+                if count > MAX_OF_TYPE as u64 {
+                    text.push_str(&format!(
+                        " · biggest {} shown",
+                        format_count(MAX_OF_TYPE as u64)
+                    ));
+                }
+                text.into()
+            }
+            None => SharedString::new(),
+        });
+        let files: Vec<FileRow> = found
             .into_iter()
             .map(|id| {
                 let size = tree.node(id).size_in(self.mode);
@@ -1594,10 +1642,11 @@ impl Controller {
             .collect();
         ui.set_largest_files(ModelRc::new(VecModel::from(files)));
 
-        let types: Vec<TypeRow> = extension_stats(tree, self.focus, self.mode)
+        let types: Vec<TypeRow> = stats
             .into_iter()
             .take(60)
             .map(|stat| TypeRow {
+                key: stat.extension.as_str().into(),
                 label: if stat.extension.is_empty() {
                     "(no extension)".into()
                 } else {
@@ -1605,11 +1654,27 @@ impl Controller {
                 },
                 size: format_size(stat.size).into(),
                 files: plural(stat.files, "file", "files").into(),
-                fraction: (stat.size as f64 / total) as f32,
+                fraction: (stat.size as f64 / folder_total) as f32,
                 color: extension_color(&stat.extension),
             })
             .collect();
         ui.set_file_types(ModelRc::new(VecModel::from(types)));
+    }
+
+    /// Lists the files of one type, from the file types list.
+    fn pick_type(&mut self, extension: &str) {
+        self.type_filter = Some(extension.to_string());
+        self.update_lists();
+        if let Some(ui) = self.ui() {
+            // Show the files: the "Largest files" tab, or "Files" on phones.
+            ui.set_wide_tab(1);
+            ui.set_compact_tab(2);
+        }
+    }
+
+    fn clear_type_filter(&mut self) {
+        self.type_filter = None;
+        self.update_lists();
     }
 
     // ----- Actions --------------------------------------------------------

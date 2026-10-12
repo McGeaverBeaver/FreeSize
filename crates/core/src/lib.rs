@@ -33,5 +33,7 @@ pub use reclaim::{
 };
 pub use scan::{ProgressSnapshot, ScanOptions, ScanProgress, ScanResult, scan};
 pub use space::{DiskSpace, disk_space};
-pub use stats::{ExtensionStat, extension_stats, largest_files};
+pub use stats::{
+    ExtensionStat, extension_stats, has_extension, largest_files, largest_files_where,
+};
 pub use tree::{Descendants, NO_NODE, Node, NodeId, NodeKind, SizeMode, SortKey, Tree, flags};

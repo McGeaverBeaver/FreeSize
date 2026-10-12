@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use disktree_core::{
-    NodeKind, ScanOptions, ScanProgress, SizeMode, SortKey, Tree, extension_stats, flags,
-    largest_files, scan,
+    NodeId, NodeKind, ScanOptions, ScanProgress, SizeMode, SortKey, Tree, extension_stats, flags,
+    has_extension, largest_files, largest_files_where, scan,
 };
 
 fn write(path: &Path, len: usize) {
@@ -98,6 +98,21 @@ fn largest_files_and_extensions() {
     assert_eq!(exts[0].size, 5700);
     assert_eq!(exts[0].files, 2);
     assert!(exts.iter().any(|e| e.extension.is_empty() && e.size == 50));
+
+    // The files behind one row of the file types.
+    let named = |ids: Vec<NodeId>| -> Vec<String> {
+        ids.into_iter()
+            .map(|id| tree.name(id).into_owned())
+            .collect()
+    };
+    let mkv = largest_files_where(&tree, tree.root(), SizeMode::Logical, 10, |id| {
+        has_extension(&tree, id, "mkv")
+    });
+    assert_eq!(named(mkv), ["movie.MKV", "other.mkv"]);
+    let none = largest_files_where(&tree, tree.root(), SizeMode::Logical, 10, |id| {
+        has_extension(&tree, id, "")
+    });
+    assert_eq!(named(none), [".hidden"]);
 }
 
 #[test]

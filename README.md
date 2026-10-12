@@ -34,6 +34,8 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   and AppData by the program inside; on macOS, `.app` bundles and their
   folders in `~/Library`.
 - **Largest files** and **file types** (size by extension) for the selected folder.
+  Tap a file type to list just those files, biggest first, then select one
+  to open or delete it.
 - **Clean up** tab for the scanned folder: folders that tools rebuild
   (`node_modules`, Rust `target`, `.gradle`, Python virtual environments,
   package manager caches, …) with how to get each back, large files nobody has
