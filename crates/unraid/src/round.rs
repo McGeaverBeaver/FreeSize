@@ -114,14 +114,16 @@ pub fn round(
 
     // Scan.
     let mut scans = Scans::default();
-    for name in choose(&array, tops, settings, now) {
+    let chosen = choose(&array, tops, settings, now);
+    let total = chosen.len();
+    for (i, name) in chosen.into_iter().enumerate() {
         let Some(disk) = array.disk(&name) else {
             continue;
         };
         let Some(mount) = disk.path.clone() else {
             continue;
         };
-        progress(&format!("scanning {name}"));
+        progress(&format!("scanning {name} ({} of {total})", i + 1));
         // ZFS datasets and btrfs subvolumes are filesystems of their own,
         // inside the pool.
         let options = ScanOptions {

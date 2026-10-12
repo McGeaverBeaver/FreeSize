@@ -725,7 +725,13 @@ The page (`unraid/plugin/root/usr/local/emhttp/plugins/disktree`):
 `DiskTree*.page` are Unraid's tabs, in a section of Tools of their own
 (`DiskSpace.page`). `disktree.js` draws them from `include/status.php` and
 posts to `include/action.php`, which checks Unraid's CSRF token, checks
-each value and runs `disktree` with every argument quoted. `rc.disktree`
+each value and runs `disktree` with every argument quoted. Until a round
+has finished (`last_round` empty) the page says it's still looking, with
+the daemon's `doing` ("scanning disk2 (2 of 5)"), rather than reading a
+missing Docker or VM section as switched off. Unraid's stylesheet keeps
+every table cell on one line with a fixed height; `disktree.css` undoes
+that for its own tables, and lists findings in grid rows (`.dt-rows`), so
+long paths wrap and the buttons stay on the page. `rc.disktree`
 starts the daemon at nice 19 with idle I/O priority; the array's events
 (`event/stopping`, `stopped`, `started`) stop it before the disks unmount
 and start it again. `scripts/unraid-plugin.sh` packs the static binary

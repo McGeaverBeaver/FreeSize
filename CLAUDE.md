@@ -71,19 +71,23 @@ compiling inside Docker.
 - 0.8.0 and 0.8.1 were never published; 0.8.2, which contains them, is
   public. (It was deleted by mistake once and put back with the same files
   and regenerated notes.)
-- 0.8.3: the same app as 0.8.2; the first release with the Hub's Docker
-  image and ARM (aarch64) downloads of the Hub and command line.
+- 0.8.3: the same Android app as 0.8.2; the first release with the Hub's
+  Docker image and ARM (aarch64) downloads of the Hub and command line.
+  The Unraid page fits the screen, groups Docker's findings, and says it's
+  still looking (which disk, of how many) until the first look is done.
 - Not yet done:
   1. Build 0.8.3 with `scripts/release.sh --draft`, have the owner make the
      ghcr.io package public once (Unraid pulls without logging in), then
      `scripts/release.sh --publish`. Claude Code runs as Remote Control in
      a tmux session; it only reaches Docker if that tmux was started from a
      login made after bobby joined the `docker` group.
-  2. The Unraid plugin has only been tested against a made-up server
-     folder. On the first real install, check that Tools → Disk Space →
-     DiskTree appears, `/var/log/disktree.log`, and
-     `disktree unraid status`. Unraid downloads the plugin from the
-     GitHub release, which works since the repository went public.
+  2. The owner installed the plugin (0.8.2) on their server on
+     2026-10-12: the tabs and Docker's findings showed. Still to check
+     there: `/var/log/disktree.log`, `disktree unraid status`, and 0.8.3's
+     page. Unraid downloads the plugin from the GitHub release, which
+     works since the repository went public. Unraid's own CSS is in
+     github.com/unraid/webgui (`emhttp/plugins/dynamix/styles`); render
+     the page against it before changing its layout.
   3. Next on the roadmap: phase 5 (Nextcloud and "do I have a copy?"),
      then phase 6 (a CCleaner-style junk cleaner on every device, every
      item with a blurb on what cleaning it means), plus the held-back items

@@ -102,6 +102,11 @@ else that can delete:
   of changing a list further down the screen; rows show when they're pressed.
 - 0.8.3: the Hub's Docker image (amd64 and arm64) is published with each
   release, and releases include the Hub and command line for ARM boards.
+  The Unraid plugin's page fits the screen (Unraid's table styles kept
+  every cell on one line and pushed the buttons off the page), groups
+  Docker's findings into safe, check first and in use (folded), and until
+  the first look is done says what it's looking at instead of that Docker
+  and the VMs are off.
 
 Left over:
 - From 2b/2c: old downloads and screen recordings as their own groups

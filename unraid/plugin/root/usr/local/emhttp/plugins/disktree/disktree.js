@@ -186,6 +186,34 @@
         : "DiskTree's background part isn't running yet. Start it with: /etc/rc.d/rc.disktree start");
   }
 
+  // How far the background part's look has got, while one runs or before
+  // the first has finished: what the page shows until then is incomplete.
+  function lookNote() {
+    const s = model.status;
+    if (!s || !model.running) return null;
+    const doing = s.doing && s.doing !== "idle" && s.doing !== "starting" ? s.doing : null;
+    if (!s.last_round) {
+      return h("div", { class: "dt-note dt-busy", role: "status" }, doing ? h("span", { class: "dt-spinner" }) : null,
+        h("div", {},
+          h("b", {}, doing ? `Looking at the server: ${doing}` : `The first look starts ${s.next_round ? until(s.next_round) : "in a minute"}`),
+          h("div", { class: "dt-muted" }, "The disks first, then Docker, the VMs and permissions. Everything shows here when it's done, without reloading; a big array takes a few minutes.")));
+    }
+    if (!doing) return null;
+    return h("div", { class: "dt-note dt-busy", role: "status" }, h("span", { class: "dt-spinner" }),
+      h("div", {},
+        h("b", {}, `Looking again: ${doing}`),
+        h("div", { class: "dt-muted" }, `Until it's done, this shows the last look, ${ago(s.last_round)}.`)));
+  }
+
+  // Why a part of the report is missing: not looked at yet, or the look
+  // was skipped; null once a look has run, when missing means it's off.
+  function notLooked() {
+    const s = model.status;
+    if (!s || !s.last_round) return "Not looked at yet: that comes after the disks are scanned.";
+    if (s.skipped) return `Not looked at: ${s.skipped}.`;
+    return null;
+  }
+
   // ----- Overview -----------------------------------------------------
 
   const SEGMENTS = ["#4f7ddb", "#3aa57a", "#d08a2e", "#9a5bd1", "#d0544f", "#2fa7b8", "#8a8f3c", "#c25b9a"];
@@ -216,11 +244,13 @@
     const docker = r.docker;
     const safe = docker ? docker.findings.filter((f) => f.safety === "safe") : [];
     const quarantined = (s.quarantine || []).reduce((n, b) => n + b.bytes, 0);
+    const look = lookNote();
     fill(root,
       notRunning(),
+      look,
       h("div", { class: "dt-head" },
         h("div", {},
-          h("p", {}, h("b", {}, `DiskTree ${s.version}`), ` on Unraid ${r.version || "?"} · now ${s.doing || "idle"}`),
+          h("p", {}, h("b", {}, `DiskTree ${s.version}`), ` on Unraid ${r.version || "?"}`, look ? "" : ` · now ${s.doing || "idle"}`),
           h("p", { class: "dt-muted" },
             `Last looked ${ago(s.last_round)}`,
             s.next_round && model.running ? ` · next ${until(s.next_round)}` : "",
@@ -250,7 +280,7 @@
       h("div", { class: "dt-facts" },
         fact("Docker", docker
           ? (safe.length ? `${size(safe.reduce((n, f) => n + f.bytes, 0))} safe to remove` : "nothing to remove")
-          : "not enabled", "DiskTreeApps"),
+          : notLooked() ? "not looked at yet" : "not enabled", "DiskTreeApps"),
         fact("Quarantine", s.quarantine && s.quarantine.length
           ? `${count(s.quarantine.length, "batch", "batches")}, ${size(quarantined)}` : "empty", "DiskTreeQuarantine"),
         fact("Hub", s.hub && s.hub.paired ? `${s.hub.name}${s.hub.connection ? ` (${s.hub.connection})` : ""}` : "not paired", "DiskTreeSettings")));
@@ -283,9 +313,11 @@
         form: h("div"),
         plan: h("div", { class: "dt-plan" }),
         moves: h("div"),
+        look: h("div"),
       };
       built.shares.asOf = h("p", { class: "dt-muted" });
       fill(root,
+        built.shares.look,
         h("h3", {}, "Shares and their disks"),
         built.shares.asOf,
         built.shares.table,
@@ -298,7 +330,8 @@
     const r = report();
     const colors = diskColors();
     const shares = r.shares || [];
-    fill(built.shares.asOf, `As of the last look, ${ago(model.status && model.status.last_round)}; disks that slept through it show their earlier scan, paler.`);
+    fill(built.shares.look, notRunning(), lookNote());
+    fill(built.shares.asOf, model.status && model.status.last_round ? `As of the last look, ${ago(model.status.last_round)}; disks that slept through it show their earlier scan, paler.` : null);
     fill(built.shares.table,
       shares.length ? h("table", { class: "dt-table" },
         h("tbody", {}, shares.map((s) => {
@@ -435,74 +468,120 @@
 
   // ----- Docker and VMs -----------------------------------------------
 
-  const SAFETY = { safe: ["safe to remove", "safe"], check: ["check first", "check"], protected: ["in use", "protected"] };
   const REMOVABLE = ["image", "dangling_image", "build_cache"];
+  // Groups folded open, kept across refreshes.
+  const unfolded = new Set();
 
   function canQuarantine(f) {
     return f.path && f.safety !== "protected" && ["appdata", "iso", "vdisk", "snapshot", "volume_folder"].includes(f.kind);
   }
 
-  function findingRows(findings, docker) {
-    return findings.map((f) => {
-      const removable = docker && REMOVABLE.includes(f.kind) && f.safety !== "protected";
-      const box = removable ? h("input", { type: "checkbox", checked: picked.docker.has(f.id), onchange: (e) => {
-        if (e.target.checked) picked.docker.add(f.id);
-        else picked.docker.delete(f.id);
-        renderApps();
-      } }) : null;
-      const [label, kind] = SAFETY[f.safety] || [f.safety, "plain"];
-      return h("tr", {},
-        h("td", { class: "dt-pick" }, box),
-        h("td", { class: "dt-tight" }, badge(label, kind)),
-        h("td", { class: "dt-wide" }, h("b", {}, f.label), h("div", { class: "dt-muted" }, f.reason), f.path ? h("div", { class: "dt-muted dt-path" }, f.path) : null),
-        h("td", { class: "dt-num" }, size(f.bytes)),
-        h("td", { class: "dt-actions" },
-          f.path ? browse(f.path, f.kind !== "appdata") : null,
-          canQuarantine(f) ? h("button", { type: "button", onclick: () => askQuarantine([f.path], f.reason) }, "Quarantine…") : null));
-    });
+  function canRemove(f) {
+    return REMOVABLE.includes(f.kind) && f.safety !== "protected";
+  }
+
+  function bytesOf(findings) {
+    return findings.reduce((n, f) => n + f.bytes, 0);
+  }
+
+  // A row: what it is, why it's listed and where, its size, and what can
+  // be done with it. `docker` rows can be picked for removal.
+  function findingRow(f, docker, pickColumn) {
+    const box = docker && canRemove(f) ? h("input", { type: "checkbox", checked: picked.docker.has(f.id), title: "Pick to remove", onchange: (e) => {
+      if (e.target.checked) picked.docker.add(f.id);
+      else picked.docker.delete(f.id);
+      renderApps();
+    } }) : null;
+    return h("div", { class: "dt-row" },
+      pickColumn ? h("div", { class: "dt-pick" }, box) : null,
+      h("div", { class: "dt-main" },
+        h("b", { class: "dt-label" }, f.label),
+        h("div", { class: "dt-muted" }, f.reason),
+        f.path ? h("div", { class: "dt-muted dt-path" }, f.path) : null),
+      h("div", { class: "dt-size" }, size(f.bytes)),
+      h("div", { class: "dt-actions" },
+        f.path ? browse(f.path, f.kind !== "appdata") : null,
+        canQuarantine(f) ? h("button", { type: "button", onclick: () => askQuarantine([f.path], f.reason) }, "Quarantine…") : null));
+  }
+
+  // Findings under a heading with their count and size. A folded group
+  // opens on a click and stays open across refreshes.
+  function findingGroup(key, title, findings, { docker, note, folded } = {}) {
+    if (!findings.length) return null;
+    const pickColumn = docker && findings.some(canRemove);
+    const chosen = findings.filter((f) => picked.docker.has(f.id));
+    const head = [h("b", {}, title), h("span", { class: "dt-muted" }, ` · ${count(findings.length, "item")}, ${size(bytesOf(findings))}`)];
+    const remove = !pickColumn ? null : chosen.length
+      ? h("button", { type: "button", class: "dt-danger", onclick: () => confirmDocker(chosen) }, `Remove ${count(chosen.length, "item")} (${size(bytesOf(chosen))})…`)
+      : h("span", { class: "dt-muted" }, "Tick what to remove");
+    const rows = h("div", { class: `dt-rows${pickColumn ? " dt-pickable" : ""}` }, findings.map((f) => findingRow(f, docker, pickColumn)));
+    const body = [note ? h("p", { class: "dt-muted" }, note) : null, rows];
+    if (folded) {
+      return h("details", { class: "dt-group", open: unfolded.has(key), ontoggle: (e) => {
+        if (e.target.open) unfolded.add(key);
+        else unfolded.delete(key);
+      } }, h("summary", {}, head), body);
+    }
+    return h("div", { class: "dt-group" }, h("div", { class: "dt-group-head" }, h("div", {}, head), remove), body);
+  }
+
+  function dockerPart(d) {
+    for (const id of [...picked.docker]) {
+      if (!d.findings.some((f) => f.id === id)) picked.docker.delete(id);
+    }
+    const of = (safety) => d.findings.filter((f) => f.safety === safety);
+    return [
+      h("p", { class: "dt-muted" },
+        d.running ? `${d.running_containers} of ${d.containers} containers running` : "Docker isn't running, so everything it holds is treated as in use",
+        d.location ? ` · ${d.mode === "folder" ? "folder" : "docker.img"} ${d.location}` : "",
+        d.image_size ? ` (${size(d.image_used)} used of ${size(d.image_size)})` : ""),
+      d.findings.some((f) => f.safety !== "protected") ? null : h("p", {}, "Nothing to clean up."),
+      findingGroup("docker-safe", "Safe to remove", of("safe"), { docker: true,
+        note: "Unused images can be downloaded again; the build cache is rebuilt when needed." }),
+      findingGroup("docker-check", "Check first", of("check"), { docker: true,
+        note: "Probably not needed, but you may want them back. Appdata folders go to the quarantine, where they can be put back; volumes, logs and what's inside containers are only shown: deal with them in the Docker tab." }),
+      findingGroup("docker-used", "In use", of("protected"), { docker: true, folded: true,
+        note: "Used by a container or by Docker itself, so never offered." }),
+    ];
+  }
+
+  function vmPart(vm) {
+    return [
+      vm.vms.length ? h("div", { class: "dt-rows" }, vm.vms.map((v) => h("div", { class: "dt-row" },
+        h("div", { class: "dt-main" },
+          h("b", { class: "dt-label" }, v.name), " ", v.running ? badge("running", "safe") : badge("stopped"),
+          v.disks.map((disk) => h("div", { class: "dt-path" }, disk.path,
+            disk.used !== null && disk.used !== undefined ? h("span", { class: "dt-muted" }, ` · ${size(disk.used)} used of ${size(disk.provisioned || disk.used)}`) : "")),
+          v.isos.map((iso) => h("div", { class: "dt-muted dt-path" }, `CD: ${iso}`)),
+          v.snapshots ? h("div", { class: "dt-muted" }, count(v.snapshots, "snapshot")) : null),
+        h("div", { class: "dt-size" }, size(v.disks.reduce((n, disk) => n + (disk.used || 0), 0))),
+        h("div", { class: "dt-actions" }, v.disks.length ? browse(v.disks[0].path, true) : null))))
+        : h("p", { class: "dt-muted" }, "No VMs."),
+      findingGroup("vm-unused", "Files no VM uses", vm.findings, {}),
+    ];
   }
 
   function renderApps() {
     const root = document.getElementById("dt-apps");
     if (!root || !model.loaded) return;
+    const s = model.status;
     const r = report();
-    const d = r.docker;
-    const vm = r.vms;
-    let dockerPart;
-    if (!d) {
-      dockerPart = h("p", { class: "dt-muted" }, "Docker isn't enabled.");
-    } else {
-      for (const id of [...picked.docker]) {
-        if (!d.findings.some((f) => f.id === id)) picked.docker.delete(id);
-      }
-      const chosen = d.findings.filter((f) => picked.docker.has(f.id));
-      dockerPart = h("div", {},
-        h("p", { class: "dt-muted" },
-          d.running ? `${d.running_containers} of ${d.containers} containers running` : "Docker isn't running, so everything it holds is treated as in use",
-          d.location ? ` · ${d.mode === "folder" ? "folder" : "docker.img"} ${d.location}` : "",
-          d.image_size ? ` (${size(d.image_used)} used of ${size(d.image_size)})` : ""),
-        h("table", { class: "dt-table" }, h("tbody", {}, findingRows(d.findings, true))),
-        h("p", {},
-          h("button", { type: "button", class: "dt-danger", disabled: !chosen.length, onclick: () => confirmDocker(chosen) },
-            chosen.length ? `Remove ${count(chosen.length, "item")} (${size(chosen.reduce((n, f) => n + f.bytes, 0))})…` : "Remove selected…"),
-          h("span", { class: "dt-muted" }, " Unused images can be downloaded again; the build cache is rebuilt when needed. Volumes, logs and what's inside containers are only shown: deal with them in the Docker tab.")));
+    // Every refresh would otherwise rebuild the lists under the pointer.
+    const key = JSON.stringify([model.running, s && [s.last_round, s.doing, s.skipped], r.docker, r.vms, [...picked.docker]]);
+    if (built.appsKey === key) return;
+    built.appsKey = key;
+    if (!s) {
+      fill(root, notRunning());
+      return;
     }
-    let vmPart;
-    if (!vm) {
-      vmPart = h("p", { class: "dt-muted" }, "VMs aren't enabled.");
-    } else {
-      vmPart = h("div", {},
-        vm.vms.length ? h("table", { class: "dt-table" }, h("tbody", {}, vm.vms.map((v) =>
-          h("tr", {},
-            h("td", { class: "dt-name" }, h("b", {}, v.name), " ", v.running ? badge("running", "safe") : badge("stopped")),
-            h("td", { class: "dt-wide" },
-              v.disks.map((disk) => h("div", { class: "dt-path" }, disk.path,
-                disk.used !== null && disk.used !== undefined ? ` · ${size(disk.used)} used of ${size(disk.provisioned || disk.used)}` : "")),
-              v.isos.map((iso) => h("div", { class: "dt-muted dt-path" }, `CD: ${iso}`)),
-              v.snapshots ? h("div", { class: "dt-muted" }, count(v.snapshots, "snapshot")) : null))))) : h("p", { class: "dt-muted" }, "No VMs."),
-        vm.findings.length ? h("div", {}, h("h4", {}, "Files no VM uses"), h("table", { class: "dt-table" }, h("tbody", {}, findingRows(vm.findings, false)))) : null);
-    }
-    fill(root, notRunning(), h("h3", {}, "Docker"), dockerPart, h("h3", {}, "VMs"), vmPart);
+    const missing = (off) => h("p", { class: "dt-muted" }, notLooked() || off);
+    fill(root,
+      notRunning(),
+      lookNote(),
+      h("h3", {}, "Docker"),
+      r.docker ? dockerPart(r.docker) : missing("Docker isn't enabled (Settings → Docker)."),
+      h("h3", {}, "VMs"),
+      r.vms ? vmPart(r.vms) : missing("VMs aren't enabled (Settings → VM Manager)."));
   }
 
   function confirmDocker(items) {

@@ -733,6 +733,10 @@ What it shows:
 - **Permissions**: files in shares that SMB may not reach. Only reported;
   Tools → New Permissions fixes them.
 
+Until its first look after starting is done, which takes a few minutes on
+a big array, the page says what it's looking at (which disk, of how many)
+and fills in by itself.
+
 What it does, only when asked:
 
 - **Quarantine**: moves files and folders aside on the disk they're on (a
