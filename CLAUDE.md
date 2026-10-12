@@ -55,7 +55,7 @@ moves the image's `latest` tag. Docker's storage is on the small root disk
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.8.2)
+## Where things stand (0.8.3)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -65,13 +65,17 @@ compiling inside Docker.
   opens as its own page with a back arrow; Back returns to the same spot on
   the home screen. Before, a tap changed a list further down the screen and
   seemed to do nothing. Rows also show when they're pressed.
-- 0.8.0 and 0.8.1 were never published (the owner tried 0.8.1's APK from a
-  draft, then had the draft deleted, since 0.8.2 contains it). 0.8.2 is
-  built and saved as a draft GitHub release.
+- 0.8.0 and 0.8.1 were never published; 0.8.2, which contains them, is
+  public. (It was deleted by mistake once and put back with the same files
+  and regenerated notes.)
+- 0.8.3: the same app as 0.8.2; the first release with the Hub's Docker
+  image and ARM (aarch64) downloads of the Hub and command line.
 - Not yet done:
-  1. Install 0.8.2's APK from the draft on the Pixel and try the group
-     pages, then publish the draft (it's the first public release since
-     0.7.0, so its notes cover 0.8.0 and 0.8.1 too).
+  1. Build 0.8.3 with `scripts/release.sh --draft`, have the owner make the
+     ghcr.io package public once (Unraid pulls without logging in), then
+     `scripts/release.sh --publish`. Claude Code runs as Remote Control in
+     a tmux session; it only reaches Docker if that tmux was started from a
+     login made after bobby joined the `docker` group.
   2. The Unraid plugin has only been tested against a made-up server
      folder. On the first real install, check that Tools → Disk Space →
      DiskTree appears, `/var/log/disktree.log`, and
@@ -81,5 +85,4 @@ compiling inside Docker.
      then phase 6 (a CCleaner-style junk cleaner on every device, every
      item with a blurb on what cleaning it means), plus the held-back items
      listed under Done in docs/ROADMAP.md.
-  4. No license chosen yet. The Hub's Docker image has never been pushed:
-     the release script does it since 0.8.2, once Docker is installed.
+  4. No license chosen yet.

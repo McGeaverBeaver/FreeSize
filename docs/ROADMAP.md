@@ -100,6 +100,8 @@ else that can delete:
   really clear, and offers it only when that's worth it.
 - 0.8.2: each group of apps opens as its own page with a way back, instead
   of changing a list further down the screen; rows show when they're pressed.
+- 0.8.3: the Hub's Docker image (amd64 and arm64) is published with each
+  release, and releases include the Hub and command line for ARM boards.
 
 Left over:
 - From 2b/2c: old downloads and screen recordings as their own groups
