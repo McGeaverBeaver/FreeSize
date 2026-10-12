@@ -995,6 +995,7 @@ export component AppWindow inherits Window {
     in property <bool> can-delete;
     in property <bool> can-go-up;
     in property <bool> can-reveal;
+    in property <bool> can-open;
     in property <bool> can-browse;
     in property <string> delete-label: "Move to Trash";
     in property <bool> needs-permission;
@@ -1033,6 +1034,7 @@ export component AppWindow inherits Window {
     callback size-mode-changed();
     callback go-up();
     callback reveal-selected();
+    callback open-selected();
     callback delete-requested();
     callback delete-confirmed();
     callback delete-cancelled();
@@ -1393,8 +1395,16 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    Button {
+                        text: "Open";
+                        enabled: root.can-open;
+                        clicked => {
+                            root.open-selected();
+                        }
+                    }
+
                     if root.can-reveal: Button {
-                        text: root.compact ? "Open" : "Show in folder";
+                        text: root.compact ? "Folder" : "Show in folder";
                         clicked => {
                             root.reveal-selected();
                         }

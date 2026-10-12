@@ -991,7 +991,7 @@ fn files_query<'local>(
     env: &mut Env<'local>,
     activity: &JObject,
     projection: &[&str],
-    selection: Option<&str>,
+    selection: Option<(&str, &[&str])>,
     match_trashed: Option<i32>,
 ) -> JniResult<JObject<'local>> {
     let volume = env.new_string("external")?;
@@ -1003,17 +1003,9 @@ fn files_query<'local>(
             &[JValue::Object(&volume)],
         )?
         .l()?;
-    let columns = env.new_object_array(
-        projection.len() as i32,
-        jni_str!("java/lang/String"),
-        JObject::null(),
-    )?;
-    for (i, name) in projection.iter().enumerate() {
-        let name = env.new_string(name)?;
-        columns.set_element(env, i, &name)?;
-    }
+    let columns = string_array(env, projection)?;
     let args = env.new_object(jni_str!("android/os/Bundle"), jni_sig!("()V"), &[])?;
-    if let Some(selection) = selection {
+    if let Some((selection, values)) = selection {
         // ContentResolver.QUERY_ARG_SQL_SELECTION
         let key = env.new_string("android:query-arg-sql-selection")?;
         let value = env.new_string(selection)?;
@@ -1023,6 +1015,17 @@ fn files_query<'local>(
             jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
             &[JValue::Object(&key), JValue::Object(&value)],
         )?;
+        if !values.is_empty() {
+            // ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, for the `?`s.
+            let key = env.new_string("android:query-arg-sql-selection-args")?;
+            let array = string_array(env, values)?;
+            env.call_method(
+                &args,
+                jni_str!("putStringArray"),
+                jni_sig!("(Ljava/lang/String;[Ljava/lang/String;)V"),
+                &[JValue::Object(&key), JValue::Object(&array)],
+            )?;
+        }
     }
     if let Some(mode) = match_trashed {
         // MediaStore.QUERY_ARG_MATCH_TRASHED
@@ -1054,6 +1057,19 @@ fn files_query<'local>(
         ],
     )?
     .l()
+}
+
+fn string_array<'local>(env: &mut Env<'local>, values: &[&str]) -> JniResult<JObjectArray<'local>> {
+    let array = env.new_object_array(
+        values.len() as i32,
+        jni_str!("java/lang/String"),
+        JObject::null(),
+    )?;
+    for (i, value) in values.iter().enumerate() {
+        let value = env.new_string(value)?;
+        array.set_element(env, i, &value)?;
+    }
+    Ok(array)
 }
 
 fn column_index(env: &mut Env, cursor: &JObject, name: &str) -> JniResult<i32> {
@@ -1143,7 +1159,7 @@ pub fn media_rows() -> Vec<(String, u64, PathBuf)> {
             env,
             activity,
             &["owner_package_name", "_size", "_data"],
-            Some("owner_package_name IS NOT NULL AND _size > 0"),
+            Some(("owner_package_name IS NOT NULL AND _size > 0", &[])),
             None,
         )?;
         if cursor.is_null() {
@@ -1499,4 +1515,179 @@ fn app_usage(
             ..AppUsage::default()
         }),
     ))
+}
+
+/// What happened when asked to open a file.
+pub enum Opened {
+    /// An app is showing it.
+    Shown,
+    /// Android hasn't indexed the file yet; it was asked to, so try again
+    /// in a moment.
+    Indexing,
+}
+
+/// Opens a file in shared storage with the app that normally shows that kind
+/// of file. Other apps can't read DiskTree's file paths, so the file is
+/// handed over as its MediaStore entry with permission to read it.
+pub fn open_file(path: &std::path::Path) -> Result<Opened, String> {
+    let path_text = path.to_string_lossy().into_owned();
+    let found = with_activity(|env, activity| {
+        let cursor = files_query(
+            env,
+            activity,
+            &["_id", "mime_type"],
+            Some(("_data = ?", &[path_text.as_str()])),
+            None,
+        )?;
+        if cursor.is_null() {
+            return Ok(None);
+        }
+        let read = |env: &mut Env| -> JniResult<Option<(i64, Option<String>)>> {
+            if !env
+                .call_method(&cursor, jni_str!("moveToFirst"), jni_sig!("()Z"), &[])?
+                .z()?
+            {
+                return Ok(None);
+            }
+            let id_column = column_index(env, &cursor, "_id")?;
+            let mime_column = column_index(env, &cursor, "mime_type")?;
+            let id = env
+                .call_method(
+                    &cursor,
+                    jni_str!("getLong"),
+                    jni_sig!("(I)J"),
+                    &[JValue::Int(id_column)],
+                )?
+                .j()?;
+            let mime = env
+                .call_method(
+                    &cursor,
+                    jni_str!("getString"),
+                    jni_sig!("(I)Ljava/lang/String;"),
+                    &[JValue::Int(mime_column)],
+                )?
+                .l()?;
+            Ok(Some((id, java_string_opt(env, mime)?)))
+        };
+        let row = read(env);
+        if row.is_err() {
+            env.exception_clear();
+        }
+        let _ = optional(env, |env| {
+            env.call_method(&cursor, jni_str!("close"), jni_sig!("()V"), &[])
+                .map(|_| ())
+        });
+        row
+    })
+    .map_err(|err| format!("couldn't look the file up: {err}"))?;
+
+    let Some((id, mime)) = found else {
+        let result = with_activity(|env, activity| {
+            let paths = string_array(env, &[path_text.as_str()])?;
+            env.call_static_method(
+                jni_str!("android/media/MediaScannerConnection"),
+                jni_str!("scanFile"),
+                jni_sig!("(Landroid/content/Context;[Ljava/lang/String;[Ljava/lang/String;Landroid/media/MediaScannerConnection$OnScanCompletedListener;)V"),
+                &[
+                    JValue::Object(activity),
+                    JValue::Object(&paths),
+                    JValue::Object(&JObject::null()),
+                    JValue::Object(&JObject::null()),
+                ],
+            )?;
+            Ok(())
+        });
+        return match result {
+            Ok(()) => Ok(Opened::Indexing),
+            Err(err) => Err(format!("Android couldn't index the file: {err}")),
+        };
+    };
+
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    with_activity(|env, activity| {
+        let mime = match mime.filter(|m| !m.is_empty()) {
+            Some(mime) => mime,
+            None => optional(env, |env| {
+                let map = env
+                    .call_static_method(
+                        jni_str!("android/webkit/MimeTypeMap"),
+                        jni_str!("getSingleton"),
+                        jni_sig!("()Landroid/webkit/MimeTypeMap;"),
+                        &[],
+                    )?
+                    .l()?;
+                let ext = env.new_string(&extension)?;
+                let mime = env
+                    .call_method(
+                        &map,
+                        jni_str!("getMimeTypeFromExtension"),
+                        jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                        &[JValue::Object(&ext)],
+                    )?
+                    .l()?;
+                java_string_opt(env, mime)
+            })
+            .flatten()
+            .unwrap_or_else(|| "*/*".into()),
+        };
+        // Photos, videos and music open best from their own collection.
+        let collection = if mime.starts_with("image/") {
+            Some(jni_str!("android/provider/MediaStore$Images$Media"))
+        } else if mime.starts_with("video/") {
+            Some(jni_str!("android/provider/MediaStore$Video$Media"))
+        } else if mime.starts_with("audio/") {
+            Some(jni_str!("android/provider/MediaStore$Audio$Media"))
+        } else {
+            None
+        };
+        let volume = env.new_string("external")?;
+        let base = env
+            .call_static_method(
+                collection.unwrap_or(jni_str!("android/provider/MediaStore$Files")),
+                jni_str!("getContentUri"),
+                jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(&volume)],
+            )?
+            .l()?;
+        let uri = env
+            .call_static_method(
+                jni_str!("android/content/ContentUris"),
+                jni_str!("withAppendedId"),
+                jni_sig!("(Landroid/net/Uri;J)Landroid/net/Uri;"),
+                &[JValue::Object(&base), JValue::Long(id)],
+            )?
+            .l()?;
+        let action = env.new_string("android.intent.action.VIEW")?;
+        let intent = env.new_object(
+            jni_str!("android/content/Intent"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[JValue::Object(&action)],
+        )?;
+        let mime = env.new_string(&mime)?;
+        env.call_method(
+            &intent,
+            jni_str!("setDataAndType"),
+            jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;"),
+            &[JValue::Object(&uri), JValue::Object(&mime)],
+        )?;
+        // Intent.FLAG_GRANT_READ_URI_PERMISSION
+        env.call_method(
+            &intent,
+            jni_str!("addFlags"),
+            jni_sig!("(I)Landroid/content/Intent;"),
+            &[JValue::Int(1)],
+        )?;
+        env.call_method(
+            activity,
+            jni_str!("startActivity"),
+            jni_sig!("(Landroid/content/Intent;)V"),
+            &[JValue::Object(&intent)],
+        )?;
+        Ok(())
+    })
+    .map(|()| Opened::Shown)
+    .map_err(|_| "No app on this phone opens this kind of file.".to_string())
 }

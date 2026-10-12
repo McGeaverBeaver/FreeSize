@@ -63,6 +63,42 @@ pub fn reveal(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// How opening a file went.
+pub enum Open {
+    Done,
+    /// Not possible yet (Android is still indexing the file); try again in
+    /// a moment.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    TryAgain,
+}
+
+/// Opens `path` with the app that normally opens that kind of file, or a
+/// folder in the file manager.
+pub fn open(path: &Path) -> Result<Open, String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::android::open_file(path).map(|opened| match opened {
+            crate::android::Opened::Shown => Open::Done,
+            crate::android::Opened::Indexing => Open::TryAgain,
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        #[cfg(windows)]
+        let spawned = {
+            use std::os::windows::process::CommandExt;
+            std::process::Command::new("explorer")
+                .raw_arg(format!("\"{}\"", path.display()))
+                .spawn()
+        };
+        #[cfg(target_os = "macos")]
+        let spawned = std::process::Command::new("open").arg(path).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let spawned = std::process::Command::new("xdg-open").arg(path).spawn();
+        spawned.map(|_| Open::Done).map_err(|e| e.to_string())
+    }
+}
+
 /// Moves `path` to the trash, or on Android deletes it permanently.
 pub fn delete(path: &Path) -> Result<(), String> {
     #[cfg(not(target_os = "android"))]

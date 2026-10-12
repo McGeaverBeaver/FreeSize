@@ -34,7 +34,9 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   files differ a lot between the two.
 - **Delete**: moves to the Recycle Bin or Trash on desktop, and permanently
   deletes (after confirming) on Android. Totals update without rescanning.
-- **Show in folder** opens Explorer, Finder or the Linux file manager.
+- **Open** shows the selected file in the app that normally opens it (photo
+  viewer, PDF reader, video player), so you can check it before deleting.
+  **Show in folder** opens Explorer, Finder or the Linux file manager.
 - Flags unreadable folders, other filesystems, cloud-only files (OneDrive,
   iCloud) and hard links. Hard links are counted once.
 - **Phone layout** with tabs below 760 px width, so it also works on small

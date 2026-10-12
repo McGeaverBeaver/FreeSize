@@ -291,6 +291,13 @@ Android's clear-cache dialog decides itself how much to clear, so the
 controller notes the total cache before opening it and compares after the
 user comes back; the card then says what was freed.
 
+Open hands a file to another app as its MediaStore entry
+(`content://media/external/...`, from a query on `_data`) with
+`FLAG_GRANT_READ_URI_PERMISSION`, because other apps can't read DiskTree's
+file paths. A file MediaStore hasn't indexed yet is passed to
+`MediaScannerConnection.scanFile`, and the controller retries for a few
+seconds.
+
 The actions go through intents: `ACTION_DELETE` to uninstall (needs
 `REQUEST_DELETE_PACKAGES`), `market://` links for the store, the app's info
 page for archiving and clearing its cache, and

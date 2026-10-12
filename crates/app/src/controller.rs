@@ -123,6 +123,9 @@ pub struct Controller {
     dupes: DupeSearch,
     /// Past sizes of the drives on the start screen.
     drive_log: DriveLog,
+    /// A file to open once Android has indexed it, and how many times that
+    /// was tried.
+    pending_open: Option<(PathBuf, u32)>,
     timer: Timer,
     ticks: u64,
 }
@@ -173,6 +176,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             remeasure: false,
             dupes: DupeSearch::Idle,
             drive_log: DriveLog::default(),
+            pending_open: None,
             timer: Timer::default(),
             ticks: 0,
         })
@@ -200,6 +204,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     on!(ui, on_size_mode_changed, weak, |c| c.size_mode_changed());
     on!(ui, on_go_up, weak, |c| c.go_up());
     on!(ui, on_reveal_selected, weak, |c| c.reveal_selected());
+    on!(ui, on_open_selected, weak, |c| c.open_selected());
     on!(ui, on_delete_requested, weak, |c| c.request_delete());
     on!(ui, on_delete_confirmed, weak, |c| c.confirm_delete());
     on!(ui, on_delete_cancelled, weak, |c| c.cancel_delete());
@@ -411,6 +416,30 @@ impl Controller {
             }
         }
 
+        if let Some((path, tries)) = &mut self.pending_open
+            && self.ticks.is_multiple_of(5)
+        {
+            *tries += 1;
+            let (path, tries) = (path.clone(), *tries);
+            match actions::open(&path) {
+                Ok(actions::Open::TryAgain) if tries < 10 => {}
+                Ok(actions::Open::TryAgain) => {
+                    self.pending_open = None;
+                    self.set_status(
+                        "Android hasn't indexed this file yet. Try Open again in a moment.",
+                    );
+                }
+                Ok(actions::Open::Done) => {
+                    self.pending_open = None;
+                    self.refresh_status();
+                }
+                Err(err) => {
+                    self.pending_open = None;
+                    self.set_status(&err);
+                }
+            }
+        }
+
         if let Some(job) = &self.apk_job
             && let Some(result) = take(job)
         {
@@ -428,7 +457,8 @@ impl Controller {
             || self.return_watch.is_some()
             || self.apk_job.is_some()
             || self.cleanup_job.is_some()
-            || matches!(self.dupes, DupeSearch::Running { .. });
+            || matches!(self.dupes, DupeSearch::Running { .. })
+            || self.pending_open.is_some();
         if !busy {
             self.timer.stop();
         }
@@ -1047,6 +1077,8 @@ impl Controller {
         ui.set_selected_title(title.into());
         ui.set_selected_detail(parts.join(" · ").into());
         ui.set_can_delete(id != tree.root() && self.deletion.is_none());
+        // Android has no file manager to open a folder in.
+        ui.set_can_open(!(cfg!(target_os = "android") && node.is_dir()));
         ui.set_can_go_up(self.focus != tree.root());
     }
 
@@ -1245,6 +1277,26 @@ impl Controller {
         };
         if let Err(err) = actions::reveal(&tree.path(self.selected)) {
             ui.set_status(format!("Could not open the file manager: {err}").into());
+        }
+    }
+
+    fn open_selected(&mut self) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        if self.selected == tree.root() && cfg!(target_os = "android") {
+            return;
+        }
+        let path = tree.path(self.selected);
+        let name = tree.name(self.selected).into_owned();
+        match actions::open(&path) {
+            Ok(actions::Open::Done) => {}
+            Ok(actions::Open::TryAgain) => {
+                self.set_status(&format!("Getting {name} ready to open…"));
+                self.pending_open = Some((path, 0));
+                self.ensure_ticking();
+            }
+            Err(err) => self.set_status(&format!("Could not open {name}: {err}")),
         }
     }
 
