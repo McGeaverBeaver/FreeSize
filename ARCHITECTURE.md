@@ -754,10 +754,18 @@ cross-compiled for `x86_64-pc-windows-gnu` with MinGW, plus the Hub for
 Linux (and the Hub and command line for ARM when the aarch64
 cross-compiler is there) and the Unraid plugin (the command line for
 `x86_64-unknown-linux-musl`, packed by `scripts/unraid-plugin.sh`). The Windows executables only import system DLLs,
-so they need no MinGW runtime. With `DISKTREE_IMAGE` set it also builds and
-pushes the Hub's Docker image for amd64 and arm64. The
-script only publishes a clean checkout that matches GitHub, and lets
-`gh release create --target` create the tag for that commit.
+so they need no MinGW runtime. It also builds the Hub's Docker image for
+amd64 and arm64 and pushes it to GitHub's registry, logged in with the
+GitHub CLI's token in a throwaway Docker config. The image is the
+Dockerfile's final stage with its `hub` stage replaced by the Hubs the
+release built (a named build context), so Docker compiles nothing: the
+build machine's big disk is a 9p share Docker can't keep layers on, and
+the root disk has little room. Those Hubs link to the build machine's
+glibc, so the script checks they need no newer one than the image's Debian
+has. A draft gets only the `<version>` tag; `--publish` makes the draft
+public and moves `latest`. The script only publishes a clean checkout that
+matches GitHub, and lets `gh release create --target` create the tag for
+that commit.
 
 ## Possible next steps
 

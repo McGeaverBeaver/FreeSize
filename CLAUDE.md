@@ -47,7 +47,13 @@ the GitHub release; `--build-only` just builds into `dist/`, `--draft`
 publishes a draft. A release needs about 15 GB of free disk. The Android
 signing key and its password are in `~/.android/`: never print, copy, move
 or commit them. The release needs `musl-tools` (for the Unraid plugin) since
-0.8.0.
+0.8.0, and since 0.8.2 Docker with buildx (bobby in the `docker` group;
+`sg docker -c '...'` works before logging in again) and
+`gcc-aarch64-linux-gnu` for the Hub's Docker image, which it pushes to
+ghcr.io with the GitHub CLI's token. `--publish` makes a draft public and
+moves the image's `latest` tag. Docker's storage is on the small root disk
+(the big disk is a 9p share it can't use), so images must not be built by
+compiling inside Docker.
 
 ## Where things stand (0.8.2)
 
@@ -75,5 +81,5 @@ or commit them. The release needs `musl-tools` (for the Unraid plugin) since
      then phase 6 (a CCleaner-style junk cleaner on every device, every
      item with a blurb on what cleaning it means), plus the held-back items
      listed under Done in docs/ROADMAP.md.
-  4. No license chosen yet; the Hub's Docker image has never been built
-     and pushed (`DISKTREE_IMAGE`, see the README's Releases section).
+  4. No license chosen yet. The Hub's Docker image has never been pushed:
+     the release script does it since 0.8.2, once Docker is installed.

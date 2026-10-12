@@ -6,7 +6,8 @@
 # The build stage runs on the build machine and cross-compiles, so building
 # for arm64 on a PC needs no emulation. The final image runs the Hub as
 # PUID:PGID (99:100 by default, Unraid's nobody:users), with its database
-# and key in /data.
+# and key in /data. scripts/release.sh builds only the final image, from
+# the Hub it has compiled already (see there).
 
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS build
 ARG TARGETARCH
@@ -29,14 +30,22 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,id=disktree-hub-target-$TARGETARCH \
     cargo build --release --locked -p disktree-hub --target "$(cat /target)" \
- && cp "target/$(cat /target)/release/disktree-hub" /disktree-hub
+ && mkdir -p "/hub/$TARGETARCH" \
+ && cp "target/$(cat /target)/release/disktree-hub" "/hub/$TARGETARCH/" \
+ && cp /etc/ssl/certs/ca-certificates.crt /hub/
 
+# What the final image takes: the Hub in a folder per architecture, and
+# certificates for reaching the sign-in provider and alert services over
+# HTTPS, so the final image runs nothing on the target architecture.
+FROM scratch AS hub
+COPY --from=build /hub/ /
+
+# The final image. scripts/release.sh builds from here on, with its own
+# `hub` stage.
 FROM debian:bookworm-slim
-# Certificates for reaching the sign-in provider and alert services over
-# HTTPS, from the build stage, so this stage runs nothing on the target
-# architecture.
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build /disktree-hub /usr/local/bin/disktree-hub
+ARG TARGETARCH
+COPY --from=hub /ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=hub /$TARGETARCH/disktree-hub /usr/local/bin/disktree-hub
 COPY --chmod=755 packaging/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 ENV DISKTREE_HUB_DATA=/data \
     DISKTREE_HUB_LISTEN=0.0.0.0:9090 \

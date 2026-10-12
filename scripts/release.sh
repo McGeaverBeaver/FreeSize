@@ -15,55 +15,163 @@
 #   disktree-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
 #                                      the aarch64 cross-compiler is installed
 #   SHA256SUMS.txt
+#   the Hub's Docker image             for amd64 and arm64 (see below)
 # runs the tests, then creates the GitHub release v<version> for that commit,
 # with the files attached and release notes listing the changes. The version
 # comes from the root Cargo.toml. macOS builds need a Mac, so there are none.
 #
-# With DISKTREE_IMAGE set (e.g. ghcr.io/mcgeaverbeaver/disktree-hub), it also
-# builds the Hub's Docker image for amd64 and arm64 and pushes it as
-# <version> and latest. That needs Docker with buildx, logged in to the
-# registry (for GitHub: echo $TOKEN | docker login ghcr.io -u <user>
-# --password-stdin, with a token that may write packages).
+# The Docker image is what a GitHub Actions workflow would publish, built
+# here instead so it costs no Actions minutes: ghcr.io/<owner>/disktree-hub,
+# a package of the GitHub repository, tagged <version> and, once the release
+# is public, latest (the tag Unraid's template pulls). It holds the Hub built
+# above, for amd64 and arm64, rather than compiling it again inside Docker.
+# The GitHub CLI's token logs in to the registry (it needs the
+# write:packages scope) in a throwaway Docker config, so the token isn't
+# left on disk. DISKTREE_IMAGE names another image (log in to its registry
+# yourself); --no-image leaves the image out.
 #
 # Needs everything android/build-apk.sh needs, the MinGW cross-compiler and
 # zip for the Windows build, musl-tools for the Unraid plugin's static build,
-# and the GitHub CLI logged in (`gh auth login`).
+# for the image the aarch64 cross-compiler and Docker with buildx, and the
+# GitHub CLI logged in (`gh auth login`).
 #
-# Usage: scripts/release.sh [--draft] [--build-only]
-#   --draft       publish as a draft, to check before making it public
-#   --build-only  build everything into dist/ without publishing
+# Usage: scripts/release.sh [--draft] [--build-only] [--no-image]
+#        scripts/release.sh --publish [--no-image]
+#   --draft       publish as a draft, to check before making it public; the
+#                 image gets only its version tag
+#   --build-only  build everything (the image too) without publishing
+#   --no-image    leave out the Docker image
+#   --publish     make this version's draft public and point the image's
+#                 latest tag at it; builds nothing
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+usage() {
+    echo "usage: scripts/release.sh [--draft] [--build-only] [--no-image]" >&2
+    echo "       scripts/release.sh --publish [--no-image]" >&2
+    exit 2
+}
+
 draft=()
 publish=true
+with_image=true
+promote=false
 for arg in "$@"; do
     case "$arg" in
         --draft) draft=(--draft) ;;
         --build-only) publish=false ;;
-        *)
-            echo "usage: scripts/release.sh [--draft] [--build-only]" >&2
-            exit 2
-            ;;
+        --no-image) with_image=false ;;
+        --publish) promote=true ;;
+        *) usage ;;
     esac
 done
+if $promote && { [ ${#draft[@]} -gt 0 ] || ! $publish; }; then
+    usage
+fi
 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
 target="${CARGO_TARGET_DIR:-target}"
 tag="v$version"
 commit="$(git rev-parse HEAD)"
+# "Owner/Repo" on GitHub, from the origin remote.
+repo="$(git remote get-url origin | sed -nE 's#^.*github\.com[:/]([^/]+/[^/]+)$#\1#p')"
+repo="${repo%.git}"
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+image=""
+if $with_image; then
+    image="${DISKTREE_IMAGE:-}"
+    if [ -z "$image" ]; then
+        if [ -z "$repo" ]; then
+            echo "error: origin isn't on GitHub; set DISKTREE_IMAGE or pass --no-image" >&2
+            exit 1
+        fi
+        owner="${repo%%/*}"
+        image="ghcr.io/${owner,,}/disktree-hub"
+    fi
+    if ! docker buildx version >/dev/null 2>&1; then
+        echo "error: the Docker image needs Docker with buildx; run:" >&2
+        echo "       sudo apt install docker.io docker-buildx && sudo usermod -aG docker $USER" >&2
+        echo "       and log in again (or pass --no-image)" >&2
+        exit 1
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        echo "error: can't reach Docker; is $USER in the docker group? Log in again after adding" >&2
+        echo "       it, or run this with: sg docker -c 'scripts/release.sh ...'" >&2
+        exit 1
+    fi
+    # The builder is kept with the usual Docker settings, also while
+    # DOCKER_CONFIG points at the throwaway config below.
+    export BUILDX_CONFIG="${BUILDX_CONFIG:-${DOCKER_CONFIG:-$HOME/.docker}/buildx}"
+fi
+
+# Logs in to GitHub's registry with the GitHub CLI's token, in a throwaway
+# Docker config so the token isn't left on disk. Other registries use your
+# own `docker login`.
+registry_login() {
+    case "$image" in
+        ghcr.io/*) ;;
+        *) return 0 ;;
+    esac
+    # Classic tokens list their scopes; fine-grained ones don't.
+    local scopes
+    scopes="$(gh api -i user 2>/dev/null | tr -d '\r' | sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: //p')"
+    if [ -n "$scopes" ] && [[ "$scopes" != *write:packages* ]]; then
+        echo "error: the GitHub CLI's token can't push packages; run: gh auth refresh -s write:packages" >&2
+        exit 1
+    fi
+    export DOCKER_CONFIG="$work/docker"
+    mkdir -p "$DOCKER_CONFIG"
+    if [ -d "$HOME/.docker/cli-plugins" ]; then
+        ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+    fi
+    gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin >/dev/null
+}
+
+# Points the image's latest tag at this version, in the registry.
+tag_latest() {
+    echo "==> Pointing $image:latest at $version"
+    docker buildx imagetools create --tag "$image:latest" "$image:$version"
+}
+
+# Unraid pulls without logging in, so the package has to be public; GitHub
+# only lets that be changed on its website.
+check_visibility() {
+    case "$image" in
+        ghcr.io/*) ;;
+        *) return 0 ;;
+    esac
+    local path="${image#ghcr.io/}"
+    local owner="${path%%/*}" name="${path#*/}"
+    local visibility
+    visibility="$(gh api "users/$owner/packages/container/$name" -q .visibility 2>/dev/null ||
+        gh api "orgs/$owner/packages/container/$name" -q .visibility 2>/dev/null || true)"
+    if [ "$visibility" = private ]; then
+        echo "note: the image is private, so Unraid and Docker can't pull it without logging in." >&2
+        echo "      Make it public once: https://github.com/users/$owner/packages/container/$name/settings" >&2
+        echo "      (Danger Zone -> Change visibility)." >&2
+    fi
+}
 
 for tool in x86_64-w64-mingw32-gcc:mingw-w64 zip:zip musl-gcc:musl-tools file:file; do
+    if $promote; then
+        break
+    fi
     if ! command -v "${tool%%:*}" >/dev/null; then
         echo "error: ${tool%%:*} is missing; run: sudo apt install ${tool#*:}" >&2
         exit 1
     fi
 done
-
-image="${DISKTREE_IMAGE:-}"
-if [ -n "$image" ] && $publish; then
-    if ! docker buildx version >/dev/null 2>&1; then
-        echo "error: DISKTREE_IMAGE is set but Docker buildx isn't available" >&2
+if [ -n "$image" ] && ! $promote; then
+    if [ "$(uname -m)" != x86_64 ]; then
+        echo "error: the Docker image is built on x86_64 machines; pass --no-image" >&2
+        exit 1
+    fi
+    if ! command -v aarch64-linux-gnu-gcc >/dev/null; then
+        echo "error: the Docker image needs the Hub for arm64 too; run:" >&2
+        echo "       sudo apt install gcc-aarch64-linux-gnu (or pass --no-image)" >&2
         exit 1
     fi
 fi
@@ -73,6 +181,30 @@ if $publish; then
         echo "error: the GitHub CLI isn't logged in; run: sudo apt install gh && gh auth login" >&2
         exit 1
     fi
+fi
+
+if $promote; then
+    if [ "$(gh release view "$tag" --json isDraft -q .isDraft 2>/dev/null)" != true ]; then
+        echo "error: there's no draft of $tag to publish" >&2
+        exit 1
+    fi
+    if [ -n "$image" ]; then
+        registry_login
+        if ! docker buildx imagetools inspect "$image:$version" >/dev/null 2>&1; then
+            echo "error: $image:$version isn't in the registry; pass --no-image to publish without it" >&2
+            exit 1
+        fi
+        tag_latest
+    fi
+    echo "==> Publishing $tag on GitHub"
+    gh release edit "$tag" --draft=false --latest
+    if [ -n "$image" ]; then
+        check_visibility
+    fi
+    exit 0
+fi
+
+if $publish; then
     # Publish exactly what's on GitHub, so the release matches its tag.
     if [ -n "$(git status --porcelain)" ]; then
         echo "error: there are uncommitted changes; commit or discard them first" >&2
@@ -169,17 +301,57 @@ package disktree-windows-x86_64.zip "$win" "$win/disktree-gui.exe" "$win/disktre
 echo "==> Built:"
 ls -lh "$dist"
 
+if [ -n "$image" ]; then
+    echo "==> Docker image $image:$version (amd64, arm64)"
+    # The Hubs built above, as the Dockerfile's `hub` stage would have
+    # them, so Docker compiles nothing: that needs a Rust image and several
+    # GB in Docker's own storage.
+    hub="$work/hub"
+    mkdir -p "$hub/amd64" "$hub/arm64"
+    cp "$target/release/disktree-hub" "$hub/amd64/"
+    cp "$target/aarch64-unknown-linux-gnu/release/disktree-hub" "$hub/arm64/"
+    cp /etc/ssl/certs/ca-certificates.crt "$hub/"
+    # They link to this machine's glibc, so they mustn't need a newer one
+    # than the image's Debian has.
+    for bin in "$hub"/*/disktree-hub; do
+        need="$(readelf -V "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)"
+        if [ "$(printf '%s\n' "$need" 2.36 | sort -V | tail -n 1)" != 2.36 ]; then
+            echo "error: $bin needs glibc $need, newer than the 2.36 in the image" >&2
+            exit 1
+        fi
+    done
+    # The Dockerfile's final image, with a `hub` stage taking those.
+    {
+        echo "# syntax=docker/dockerfile:1"
+        echo "FROM scratch AS hub"
+        echo "COPY --from=prebuilt / /"
+        sed -n '/^# The final image/,$p' Dockerfile
+    } >"$work/Dockerfile"
+    # A builder of its own, as Actions' setup-buildx makes: the default one
+    # can't always build for two platforms.
+    docker buildx inspect disktree >/dev/null 2>&1 ||
+        docker buildx create --name disktree --driver docker-container >/dev/null
+    labels=(--label "org.opencontainers.image.version=$version"
+        --label "org.opencontainers.image.revision=$commit")
+    if [ -n "$repo" ]; then
+        # Links the package to the repository on GitHub.
+        labels+=(--label "org.opencontainers.image.source=https://github.com/$repo")
+    fi
+    output=(--output type=cacheonly)
+    if $publish; then
+        registry_login
+        output=(--push)
+    fi
+    # No provenance attestations: they show up as an extra "unknown/unknown"
+    # platform next to amd64 and arm64.
+    docker buildx build --builder disktree --platform linux/amd64,linux/arm64 \
+        --file "$work/Dockerfile" --build-context prebuilt="$hub" \
+        --provenance=false "${labels[@]}" --tag "$image:$version" "${output[@]}" .
+fi
+
 if ! $publish; then
     echo "Not published (--build-only)."
     exit 0
-fi
-
-if [ -n "$image" ]; then
-    echo "==> Docker image $image:$version (amd64, arm64)"
-    docker buildx build --platform linux/amd64,linux/arm64 \
-        --label "org.opencontainers.image.version=$version" \
-        --label "org.opencontainers.image.revision=$commit" \
-        -t "$image:$version" -t "$image:latest" --push .
 fi
 
 echo "==> Publishing $tag on GitHub"
@@ -188,3 +360,12 @@ gh release create "$tag" "$dist"/* \
     --title "DiskTree $version" \
     --generate-notes \
     "${draft[@]}"
+
+if [ -n "$image" ]; then
+    if [ ${#draft[@]} -eq 0 ]; then
+        tag_latest
+    else
+        echo "    $image:latest stays where it was until scripts/release.sh --publish"
+    fi
+    check_visibility
+fi

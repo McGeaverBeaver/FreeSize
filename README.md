@@ -903,21 +903,30 @@ for the checked-out commit with those files and notes listing the changes.
 With `gcc-aarch64-linux-gnu` installed it adds the Hub and command line for
 ARM boards (`*-linux-aarch64.tar.gz`).
 
-To publish the Hub's Docker image too, install Docker with buildx, log in
-to GitHub's registry once, and set `DISKTREE_IMAGE`:
+It also publishes the Hub's Docker image, as a GitHub Actions workflow
+would but without using Actions minutes: `ghcr.io/mcgeaverbeaver/disktree-hub`,
+a package of the repository, for amd64 and arm64. The image takes the Hub
+the release has just built, so Docker compiles nothing and needs only a few
+hundred MB. It logs in to GitHub's registry with the GitHub CLI's token
+(which needs the `write:packages` scope), in a throwaway Docker config so
+the token isn't left on disk. Once, on the build machine:
 
 ```sh
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u McGeaverBeaver --password-stdin   # a token that may write packages
-DISKTREE_IMAGE=ghcr.io/mcgeaverbeaver/disktree-hub scripts/release.sh
+sudo apt install docker.io docker-buildx gcc-aarch64-linux-gnu
+sudo usermod -aG docker $USER   # then log in again
 ```
 
-It builds the image for amd64 and arm64 (cross-compiled, no emulation
-needed) and pushes `<version>` and `latest`. The first time, make the
-package public on GitHub (Packages → disktree-hub → Package settings) so
-Unraid can pull it without logging in. It refuses to publish uncommitted or unpushed code,
-or a version that's already released. `--draft` publishes a draft to check
-first; `--build-only` just builds into `dist/`. macOS builds need a Mac, so
-releases have none.
+and the first time the image is pushed, make the package public on GitHub
+(Packages → disktree-hub → Package settings → Change visibility) so Unraid
+can pull it without logging in; the script reminds you while it's private.
+`DISKTREE_IMAGE` names another image, and `--no-image` leaves it out.
+
+The script refuses to publish uncommitted or unpushed code, or a version
+that's already released. `--draft` publishes a draft to check first, with
+the image tagged only `<version>`; `scripts/release.sh --publish` then
+makes the draft public and points the image's `latest` tag (the one Unraid
+pulls) at it. `--build-only` just builds into `dist/` (and builds the image
+without pushing it). macOS builds need a Mac, so releases have none.
 
 The GitHub Actions CI workflow (`.github/workflows/ci.yml`) no longer runs on
 its own. It runs formatting, clippy and tests on Windows, macOS and Linux,
