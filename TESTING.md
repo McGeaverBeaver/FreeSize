@@ -21,6 +21,14 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] Clean up tab: Folders FreeSize couldn't read names them; Scan as
       administrator (Windows) or Scan as root (Linux) asks, scans, and the
       result opens read-only with those folders now readable.
+- [ ] Clean up tab: the cards show sizes; Find duplicates, then Review:
+      Show EXE files and Select extra copies ticks all but the Keep copy of
+      each EXE set and nothing else; ticking the Keep copy too flags the
+      set and the confirmation; Review… lists exactly what's ticked, Keep
+      takes one off, and Delete all moves the rest to the quarantine. Find
+      similar photos shows the sets side by side; Select all but the
+      largest, then Clear. On a phone the same, with the tiles two across
+      and the tick boxes easy to hit.
 - [ ] Delete moves to the quarantine; Put back restores the file byte for
       byte (compare the size and a checksum); Empty frees the space.
 - [ ] Clean junk: Find junk lists nothing the system's own tool would
@@ -85,6 +93,9 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] A device's Junk tab shows what its cleaner found; Clean on a safe
       rule is approved on the device and the tab updates; a junk alert
       fires above the limit set on the Alerts page.
+- [ ] Junk tab: Tick the safe ones, Ask to clean… lists them; the device
+      shows one request per rule, and each cleans its rule once approved. Largest files: pick a type, tick the header box, and Ask to
+      delete… lists only that type's files.
 - [ ] A wrong pairing code ten times from one address is refused for a
       minute; other addresses still pair.
 - [ ] Copies: Connect an account opens Nextcloud's sign-in page, the

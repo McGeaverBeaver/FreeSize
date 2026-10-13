@@ -75,7 +75,10 @@ Each part takes over what DiskTree kept, the first time it starts:
   `target`, `.gradle`, Python virtual environments, package manager caches,
   …) with how to get each back, large files nobody has changed in over a
   year, a duplicate file finder and a finder for photos that look alike.
-  Select one and use Delete; nothing is deleted without asking. See
+  Each is a card; open one to tick what should go, one by one or all at
+  once (every extra copy of the duplicates, only the EXE duplicates, all
+  but the largest of each set of similar photos). Everything ticked is
+  listed once more before it goes to the quarantine. See
   [Clean up tab](#clean-up-tab).
 - **Clean junk**, on the start screen: one button finds the junk in the
   known places (temporary files, crash dumps, browser and app caches,
@@ -90,8 +93,8 @@ Each part takes over what DiskTree kept, the first time it starts:
 - **Changes** since an earlier scan of the same folder: what grew, what's
   new, what shrank or went away. Bubbles show how much a folder grew. See
   [Changes](#changes).
-- **Basket**: collect files and folders from any view, look them over in one
-  list, then delete them all or move them all to another drive, keeping
+- **Selection**: select files and folders from any view, look them over in
+  one list, then delete them all or move them all to another drive, keeping
   their folders. The last move can be put back. See [The basket](#the-basket).
 - **Export** a report (HTML), a spreadsheet (CSV) or the whole scan (ncdu's
   JSON format), and open saved scans again, including ones made with
@@ -215,7 +218,35 @@ ssh server ncdu -o- -x /srv > srv.json && freesize --import srv.json
 
 ### Clean up tab
 
-After a scan, the **Clean up** tab (**Clean** on phones) lists:
+After a scan, the **Clean up** tab (**Clean** on phones) opens on a card
+for each kind of thing it found, with how much it could free and how many
+of its items are ticked. **Review** opens a card as its own page (**‹ All**
+goes back), where every row has a tick box and the page has buttons to
+tick many at once:
+
+- **Select all** for rebuildable folders and old files, **Select the safe
+  ones** for system caches (rows the system's own tool should remove have no
+  tick box).
+- **Select extra copies** for duplicates: every copy but one in each set.
+  The copy kept is marked **Keep**: one outside caches and temporary
+  folders, not named like a copy (`photo (1).jpg`, `x - Copy.doc`), and the
+  oldest. **Show** lists one type only (*EXE files · 12 sets, 1.2 GB*), and
+  the button then ticks the extra copies of that type only. Each set also
+  has its own **Select extras**.
+- **Select all but the largest** for similar photos, which are shown side by
+  side as big previews so they can be compared; each set has its own button
+  too.
+- **Clear** unticks what the page lists.
+
+When every copy of a duplicate (or every photo of a set) is ticked, the set
+says so in orange, and so does the confirmation. Ticked items go into the
+selection (see [The basket](#the-basket)): its bar shows what's ticked
+everywhere, and **Review…** lists each item once more, with **Keep** to
+take one off, before anything is moved to the quarantine. Double-click a
+row, or select it and use Open, to look at a file first. A scan opened
+from a file is read-only, so it has no tick boxes.
+
+The cards are:
 
 - **Folders FreeSize couldn't read**, when there are any: how many, which
   (select one to see where it is), and the way to a fuller scan on this
@@ -263,8 +294,8 @@ After a scan, the **Clean up** tab (**Clean** on phones) lists:
   shows the photos with a preview, the largest first. Similar isn't
   identical, so open them before choosing.
 
-Tap an entry to select it in the tree, then use Open to look at it and
-Delete or Collect. Delete moves it to the quarantine.
+Tap a row to select it in the tree, then use Open to look at it, or Delete
+or Select from the bar at the bottom. Delete moves it to the quarantine.
 
 - **Quarantine**, at the top whenever it holds something: each batch of
   deleted items with when, where from and how much, with **Put back** and
@@ -336,8 +367,11 @@ free nothing, or sign you out.
 On phones the same rules show as Free up space cards (see
 [Cleaning up apps](#cleaning-up-apps)); on an Unraid server the Quarantine
 tab lists the trash folders in the shares; and a paired device's junk is
-on the Hub's Junk tab, with an alert when it grows past a limit and a
-request to clean it that the device approves.
+on the Hub's Junk tab, with an alert when it grows past a limit. Tick the
+rules to clean (**Tick the safe ones** does the safe ones, **Tick all
+here** a category) and **Ask to clean…** lists them once and sends a
+request per rule, each approved on the device. The Hub's Largest files tab can list one file type and
+tick every file it lists.
 
 ### Changes
 
@@ -354,11 +388,12 @@ for example *12.4 GB · +2.1 GB*.
 
 ### The basket
 
-Select a file or folder anywhere and press **Collect** to put it in the
-basket; a bar shows how many items and how much space it holds. When a
-files list is filtered (a type, an age, a size, old screenshots), **Collect
-all** adds every listed file. **Review** lists everything collected, each
-item removable, with two ways to act on all of it:
+Select a file or folder anywhere and press **Select** (or tick it on the
+Clean up tab) to add it to the selection; a bar shows how many items and
+how much space it holds. When a files list is filtered (a type, an age, a
+size, old screenshots), **Select all** adds every listed file. **Review…**
+lists everything selected, each with **Keep** to take it off the list, with
+two ways to act on all of it:
 
 - **Delete all**: asks first, then moves everything to the quarantine as one
   batch, to put back together.
@@ -571,8 +606,8 @@ anything themselves; **Review** opens the files to look through:
 
 - **Look through old screenshots**: screenshots in `Pictures/Screenshots`
   and `DCIM/Screenshots` not changed for a month. Review scans the folder and
-  lists just those, biggest first; open any, then collect the ones you're
-  done with (or *Collect all*) and delete them together from the basket.
+  lists just those, biggest first; open any, then select the ones you're
+  done with (or *Select all*) and delete them together from the selection.
 - **Look through chat media**: photos, videos and voice notes saved by
   WhatsApp, WhatsApp Business, Telegram, Signal, Messenger, Viber, WeChat and
   LINE. Review picks a folder (when there are several) and lists its files,

@@ -1,6 +1,10 @@
-//! Rows of the scan view's Clean up tab: folders tools rebuild, large files
-//! nobody has changed in a year, and duplicate files.
+//! The scan view's Clean up tab: folders tools rebuild, large files nobody
+//! has changed in a year, duplicate files, similar photos, system caches and
+//! the quarantine. Each is a section: a card on the tab's overview and a page
+//! of rows to tick. Ticking puts a row in the basket, where everything is
+//! listed once more before it goes to the quarantine.
 
+use std::cmp::Reverse;
 use std::path::Path;
 
 use freesize_core::{
@@ -24,6 +28,8 @@ const MIN_OLD_FILE: u64 = 10 * 1024 * 1024;
 pub const MIN_DUPLICATE: u64 = 1024 * 1024;
 const MAX_ROWS: usize = 50;
 const MAX_GROUPS: usize = 100;
+/// Type choices offered for duplicates, besides "every type".
+const MAX_FILTERS: usize = 12;
 const YEAR: i64 = 365 * 24 * 60 * 60;
 
 /// Where the duplicate search stands.
@@ -47,10 +53,15 @@ pub enum Similar<'a> {
     ),
 }
 
-/// Titles of the sections with a button, which tell the buttons apart.
-pub const DUPLICATES: &str = "Duplicate files";
-pub const SIMILAR: &str = "Similar photos";
-pub const UNREADABLE: &str = "Folders FreeSize couldn't read";
+/// Section keys: the cards' ids, and what their buttons send.
+pub const QUARANTINE: &str = "quarantine";
+pub const UNREADABLE: &str = "unreadable";
+pub const CACHES: &str = "caches";
+pub const HIDDEN: &str = "hidden";
+pub const REBUILDABLE: &str = "rebuildable";
+pub const OLD: &str = "old";
+pub const DUPLICATES: &str = "duplicates";
+pub const SIMILAR: &str = "similar";
 
 /// Unreadable folders listed under their heading.
 const MAX_UNREADABLE: usize = 20;
@@ -63,64 +74,134 @@ pub struct Hidden {
     pub notes: Vec<String>,
 }
 
-/// Every row of the tab.
-#[cfg(test)]
-pub fn rows(tree: &Tree, mode: SizeMode, now: i64, duplicates: Duplicates) -> Vec<CleanRow> {
-    let mut rows = found_rows(tree, mode, now, &[], None, &Offer::default());
-    rows.extend(duplicate_rows(tree, duplicates));
+/// One part of the tab: a card on the overview, a page of rows.
+#[derive(Clone, Default)]
+pub struct Section {
+    pub key: &'static str,
+    pub title: String,
+    /// What it is and what removing it means, for the top of the page (and
+    /// the card, where there's no page).
+    pub blurb: String,
+    /// The card's short line: how many, and what can be freed.
+    pub note: String,
+    /// What could be freed, for the card; 0 when it isn't about space.
+    pub bytes: u64,
+    /// What the page's rows could free, where a type is chosen.
+    pub shown_bytes: Option<u64>,
+    /// A button on the card and the page: search, stop, scan as admin, empty.
+    pub action: String,
+    /// Drawn in the warning color.
+    pub warn: bool,
+    /// The page's rows.
+    pub rows: Vec<CleanRow>,
+    /// What "select all" ticks: every listed row it's safe to tick, and for
+    /// copies and photos every one but the one to keep.
+    pub picks: Vec<NodeId>,
+    /// The label of the "select all" button.
+    pub pick_label: &'static str,
+    /// Per group of copies or photos, the ones but the kept one; group rows
+    /// carry their index here as `id`.
+    pub groups: Vec<Vec<NodeId>>,
+    /// Type choices for duplicates: (extension, label).
+    pub filters: Vec<(String, String)>,
+}
+
+impl Section {
+    /// Whether the card opens a page.
+    pub fn has_page(&self) -> bool {
+        !self.rows.is_empty()
+    }
+}
+
+/// Every section as one list, headings first, for the report.
+pub fn flatten(sections: &[Section]) -> Vec<CleanRow> {
+    let mut rows = Vec::new();
+    for section in sections {
+        rows.push(heading(&section.title, &section.blurb, &section.action));
+        rows.extend(section.rows.iter().cloned());
+    }
     rows
 }
 
-/// Rebuildable folders and old files. These walk the whole tree, so the
-/// controller keeps them while the duplicate search updates its progress.
-pub fn found_rows(
+/// Every row of the tab.
+#[cfg(test)]
+pub fn rows(tree: &Tree, mode: SizeMode, now: i64, duplicates: Duplicates) -> Vec<CleanRow> {
+    let mut sections = found_sections(tree, mode, now, &[], None, &Offer::default());
+    sections.push(duplicate_section(tree, duplicates, None));
+    flatten(&sections)
+}
+
+/// The sections that walk the whole tree, so the controller keeps them
+/// while the searches update their progress.
+pub fn found_sections(
     tree: &Tree,
     mode: SizeMode,
     now: i64,
     spots: &[Spot],
     hidden: Option<&Hidden>,
     offer: &Offer,
-) -> Vec<CleanRow> {
+) -> Vec<Section> {
     let root = tree.root();
     let root_path = tree.path(root);
-    let mut rows = Vec::new();
+    let mut sections = Vec::new();
 
-    rows.extend(unreadable_rows(tree, &root_path, offer));
+    sections.extend(unreadable_section(tree, &root_path, offer));
 
     if !spots.is_empty() {
         let total: u64 = spots.iter().map(|s| tree.node(s.node).size_in(mode)).sum();
-        rows.push(heading(
-            "System and app caches",
-            &format!(
+        let mut picks = Vec::new();
+        let rows = spots
+            .iter()
+            .take(MAX_ROWS)
+            .map(|spot| {
+                let (advice, badge, checkable) = match spot.safety {
+                    Safety::Safe => {
+                        picks.push(spot.node);
+                        (spot.how.to_string(), "safe", true)
+                    }
+                    Safety::CheckFirst => (spot.how.to_string(), "check first", true),
+                    // Removed with the system's own tool, never by hand.
+                    Safety::UseTool => {
+                        (format!("don't delete: {}", spot.how), "its own tool", false)
+                    }
+                };
+                CleanRow {
+                    kind: ITEM,
+                    id: spot.node as i32,
+                    title: {
+                        let name = tree.name(spot.node);
+                        if name.eq_ignore_ascii_case(spot.what) {
+                            name.into_owned()
+                        } else {
+                            format!("{name} · {}", spot.what)
+                        }
+                    }
+                    .into(),
+                    subtitle: format!("{} · {advice}", place(tree, &root_path, spot.node)).into(),
+                    detail: format_size(tree.node(spot.node).size_in(mode)).into(),
+                    checkable,
+                    badge: badge.into(),
+                    warn: spot.safety != Safety::Safe,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        sections.push(Section {
+            key: CACHES,
+            title: "System and app caches".into(),
+            blurb: format!(
                 "{} where the system and apps keep files they can do without. Each says how to \
-                 remove it; some should go through the system's own cleanup.",
+                 remove it; \"safe\" ones come back on their own, \"check first\" ones may hold \
+                 something you want, and some should go through the system's own cleanup.",
                 format_size(total)
             ),
-            "",
-        ));
-        rows.extend(spots.iter().take(MAX_ROWS).map(|spot| {
-            let advice = match spot.safety {
-                Safety::Safe => spot.how.to_string(),
-                Safety::CheckFirst => format!("check first: {}", spot.how),
-                Safety::UseTool => format!("don't delete: {}", spot.how),
-            };
-            CleanRow {
-                kind: ITEM,
-                id: spot.node as i32,
-                title: {
-                    let name = tree.name(spot.node);
-                    if name.eq_ignore_ascii_case(spot.what) {
-                        name.into_owned()
-                    } else {
-                        format!("{name} · {}", spot.what)
-                    }
-                }
-                .into(),
-                subtitle: format!("{} · {advice}", place(tree, &root_path, spot.node)).into(),
-                detail: format_size(tree.node(spot.node).size_in(mode)).into(),
-                ..Default::default()
-            }
-        }));
+            note: plural(spots.len() as u64, "place", "places"),
+            bytes: total,
+            rows,
+            picks,
+            pick_label: "Select the safe ones",
+            ..Default::default()
+        });
     }
 
     if let Some(hidden) = hidden {
@@ -146,11 +227,13 @@ pub fn found_rows(
                 ));
             }
             text.push('.');
-            rows.push(heading(
-                &format!("{} not in any file", format_size(gap)),
-                &text,
-                "",
-            ));
+            sections.push(Section {
+                key: HIDDEN,
+                title: format!("{} not in any file", format_size(gap)),
+                note: "Used space the scan can't see".into(),
+                blurb: text,
+                ..Default::default()
+            });
         }
     }
 
@@ -158,169 +241,341 @@ pub fn found_rows(
         .into_iter()
         .filter(|r| tree.node(r.node).size_in(mode) >= MIN_FOLDER)
         .collect();
-    folders.sort_by_key(|r| std::cmp::Reverse(tree.node(r.node).size_in(mode)));
+    folders.sort_by_key(|r| Reverse(tree.node(r.node).size_in(mode)));
     let total: u64 = folders
         .iter()
         .map(|r| tree.node(r.node).size_in(mode))
         .sum();
-    rows.push(heading(
-        "Rebuildable folders",
-        &if folders.is_empty() {
+    let listed = &folders[..folders.len().min(MAX_ROWS)];
+    sections.push(Section {
+        key: REBUILDABLE,
+        title: "Rebuildable folders".into(),
+        blurb: if folders.is_empty() {
             "None found in this scan.".to_string()
         } else {
             format!(
-                "{} in folders that tools make again when they're needed. Select one, then use \
-                 Delete.",
+                "{} in folders that tools make again when they're needed, like downloaded \
+                 packages and build output. Removing them is safe; the tool named on each \
+                 puts it back.",
                 format_size(total)
             )
         },
-        "",
-    ));
-    rows.extend(folders.iter().take(MAX_ROWS).map(|r| CleanRow {
-        kind: ITEM,
-        id: r.node as i32,
-        title: format!("{} · {}", tree.name(r.node), r.what).into(),
-        subtitle: format!("{} · {}", place(tree, &root_path, r.node), r.how).into(),
-        detail: format_size(tree.node(r.node).size_in(mode)).into(),
+        note: if folders.is_empty() {
+            "None found in this scan.".into()
+        } else {
+            plural(folders.len() as u64, "folder", "folders")
+        },
+        bytes: total,
+        rows: listed
+            .iter()
+            .map(|r| CleanRow {
+                kind: ITEM,
+                id: r.node as i32,
+                title: format!("{} · {}", tree.name(r.node), r.what).into(),
+                subtitle: format!("{} · {}", place(tree, &root_path, r.node), r.how).into(),
+                detail: format_size(tree.node(r.node).size_in(mode)).into(),
+                checkable: true,
+                ..Default::default()
+            })
+            .collect(),
+        picks: listed.iter().map(|r| r.node).collect(),
+        pick_label: "Select all",
         ..Default::default()
-    }));
+    });
 
     let old: Vec<NodeId> = old_files(tree, root, mode, now - YEAR, MAX_ROWS)
         .into_iter()
         .filter(|&id| tree.node(id).size_in(mode) >= MIN_OLD_FILE)
         .collect();
-    rows.push(heading(
-        "Not changed in over a year",
-        if old.is_empty() {
-            "No large files that old."
+    let old_bytes: u64 = old.iter().map(|&id| tree.node(id).size_in(mode)).sum();
+    sections.push(Section {
+        key: OLD,
+        title: "Not changed in over a year".into(),
+        blurb: if old.is_empty() {
+            "No large files that old.".into()
         } else {
-            "The largest files nobody has modified for a year or more."
+            "The largest files nobody has modified for a year or more. They may still be \
+             wanted (photos, backups, installers), so open the ones you're unsure of first."
+                .into()
         },
-        "",
-    ));
-    rows.extend(old.iter().map(|&id| {
-        let node = tree.node(id);
-        CleanRow {
-            kind: ITEM,
-            id: id as i32,
-            title: tree.name(id).as_ref().into(),
-            subtitle: format!(
-                "{} · last changed {}",
-                place(tree, &root_path, node.parent),
-                date(node.modified.max(0) as u64)
+        note: if old.is_empty() {
+            "No large files that old.".into()
+        } else {
+            format!(
+                "{}, {}",
+                plural(old.len() as u64, "file", "files"),
+                format_size(old_bytes)
             )
-            .into(),
-            detail: format_size(node.size_in(mode)).into(),
-            ..Default::default()
-        }
-    }));
-
-    rows
-}
-
-/// The duplicate files section.
-pub fn duplicate_rows(tree: &Tree, duplicates: Duplicates) -> Vec<CleanRow> {
-    let root_path = tree.path(tree.root());
-    let mut rows = Vec::new();
-    match duplicates {
-        Duplicates::NotSearched => rows.push(heading(
-            DUPLICATES,
-            "Finds files of 1 MB or more with identical contents. It reads the files, so it \
-             can take a while.",
-            "Find duplicates",
-        )),
-        Duplicates::Searching { done, files } => rows.push(heading(
-            DUPLICATES,
-            &format!(
-                "Comparing files: {} of {}…",
-                format_count(done),
-                format_count(files)
-            ),
-            "Stop",
-        )),
-        Duplicates::Found(groups) => {
-            // Leave out copies deleted since the search.
-            let groups: Vec<(u64, Vec<NodeId>)> = groups
-                .iter()
-                .map(|g| {
-                    let left: Vec<NodeId> = g
-                        .nodes
-                        .iter()
-                        .copied()
-                        .filter(|&id| !tree.ancestors(id).any(|a| tree.node(a).has(flags::DELETED)))
-                        .collect();
-                    (g.size, left)
-                })
-                .filter(|(_, left)| left.len() > 1)
-                .collect();
-            let wasted: u64 = groups
-                .iter()
-                .map(|(size, nodes)| size * (nodes.len() as u64 - 1))
-                .sum();
-            rows.push(heading(
-                DUPLICATES,
-                &if groups.is_empty() {
-                    "No duplicate files of 1 MB or more.".to_string()
-                } else {
-                    format!(
-                        "{} of identical files. Keeping one copy of each frees {}.",
-                        match groups.len() {
-                            1 => "1 set".to_string(),
-                            n => format!("{} sets", format_count(n as u64)),
-                        },
-                        format_size(wasted)
-                    )
-                },
-                "Search again",
-            ));
-            for (size, nodes) in groups.iter().take(MAX_GROUPS) {
-                rows.push(CleanRow {
-                    kind: GROUP,
-                    title: format!("{} copies · {} each", nodes.len(), format_size(*size)).into(),
-                    ..Default::default()
-                });
-                rows.extend(nodes.iter().map(|&id| CleanRow {
+        },
+        rows: old
+            .iter()
+            .map(|&id| {
+                let node = tree.node(id);
+                CleanRow {
                     kind: ITEM,
                     id: id as i32,
                     title: tree.name(id).as_ref().into(),
-                    subtitle: place(tree, &root_path, tree.node(id).parent).into(),
+                    subtitle: format!(
+                        "{} · last changed {}",
+                        place(tree, &root_path, node.parent),
+                        date(node.modified.max(0) as u64)
+                    )
+                    .into(),
+                    detail: format_size(node.size_in(mode)).into(),
+                    checkable: true,
                     ..Default::default()
-                }));
+                }
+            })
+            .collect(),
+        picks: old.clone(),
+        pick_label: "Select all",
+        ..Default::default()
+    });
+
+    sections
+}
+
+/// Whether a node or a folder it's in was deleted since the search.
+fn gone(tree: &Tree, id: NodeId) -> bool {
+    tree.ancestors(id).any(|a| tree.node(a).has(flags::DELETED))
+}
+
+/// The lower-cased extension the type choices use; "" for none.
+fn extension(tree: &Tree, id: NodeId) -> String {
+    tree.extension(id)
+        .map(|e| String::from_utf8_lossy(e).to_lowercase())
+        .unwrap_or_default()
+}
+
+/// The copy to keep: one outside caches and temporary folders if there is
+/// one, then one not named like a copy ("photo (1).jpg", "x - Copy.doc"),
+/// then the oldest (most likely the original), then the shortest path.
+pub fn keeper(tree: &Tree, nodes: &[NodeId]) -> NodeId {
+    let copy_name = |id: NodeId| {
+        let name = tree.name(id).to_lowercase();
+        let stem = name
+            .rsplit_once('.')
+            .map_or(name.as_str(), |(stem, _)| stem);
+        stem.ends_with(')') && stem.contains(" (")
+            || stem.ends_with(" copy")
+            || stem.ends_with("- copy")
+            || stem.contains(" copy (")
+    };
+    let throwaway = |id: NodeId| {
+        tree.ancestors(id).skip(1).any(|a| {
+            let name = tree.name(a).to_lowercase();
+            name.contains("cache") || name == "temp" || name == "tmp" || name.contains("trash")
+        })
+    };
+    nodes
+        .iter()
+        .copied()
+        .min_by_key(|&id| {
+            (
+                throwaway(id),
+                copy_name(id),
+                tree.node(id).modified,
+                tree.ancestors(id).count(),
+            )
+        })
+        .unwrap_or(nodes[0])
+}
+
+/// The duplicate files section; `filter` is an extension to list only.
+pub fn duplicate_section(tree: &Tree, duplicates: Duplicates, filter: Option<&str>) -> Section {
+    let root_path = tree.path(tree.root());
+    let mut section = Section {
+        key: DUPLICATES,
+        title: "Duplicate files".into(),
+        pick_label: "Select extra copies",
+        ..Default::default()
+    };
+    let groups = match duplicates {
+        Duplicates::NotSearched => {
+            section.blurb = "Finds files of 1 MB or more with identical contents. It reads the \
+                             files, so it can take a while."
+                .into();
+            section.note = "Not searched yet".into();
+            section.action = "Find duplicates".into();
+            return section;
+        }
+        Duplicates::Searching { done, files } => {
+            section.blurb = format!(
+                "Comparing files: {} of {}…",
+                format_count(done),
+                format_count(files)
+            );
+            section.note = section.blurb.clone();
+            section.action = "Stop".into();
+            return section;
+        }
+        Duplicates::Found(groups) => groups,
+    };
+    section.action = "Search again".into();
+    // Leave out copies deleted since the search.
+    let groups: Vec<(u64, Vec<NodeId>)> = groups
+        .iter()
+        .map(|g| {
+            let left: Vec<NodeId> = g
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&id| !gone(tree, id))
+                .collect();
+            (g.size, left)
+        })
+        .filter(|(_, left)| left.len() > 1)
+        .collect();
+    let wasted = |groups: &[&(u64, Vec<NodeId>)]| -> u64 {
+        groups
+            .iter()
+            .map(|(size, nodes)| size * (nodes.len() as u64 - 1))
+            .sum()
+    };
+    let all: Vec<&(u64, Vec<NodeId>)> = groups.iter().collect();
+    section.bytes = wasted(&all);
+    if groups.is_empty() {
+        section.blurb = "No duplicate files of 1 MB or more.".into();
+        section.note = section.blurb.clone();
+        return section;
+    }
+    let sets = |n: usize| match n {
+        1 => "1 set".to_string(),
+        n => format!("{} sets", format_count(n as u64)),
+    };
+    section.note = format!(
+        "{} of copies, {} to free",
+        sets(groups.len()),
+        format_size(section.bytes)
+    );
+
+    // The types worth choosing, most to free first.
+    let mut types: Vec<(String, usize, u64)> = Vec::new();
+    for (size, nodes) in &groups {
+        let ext = extension(tree, nodes[0]);
+        let extra = size * (nodes.len() as u64 - 1);
+        match types.iter_mut().find(|(e, _, _)| *e == ext) {
+            Some(t) => {
+                t.1 += 1;
+                t.2 += extra;
             }
+            None => types.push((ext, 1, extra)),
         }
     }
-    rows
+    types.sort_by_key(|t| Reverse(t.2));
+    if types.len() > 1 {
+        section.filters = types
+            .iter()
+            .take(MAX_FILTERS)
+            .map(|(ext, n, bytes)| {
+                let name = if ext.is_empty() {
+                    "Without a type".to_string()
+                } else {
+                    format!("{} files", ext.to_uppercase())
+                };
+                (
+                    ext.clone(),
+                    format!("{name} · {}, {}", sets(*n), format_size(*bytes)),
+                )
+            })
+            .collect();
+    }
+
+    let shown: Vec<&(u64, Vec<NodeId>)> = groups
+        .iter()
+        .filter(|(_, nodes)| filter.is_none_or(|f| extension(tree, nodes[0]) == f))
+        .collect();
+    let mut blurb = format!(
+        "{} of identical files. Keeping one copy of each frees {}. Select extra copies ticks \
+         every copy but one in each set, keeping the one marked Keep: the oldest, outside \
+         caches where it can.",
+        sets(groups.len()),
+        format_size(section.bytes)
+    );
+    if let Some(f) = filter {
+        section.shown_bytes = Some(wasted(&shown));
+        blurb = format!(
+            "Showing {} of {} files ({} to free). {blurb}",
+            sets(shown.len()),
+            if f.is_empty() {
+                "untyped".to_string()
+            } else {
+                f.to_uppercase()
+            },
+            format_size(wasted(&shown))
+        );
+    }
+    if shown.len() > MAX_GROUPS {
+        blurb.push_str(&format!(
+            " The {MAX_GROUPS} largest sets are listed; the rest show once these are dealt with."
+        ));
+    }
+    section.blurb = blurb;
+    for (size, nodes) in shown.into_iter().take(MAX_GROUPS) {
+        let keep = keeper(tree, nodes);
+        let index = section.groups.len();
+        let extras: Vec<NodeId> = nodes.iter().copied().filter(|&id| id != keep).collect();
+        section.picks.extend(extras.iter().copied());
+        section.groups.push(extras);
+        section.rows.push(CleanRow {
+            kind: GROUP,
+            id: index as i32,
+            title: format!("{} copies · {} each", nodes.len(), format_size(*size)).into(),
+            action: "Select extras".into(),
+            ..Default::default()
+        });
+        section.rows.extend(nodes.iter().map(|&id| {
+            CleanRow {
+                kind: ITEM,
+                id: id as i32,
+                title: tree.name(id).as_ref().into(),
+                subtitle: format!(
+                    "{} · changed {}",
+                    place(tree, &root_path, tree.node(id).parent),
+                    date(tree.node(id).modified.max(0) as u64)
+                )
+                .into(),
+                checkable: true,
+                badge: if id == keep { "Keep" } else { "" }.into(),
+                ..Default::default()
+            }
+        }));
+    }
+    section
 }
 
 /// The similar photos section.
-pub fn similar_rows(tree: &Tree, similar: Similar) -> Vec<CleanRow> {
+pub fn similar_section(tree: &Tree, similar: Similar) -> Section {
     let root_path = tree.path(tree.root());
-    let mut rows = Vec::new();
+    let mut section = Section {
+        key: SIMILAR,
+        title: "Similar photos".into(),
+        pick_label: "Select all but the largest",
+        ..Default::default()
+    };
     let (groups, preview) = match similar {
         Similar::NotSearched => {
-            rows.push(heading(
-                SIMILAR,
-                "Finds photos that look alike, such as bursts, retakes and pictures saved \
-                 twice at different sizes, so you can keep the best of each. It looks at every \
-                 photo, so it can take a while.",
-                "Find similar photos",
-            ));
-            return rows;
+            section.blurb = "Finds photos that look alike, such as bursts, retakes and pictures \
+                             saved twice at different sizes, so you can keep the best of each. \
+                             It looks at every photo, so it can take a while."
+                .into();
+            section.note = "Not searched yet".into();
+            section.action = "Find similar photos".into();
+            return section;
         }
         Similar::Searching { done, files } => {
-            rows.push(heading(
-                SIMILAR,
-                &format!(
-                    "Looking at photos: {} of {}…",
-                    format_count(done),
-                    format_count(files)
-                ),
-                "Stop",
-            ));
-            return rows;
+            section.blurb = format!(
+                "Looking at photos: {} of {}…",
+                format_count(done),
+                format_count(files)
+            );
+            section.note = section.blurb.clone();
+            section.action = "Stop".into();
+            return section;
         }
         Similar::Found(groups, preview) => (groups, preview),
     };
+    section.action = "Search again".into();
     // Leave out photos deleted since the search.
     let groups: Vec<Vec<(NodeId, u64)>> = groups
         .iter()
@@ -329,67 +584,94 @@ pub fn similar_rows(tree: &Tree, similar: Similar) -> Vec<CleanRow> {
                 .iter()
                 .copied()
                 .zip(g.sizes.iter().copied())
-                .filter(|&(id, _)| !tree.ancestors(id).any(|a| tree.node(a).has(flags::DELETED)))
+                .filter(|&(id, _)| !gone(tree, id))
                 .collect::<Vec<_>>()
         })
         .filter(|left| left.len() > 1)
         .collect();
-    let extra: u64 = groups
+    section.bytes = groups
         .iter()
         .map(|g| g[1..].iter().map(|&(_, size)| size).sum::<u64>())
         .sum();
-    rows.push(heading(
-        SIMILAR,
-        &if groups.is_empty() {
-            "No photos that look alike.".to_string()
-        } else {
-            format!(
-                "{} of photos that look alike. Keeping only the largest of each would free \
-                 {}, but similar isn't identical: open them to choose.",
-                match groups.len() {
-                    1 => "1 set".to_string(),
-                    n => format!("{} sets", format_count(n as u64)),
-                },
-                format_size(extra)
-            )
-        },
-        "Search again",
-    ));
+    if groups.is_empty() {
+        section.blurb = "No photos that look alike.".into();
+        section.note = section.blurb.clone();
+        return section;
+    }
+    let sets = match groups.len() {
+        1 => "1 set".to_string(),
+        n => format!("{} sets", format_count(n as u64)),
+    };
+    section.note = format!(
+        "{sets} of look-alikes, up to {}",
+        format_size(section.bytes)
+    );
+    section.blurb = format!(
+        "{sets} of photos that look alike. Keeping only the largest of each would free {}, \
+         but similar isn't identical: look at the previews first. Double-click one, or select \
+         it and use Open, to see it full size.",
+        format_size(section.bytes)
+    );
     for photos in groups.iter().take(MAX_GROUPS) {
         let total: u64 = photos.iter().map(|&(_, size)| size).sum();
-        rows.push(CleanRow {
+        let index = section.groups.len();
+        let extras: Vec<NodeId> = photos[1..].iter().map(|&(id, _)| id).collect();
+        section.picks.extend(extras.iter().copied());
+        section.groups.push(extras);
+        section.rows.push(CleanRow {
             kind: GROUP,
+            id: index as i32,
             title: format!("{} photos · {}", photos.len(), format_size(total)).into(),
+            action: "Select extras".into(),
             ..Default::default()
         });
-        rows.extend(photos.iter().enumerate().map(|(i, &(id, size))| {
-            let image = preview(id);
-            let place = place(tree, &root_path, tree.node(id).parent);
-            CleanRow {
-                kind: ITEM,
-                id: id as i32,
-                title: tree.name(id).as_ref().into(),
-                subtitle: if i == 0 {
-                    format!("{place} · largest")
-                } else {
-                    place
+        section
+            .rows
+            .extend(photos.iter().enumerate().map(|(i, &(id, size))| {
+                let image = preview(id);
+                CleanRow {
+                    kind: ITEM,
+                    id: id as i32,
+                    title: tree.name(id).as_ref().into(),
+                    subtitle: place(tree, &root_path, tree.node(id).parent).into(),
+                    detail: format_size(size).into(),
+                    has_image: image.is_some(),
+                    image: image.unwrap_or_default(),
+                    checkable: true,
+                    badge: if i == 0 { "Largest" } else { "" }.into(),
+                    ..Default::default()
                 }
-                .into(),
-                detail: format_size(size).into(),
-                has_image: image.is_some(),
-                image: image.unwrap_or_default(),
-                ..Default::default()
-            }
-        }));
+            }));
     }
-    rows
+    section
+}
+
+/// The quarantine's section, from its rows (a heading, then the batches).
+pub fn quarantine_section(mut rows: Vec<CleanRow>, bytes: u64) -> Option<Section> {
+    if rows.is_empty() {
+        return None;
+    }
+    let head = rows.remove(0);
+    Some(Section {
+        key: QUARANTINE,
+        title: head.title.to_string(),
+        blurb: head.subtitle.to_string(),
+        note: format!(
+            "{} waiting, {}",
+            plural(rows.len() as u64, "batch", "batches"),
+            format_size(bytes)
+        ),
+        action: head.action.to_string(),
+        rows,
+        ..Default::default()
+    })
 }
 
 /// The folders the scan couldn't list, with what a fuller scan would take.
-fn unreadable_rows(tree: &Tree, root_path: &Path, offer: &Offer) -> Vec<CleanRow> {
+fn unreadable_section(tree: &Tree, root_path: &Path, offer: &Offer) -> Option<Section> {
     let missed = tree.unreadable();
     if missed.is_empty() {
-        return Vec::new();
+        return None;
     }
     let mut text = format!(
         "{} folder{} and what's in {} are missing from this scan, so the totals are low. ",
@@ -398,15 +680,18 @@ fn unreadable_rows(tree: &Tree, root_path: &Path, offer: &Offer) -> Vec<CleanRow
         if missed.len() == 1 { "it" } else { "them" },
     );
     text.push_str(&offer.note);
-    let mut rows = vec![heading(UNREADABLE, &text, &offer.action)];
-    rows.extend(missed.iter().take(MAX_UNREADABLE).map(|&id| CleanRow {
-        kind: ITEM,
-        id: id as i32,
-        title: tree.name(id).into_owned().into(),
-        subtitle: format!("{} · no access", place(tree, root_path, id)).into(),
-        detail: "".into(),
-        ..Default::default()
-    }));
+    let mut rows: Vec<CleanRow> = missed
+        .iter()
+        .take(MAX_UNREADABLE)
+        .map(|&id| CleanRow {
+            kind: ITEM,
+            id: id as i32,
+            title: tree.name(id).into_owned().into(),
+            subtitle: format!("{} · no access", place(tree, root_path, id)).into(),
+            detail: "".into(),
+            ..Default::default()
+        })
+        .collect();
     if missed.len() > MAX_UNREADABLE {
         rows.push(CleanRow {
             kind: GROUP,
@@ -419,7 +704,19 @@ fn unreadable_rows(tree: &Tree, root_path: &Path, offer: &Offer) -> Vec<CleanRow
             ..Default::default()
         });
     }
-    rows
+    Some(Section {
+        key: UNREADABLE,
+        title: "Folders FreeSize couldn't read".into(),
+        blurb: text,
+        note: format!(
+            "{} missing from the totals",
+            plural(missed.len() as u64, "folder", "folders")
+        ),
+        action: offer.action.clone(),
+        warn: true,
+        rows,
+        ..Default::default()
+    })
 }
 
 fn heading(title: &str, subtitle: &str, action: &str) -> CleanRow {
@@ -430,6 +727,14 @@ fn heading(title: &str, subtitle: &str, action: &str) -> CleanRow {
         subtitle: subtitle.into(),
         action: action.into(),
         ..Default::default()
+    }
+}
+
+fn plural(n: u64, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{} {many}", format_count(n))
     }
 }
 
@@ -484,18 +789,21 @@ mod tests {
             action: "Scan as root".into(),
             note: "Needs root.".into(),
         };
-        let rows = found_rows(tree, SizeMode::Logical, 1_790_000_000, &[], None, &offer);
-        assert_eq!(rows[0].title, UNREADABLE);
+        let sections = found_sections(tree, SizeMode::Logical, 1_790_000_000, &[], None, &offer);
+        let section = &sections[0];
+        assert_eq!(section.key, UNREADABLE);
+        assert_eq!(section.title, "Folders FreeSize couldn't read");
         assert!(
-            rows[0]
-                .subtitle
+            section
+                .blurb
                 .starts_with("1 folder and what's in it are missing")
         );
-        assert!(rows[0].subtitle.ends_with("Needs root."));
-        assert_eq!(rows[0].action, "Scan as root");
-        assert_eq!(rows[1].title, "closed");
-        assert_eq!(rows[1].subtitle, "closed · no access");
-        assert_eq!(rows[1].id, closed[0] as i32);
+        assert!(section.blurb.ends_with("Needs root."));
+        assert_eq!(section.action, "Scan as root");
+        assert_eq!(section.rows[0].title, "closed");
+        assert_eq!(section.rows[0].subtitle, "closed · no access");
+        assert_eq!(section.rows[0].id, closed[0] as i32);
+        assert!(!section.rows[0].checkable);
 
         fs::set_permissions(dir.join("closed"), fs::Permissions::from_mode(0o755)).unwrap();
         let _ = fs::remove_dir_all(&dir);
@@ -531,17 +839,66 @@ mod tests {
             .iter()
             .position(|r| r.title == "Duplicate files")
             .unwrap();
-        assert_eq!(
-            after[dupes].subtitle,
-            "1 set of identical files. Keeping one copy of each frees 3.00 MB."
+        assert!(
+            after[dupes]
+                .subtitle
+                .starts_with("1 set of identical files. Keeping one copy of each frees 3.00 MB.")
         );
         assert_eq!(after[dupes + 1].title, "2 copies · 3.00 MB each");
         let mut folders: Vec<_> = after[dupes + 2..]
             .iter()
-            .map(|r| r.subtitle.to_string())
+            .map(|r| r.subtitle.split(" · ").next().unwrap().to_string())
             .collect();
         folders.sort();
         assert_eq!(folders, ["a", "b"]);
+
+        // One copy is kept: the other is what "select extra copies" ticks.
+        let section = duplicate_section(&tree, Duplicates::Found(&groups), None);
+        assert_eq!(section.picks.len(), 1);
+        assert_eq!(section.groups, vec![section.picks.clone()]);
+        let kept: Vec<_> = section.rows.iter().filter(|r| r.badge == "Keep").collect();
+        assert_eq!(kept.len(), 1);
+        assert_ne!(kept[0].id, section.picks[0] as i32);
+        assert_eq!(section.bytes, 3 * MB as u64);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn duplicates_can_be_listed_by_type_and_keep_the_copy_outside_caches() {
+        const MB: usize = 1024 * 1024;
+        let dir = std::env::temp_dir().join(format!("freesize-dupetypes-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write(&dir, "Downloads/setup.exe", 2 * MB, 1);
+        write(&dir, "AppData/cache/setup.exe", 2 * MB, 1);
+        write(&dir, "Old/setup (1).exe", 2 * MB, 1);
+        write(&dir, "Pictures/a.jpg", 3 * MB, 2);
+        write(&dir, "Backup/a.jpg", 3 * MB, 2);
+        let tree = scan(&dir, &ScanOptions::default(), &ScanProgress::new())
+            .unwrap()
+            .tree;
+        let groups = find_duplicates(&tree, tree.root(), MIN_DUPLICATE, &DuplicateProgress::new());
+        assert_eq!(groups.len(), 2);
+
+        let all = duplicate_section(&tree, Duplicates::Found(&groups), None);
+        // EXE frees 4 MB (two extra copies), JPG 3 MB: EXE first.
+        let keys: Vec<_> = all.filters.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["exe", "jpg"]);
+        assert_eq!(all.filters[0].1, "EXE files · 1 set, 4.00 MB");
+        assert_eq!(all.picks.len(), 3);
+
+        let exe = duplicate_section(&tree, Duplicates::Found(&groups), Some("exe"));
+        assert_eq!(exe.groups.len(), 1);
+        assert_eq!(exe.picks.len(), 2);
+        assert!(
+            exe.blurb
+                .starts_with("Showing 1 set of EXE files (4.00 MB to free).")
+        );
+        // Neither the copy in the cache folder nor the one named like a copy
+        // is the one kept.
+        let kept = exe.rows.iter().find(|r| r.badge == "Keep").unwrap();
+        assert_eq!(kept.title, "setup.exe");
+        assert!(kept.subtitle.starts_with("Downloads"));
+        assert_eq!(exe.shown_bytes, Some(4 * MB as u64));
         let _ = fs::remove_dir_all(&dir);
     }
 }

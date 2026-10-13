@@ -44,8 +44,8 @@ use crate::scans;
 use crate::similar;
 use crate::updater::{self, Updater};
 use crate::{
-    AppWindow, BasketRow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, JunkRow, MapRect,
-    SheetAction, TypeRow, actions, locations,
+    AppWindow, BasketRow, BubbleItem, CleanRow, CleanSection, Crumb, FileRow, HomeRow, JunkRow,
+    MapRect, PhotoSet, SheetAction, TypeRow, actions, locations,
 };
 
 /// The Export sheet's buttons.
@@ -210,7 +210,15 @@ pub struct Controller {
     home_rows: Rc<VecModel<HomeRow>>,
     cleanup_rows: Rc<VecModel<CleanRow>>,
     /// The Clean up tab's rows above the duplicates.
-    cleanup_found: Vec<CleanRow>,
+    cleanup_found: Vec<filecleanup::Section>,
+    /// The Clean up tab's sections as last shown, for its buttons and the
+    /// report.
+    cleanup_shown: Vec<filecleanup::Section>,
+    cleanup_sections: Rc<VecModel<CleanSection>>,
+    /// The Clean up page open; empty for the overview.
+    cleanup_page: String,
+    /// The type of duplicates listed; `None` for every type.
+    dupe_filter: Option<String>,
     mode: SizeMode,
     selected: NodeId,
     /// The folder shown in the treemap and the file lists.
@@ -397,6 +405,10 @@ pub fn install(
             home_rows: Rc::new(VecModel::default()),
             cleanup_rows: Rc::new(VecModel::default()),
             cleanup_found: Vec::new(),
+            cleanup_shown: Vec::new(),
+            cleanup_sections: Rc::new(VecModel::default()),
+            cleanup_page: String::new(),
+            dupe_filter: None,
             mode: SizeMode::Allocated,
             selected: 0,
             focus: 0,
@@ -473,6 +485,7 @@ pub fn install(
     ui.set_tree_rows(ModelRc::from(ctl.borrow().rows.clone()));
     ui.set_home_rows(ModelRc::from(ctl.borrow().home_rows.clone()));
     ui.set_cleanup_rows(ModelRc::from(ctl.borrow().cleanup_rows.clone()));
+    ui.set_cleanup_sections(ModelRc::from(ctl.borrow().cleanup_sections.clone()));
     ui.set_app_bubbles(ModelRc::from(ctl.borrow().app_bubble_rows.clone()));
     ui.set_change_rows(ModelRc::from(ctl.borrow().change_rows.clone()));
     ui.set_junk_rows(ModelRc::from(ctl.borrow().junk_rows.clone()));
@@ -560,8 +573,16 @@ pub fn install(
         Controller::run(&sheet_weak, move |c| c.sheet_action(&id));
     });
     on!(ui, on_export, weak, |c| c.open_export());
-    on!(ui, on_cleanup_action, weak, |c, title| c
-        .cleanup_action(&title));
+    on!(ui, on_cleanup_action, weak, |c, key| c.cleanup_action(&key));
+    on!(ui, on_cleanup_open, weak, |c, key| c.cleanup_open(&key));
+    on!(ui, on_cleanup_open_item, weak, |c, id| c
+        .cleanup_open_item(id));
+    on!(ui, on_cleanup_check, weak, |c, id| c.cleanup_check(id));
+    on!(ui, on_cleanup_group, weak, |c, index| c
+        .cleanup_group(index));
+    on!(ui, on_cleanup_pick, weak, |c, all| c.cleanup_pick(all));
+    on!(ui, on_cleanup_filter, weak, |c, index| c
+        .cleanup_filter(index));
     on!(ui, on_junk_close, weak, |c| c.junk_open(false));
     on!(ui, on_junk_toggle, weak, |c, index| c.junk_toggle(index));
     on!(ui, on_junk_expand, weak, |c, index| c.junk_expand(index));
@@ -1166,6 +1187,8 @@ impl Controller {
             ui.set_compact_tab(2);
         }
         self.basket.clear();
+        self.cleanup_page.clear();
+        self.dupe_filter = None;
         let tree = self.tree.insert(result.tree);
         self.rebuildable = rebuildable(tree, tree.root())
             .into_iter()
@@ -1195,7 +1218,11 @@ impl Controller {
         ui.set_largest_files(ModelRc::default());
         ui.set_file_types(ModelRc::default());
         self.cleanup_found.clear();
+        self.cleanup_shown.clear();
         self.cleanup_rows.clear();
+        self.cleanup_sections.clear();
+        self.cleanup_page.clear();
+        self.dupe_filter = None;
         self.change_rows.clear();
         self.basket.clear();
         self.earlier.clear();
@@ -1946,7 +1973,7 @@ impl Controller {
         let name = |ext: &str| format!("{stem}-{}.{ext}", report::iso_date(now));
         match kind {
             EXPORT_HTML => {
-                let cleanup: Vec<CleanRow> = self.cleanup_rows.iter().collect();
+                let cleanup = filecleanup::flatten(&self.cleanup_shown);
                 let changes: Vec<CleanRow> = self.change_rows.iter().collect();
                 let extras = report::Extras {
                     title: &label,
@@ -2498,7 +2525,7 @@ impl Controller {
             &tree.path(tree.root()),
             self.imported,
         );
-        self.cleanup_found = filecleanup::found_rows(
+        self.cleanup_found = filecleanup::found_sections(
             tree,
             self.mode,
             apps::now() as i64,
@@ -2511,7 +2538,7 @@ impl Controller {
         self.refresh_changes();
     }
 
-    fn show_cleanup(&self) {
+    fn show_cleanup(&mut self) {
         let Some(tree) = &self.tree else {
             return;
         };
@@ -2523,9 +2550,33 @@ impl Controller {
             },
             DupeSearch::Done(groups) => Duplicates::Found(groups),
         };
-        let mut rows = quarantine::rows(&self.quarantine, apps::now() as i64);
-        rows.extend(self.cleanup_found.iter().cloned());
-        rows.extend(filecleanup::duplicate_rows(tree, duplicates));
+        let mut sections: Vec<filecleanup::Section> = filecleanup::quarantine_section(
+            quarantine::rows(&self.quarantine, apps::now() as i64),
+            self.quarantine.iter().map(|b| b.bytes).sum(),
+        )
+        .into_iter()
+        .collect();
+        sections.extend(self.cleanup_found.iter().cloned());
+        let mut dupes =
+            filecleanup::duplicate_section(tree, duplicates, self.dupe_filter.as_deref());
+        if !dupes
+            .filters
+            .iter()
+            .any(|(ext, _)| Some(ext) == self.dupe_filter.as_ref())
+        {
+            // The chosen type is gone (deleted, or a new search).
+            if self.dupe_filter.take().is_some() {
+                dupes = filecleanup::duplicate_section(
+                    tree,
+                    match &self.dupes {
+                        DupeSearch::Done(groups) => Duplicates::Found(groups),
+                        _ => Duplicates::NotSearched,
+                    },
+                    None,
+                );
+            }
+        }
+        sections.push(dupes);
         let lookup;
         let photos = match &self.photos {
             PhotoSearch::Idle => Similar::NotSearched,
@@ -2538,25 +2589,348 @@ impl Controller {
                 Similar::Found(groups, &lookup)
             }
         };
-        rows.extend(filecleanup::similar_rows(tree, photos));
-        sync_model(&self.cleanup_rows, rows);
+        sections.push(filecleanup::similar_section(tree, photos));
+        if self.imported {
+            // A read-only scan: nothing to tick.
+            for section in &mut sections {
+                section.picks.clear();
+                section.pick_label = "";
+                for row in &mut section.rows {
+                    row.checkable = false;
+                    if row.kind == 2 {
+                        row.action = "".into();
+                    }
+                }
+            }
+        }
+        if !sections
+            .iter()
+            .any(|s| s.key == self.cleanup_page && s.has_page())
+        {
+            self.cleanup_page.clear();
+        }
+        self.cleanup_shown = sections;
+
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        let page = self
+            .cleanup_shown
+            .iter()
+            .find(|s| s.key == self.cleanup_page);
+        sync_model(
+            &self.cleanup_rows,
+            page.map(|s| s.rows.clone()).unwrap_or_default(),
+        );
+        ui.set_cleanup_page(self.cleanup_page.as_str().into());
+        ui.set_cleanup_summary(
+            if self.imported {
+                "This scan is open read-only, so nothing can be selected here. Each card says \
+                 what was found."
+            } else {
+                "Open a card to look through what was found and tick what should go. Ticked \
+                 items are listed once more before anything happens; then they're moved to the \
+                 quarantine, where Put back restores them until you empty it."
+            }
+            .into(),
+        );
+        if let Some(page) = page {
+            ui.set_cleanup_page_title(page.title.as_str().into());
+            ui.set_cleanup_page_blurb(page.blurb.as_str().into());
+            let bytes = page.shown_bytes.unwrap_or(page.bytes);
+            ui.set_cleanup_page_size(if bytes > 0 && page.key != filecleanup::QUARANTINE {
+                format!("{} to free", format_size(bytes)).into()
+            } else {
+                "".into()
+            });
+            ui.set_cleanup_page_action(page.action.as_str().into());
+            ui.set_cleanup_page_warn(page.warn);
+            ui.set_cleanup_pick_label(if page.picks.is_empty() {
+                "".into()
+            } else {
+                page.pick_label.into()
+            });
+            let mut filters: Vec<SharedString> = Vec::new();
+            if !page.filters.is_empty() {
+                filters.push("Every type".into());
+                filters.extend(page.filters.iter().map(|(_, label)| label.as_str().into()));
+            }
+            let index = self
+                .dupe_filter
+                .as_ref()
+                .and_then(|f| page.filters.iter().position(|(ext, _)| ext == f))
+                .map_or(0, |i| i + 1);
+            ui.set_cleanup_filters(ModelRc::new(VecModel::from(filters)));
+            ui.set_cleanup_filter_index(index as i32);
+        }
+        self.mark_cleanup();
     }
 
-    /// A Clean up heading's button, told apart by the heading's title.
-    fn cleanup_action(&mut self, title: &str) {
-        if title == filecleanup::SIMILAR {
-            self.photo_action();
-        } else if title == filecleanup::UNREADABLE {
-            self.fuller_scan();
-        } else if title == quarantine::HEADING {
-            self.confirm_empty(None);
-        } else if let Some(id) = title.strip_prefix(quarantine::RESTORE_PREFIX) {
-            self.restore_batch(id.to_string());
-        } else if let Some(id) = title.strip_prefix(quarantine::EMPTY_PREFIX) {
-            self.confirm_empty(Some(vec![id.to_string()]));
+    /// Ticks what's in the basket on the Clean up tab, and counts it on
+    /// the cards. Cheap enough to run on every change to the basket.
+    fn mark_cleanup(&self) {
+        let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
+            return;
+        };
+        let basket: HashSet<NodeId> = self.basket.iter().copied().collect();
+        let covered = |id: NodeId| tree.ancestors(id).any(|a| basket.contains(&a));
+        let picked = |rows: &[CleanRow]| -> (u64, u64) {
+            rows.iter()
+                .filter(|r| r.kind == 1 && r.checkable && covered(r.id as NodeId))
+                .fold((0, 0), |(n, bytes), r| {
+                    (n + 1, bytes + tree.node(r.id as NodeId).size_in(self.mode))
+                })
+        };
+        let cards: Vec<CleanSection> = self
+            .cleanup_shown
+            .iter()
+            .map(|s| {
+                let (n, _) = picked(&s.rows);
+                CleanSection {
+                    key: s.key.into(),
+                    title: s.title.as_str().into(),
+                    // A card without a page says what it would do instead.
+                    note: if s.has_page() || s.blurb.is_empty() || s.blurb == s.note {
+                        s.note.as_str().into()
+                    } else {
+                        format!("{} · {}", s.note, s.blurb).into()
+                    },
+                    size: if s.bytes > 0 && s.key != filecleanup::QUARANTINE {
+                        format_size(s.bytes).into()
+                    } else {
+                        "".into()
+                    },
+                    picked: if n > 0 {
+                        format!("{n} selected").into()
+                    } else {
+                        "".into()
+                    },
+                    action: s.action.as_str().into(),
+                    has_page: s.has_page(),
+                    warn: s.warn,
+                }
+            })
+            .collect();
+        sync_model(&self.cleanup_sections, cards);
+
+        let page = self
+            .cleanup_shown
+            .iter()
+            .find(|s| s.key == self.cleanup_page);
+        let (n, bytes) = page.map_or((0, 0), |s| picked(&s.rows));
+        ui.set_cleanup_any_picked(n > 0);
+        ui.set_cleanup_page_picked(if n > 0 {
+            format!(
+                "{} selected here ({}). Review them in the bar below.",
+                plural(n, "item", "items"),
+                format_size(bytes)
+            )
+            .into()
         } else {
-            self.duplicate_action();
+            "".into()
+        });
+
+        // Rows: ticks, and a warning on a group whose every copy is ticked.
+        let count = self.cleanup_rows.row_count();
+        let mut group: Option<(usize, bool, usize)> = None; // (row, all ticked, items)
+        let finish_group = |group: Option<(usize, bool, usize)>| {
+            let Some((at, all, items)) = group else {
+                return;
+            };
+            let Some(mut row) = self.cleanup_rows.row_data(at) else {
+                return;
+            };
+            if row.id < 0 {
+                return;
+            }
+            let extras = page
+                .and_then(|p| p.groups.get(row.id as usize))
+                .map(|g| g.iter().all(|&id| covered(id)) && !g.is_empty())
+                .unwrap_or(false);
+            let warn = all && items > 1 && !row.action.is_empty();
+            let similar = page.is_some_and(|p| p.key == filecleanup::SIMILAR);
+            let mut changed = row.clone();
+            changed.warn = warn;
+            changed.subtitle = if warn {
+                if similar {
+                    "Every photo of this set is selected: none of them would be left."
+                } else {
+                    "Every copy is selected: none would be left."
+                }
+            } else {
+                ""
+            }
+            .into();
+            if !row.action.is_empty() {
+                changed.action = if extras { "Unselect" } else { "Select extras" }.into();
+            }
+            if changed != row {
+                row = changed;
+                self.cleanup_rows.set_row_data(at, row);
+            }
+        };
+        for i in 0..count {
+            let Some(row) = self.cleanup_rows.row_data(i) else {
+                continue;
+            };
+            match row.kind {
+                2 => {
+                    finish_group(group.take());
+                    group = Some((i, true, 0));
+                }
+                1 => {
+                    let checked = row.checkable && covered(row.id as NodeId);
+                    if let Some((_, all, items)) = &mut group {
+                        *all &= checked;
+                        *items += 1;
+                    }
+                    if row.checked != checked {
+                        let mut row = row;
+                        row.checked = checked;
+                        self.cleanup_rows.set_row_data(i, row);
+                    }
+                }
+                _ => finish_group(group.take()),
+            }
         }
+        finish_group(group);
+
+        // Similar photos are shown as sets of tiles.
+        let mut sets: Vec<PhotoSet> = Vec::new();
+        if self.cleanup_page == filecleanup::SIMILAR {
+            let mut photos: Vec<CleanRow> = Vec::new();
+            let flush = |sets: &mut Vec<PhotoSet>, photos: &mut Vec<CleanRow>| {
+                if let Some(set) = sets.last_mut() {
+                    set.photos = ModelRc::new(VecModel::from(std::mem::take(photos)));
+                }
+            };
+            for row in self.cleanup_rows.iter() {
+                match row.kind {
+                    2 => {
+                        flush(&mut sets, &mut photos);
+                        sets.push(PhotoSet {
+                            index: row.id,
+                            title: row.title.clone(),
+                            warning: if row.warn {
+                                row.subtitle.clone()
+                            } else {
+                                "".into()
+                            },
+                            action: row.action.clone(),
+                            photos: ModelRc::default(),
+                        });
+                    }
+                    1 => photos.push(row),
+                    _ => {}
+                }
+            }
+            flush(&mut sets, &mut photos);
+        }
+        ui.set_cleanup_photo_sets(ModelRc::new(VecModel::from(sets)));
+    }
+
+    /// A Clean up button, by section key; a quarantine batch's buttons
+    /// carry its id.
+    fn cleanup_action(&mut self, key: &str) {
+        if key == filecleanup::SIMILAR {
+            self.photo_action();
+        } else if key == filecleanup::DUPLICATES {
+            self.duplicate_action();
+        } else if key == filecleanup::UNREADABLE {
+            self.fuller_scan();
+        } else if key == filecleanup::QUARANTINE {
+            self.confirm_empty(None);
+        } else if let Some(id) = key.strip_prefix(quarantine::RESTORE_PREFIX) {
+            self.restore_batch(id.to_string());
+        } else if let Some(id) = key.strip_prefix(quarantine::EMPTY_PREFIX) {
+            self.confirm_empty(Some(vec![id.to_string()]));
+        }
+    }
+
+    /// Opens a section's page, or the overview for "".
+    fn cleanup_open(&mut self, key: &str) {
+        self.cleanup_page = key.to_string();
+        self.show_cleanup();
+    }
+
+    /// Double-clicking a row: open the file to look at it.
+    fn cleanup_open_item(&mut self, id: i32) {
+        self.select(id, true);
+        self.open_selected();
+    }
+
+    fn cleanup_check(&mut self, id: i32) {
+        if self.imported || id < 0 {
+            return;
+        }
+        self.toggle_basket(id as NodeId);
+    }
+
+    /// The open page's section.
+    fn cleanup_section(&self) -> Option<&filecleanup::Section> {
+        self.cleanup_shown
+            .iter()
+            .find(|s| s.key == self.cleanup_page)
+    }
+
+    /// A group's button: tick every copy or photo but the kept one, or
+    /// untick them again.
+    fn cleanup_group(&mut self, index: i32) {
+        if self.imported {
+            return;
+        }
+        let Some(extras) = self
+            .cleanup_section()
+            .and_then(|s| s.groups.get(usize::try_from(index).ok()?))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        let all = extras
+            .iter()
+            .all(|&id| tree.ancestors(id).any(|a| self.basket.contains(&a)));
+        if all {
+            self.basket.retain(|b| !extras.contains(b));
+            self.refresh_basket();
+        } else {
+            self.add_to_basket(&extras);
+        }
+    }
+
+    /// The page's "select all" (`true`) or "clear" (`false`).
+    fn cleanup_pick(&mut self, all: bool) {
+        if self.imported {
+            return;
+        }
+        let Some(section) = self.cleanup_section() else {
+            return;
+        };
+        if all {
+            let picks = section.picks.clone();
+            self.add_to_basket(&picks);
+        } else {
+            let listed: HashSet<NodeId> = section
+                .rows
+                .iter()
+                .filter(|r| r.kind == 1 && r.checkable)
+                .map(|r| r.id as NodeId)
+                .collect();
+            self.basket.retain(|b| !listed.contains(b));
+            self.refresh_basket();
+        }
+    }
+
+    fn cleanup_filter(&mut self, index: i32) {
+        let filter = usize::try_from(index - 1).ok().and_then(|i| {
+            self.cleanup_section()
+                .and_then(|s| s.filters.get(i))
+                .map(|(ext, _)| ext.clone())
+        });
+        self.dupe_filter = filter;
+        self.show_cleanup();
     }
 
     // ----- Clean junk -----------------------------------------------------
@@ -3374,10 +3748,14 @@ impl Controller {
 
     /// Adds the selected item to the basket, or takes it out again.
     fn toggle_collect(&mut self) {
+        self.toggle_basket(self.selected);
+    }
+
+    /// Adds an item to the basket, or takes it out again.
+    fn toggle_basket(&mut self, id: NodeId) {
         let Some(tree) = &self.tree else {
             return;
         };
-        let id = self.selected;
         if id == tree.root() || self.imported {
             return;
         }
@@ -3388,7 +3766,7 @@ impl Controller {
             .iter()
             .find(|&&b| tree.ancestors(id).skip(1).any(|a| a == b))
         {
-            let text = format!("Already in the basket with {}.", tree.name(holder));
+            let text = format!("Already selected with the folder {}.", tree.name(holder));
             self.set_status(&text);
             return;
         } else {
@@ -3424,8 +3802,39 @@ impl Controller {
         }
         self.refresh_basket();
         let text = format!(
-            "Collected {} ({}). Nothing is deleted until you confirm in the basket.",
+            "Selected {} ({}). Nothing is deleted until you review them and confirm.",
             plural(added, "file", "files"),
+            format_size(bytes)
+        );
+        self.set_status(&text);
+    }
+
+    /// Puts several items in the basket (the Clean up tab's "select all"),
+    /// skipping what's in a folder already there.
+    fn add_to_basket(&mut self, ids: &[NodeId]) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        if self.imported {
+            return;
+        }
+        let mut added = 0;
+        let mut bytes = 0;
+        for &id in ids {
+            if id == tree.root() || tree.ancestors(id).any(|a| self.basket.contains(&a)) {
+                continue;
+            }
+            // A folder takes the place of anything selected inside it.
+            self.basket
+                .retain(|&b| !tree.ancestors(b).skip(1).any(|a| a == id));
+            self.basket.push(id);
+            added += 1;
+            bytes += tree.node(id).size_in(self.mode);
+        }
+        self.refresh_basket();
+        let text = format!(
+            "Selected {} ({}). Nothing is deleted until you review them and confirm.",
+            plural(added, "item", "items"),
             format_size(bytes)
         );
         self.set_status(&text);
@@ -3510,6 +3919,7 @@ impl Controller {
             .map(|p| p.to_string_lossy().as_ref().into())
             .collect();
         ui.set_move_targets(ModelRc::new(VecModel::from(targets)));
+        self.mark_cleanup();
     }
 
     fn request_basket_delete(&mut self) {
@@ -3525,14 +3935,41 @@ impl Controller {
             .map(|&id| tree.node(id).size_in(self.mode))
             .sum();
         let what = format!(
-            "the {} in the basket ({})",
+            "the {} selected ({})",
             plural(self.basket.len() as u64, "item", "items"),
             format_size(bytes)
         );
-        let text = format!(
+        let mut text = format!(
             "Move {what} to the quarantine? Put back restores it; the space is freed when you \
              empty the quarantine."
         );
+        // Sets of copies where none would be left.
+        if let DupeSearch::Done(groups) = &self.dupes {
+            let covered = |id: NodeId| tree.ancestors(id).any(|a| self.basket.contains(&a));
+            let whole = groups
+                .iter()
+                .filter(|g| {
+                    let left: Vec<NodeId> = g
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&id| {
+                            !tree
+                                .ancestors(id)
+                                .any(|a| tree.node(a).has(freesize_core::flags::DELETED))
+                        })
+                        .collect();
+                    left.len() > 1 && left.iter().all(|&id| covered(id))
+                })
+                .count();
+            if whole > 0 {
+                text.push_str(&format!(
+                    " Note: every copy of {} is selected, so no copy of {} would be left.",
+                    plural(whole as u64, "duplicate file", "duplicate files"),
+                    if whole == 1 { "it" } else { "them" }
+                ));
+            }
+        }
         self.pending_basket = true;
         ui.set_basket_open(false);
         ui.set_confirm_text(text.into());

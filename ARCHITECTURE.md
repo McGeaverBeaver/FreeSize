@@ -319,10 +319,24 @@ a snapshot and records it (`scans.rs`, the last 12 per scanned folder in
 `scans/<hash>.json` in the data folder, returning the earlier ones), and,
 when the scan covers a whole drive, asks the system about hidden space. A
 path ending in `.json` is read as a scan file instead (`imported`), which
-turns off Open, Delete and Collect.
+turns off Open, Delete, Select and the Clean up tab's tick boxes.
+
+The Clean up tab is a list of `filecleanup::Section`s: each has a card on
+the overview (`CleanSection`), a page of rows, what its "select all" ticks
+(`picks`; for duplicates every copy but `filecleanup::keeper`'s, for
+similar photos all but the largest), the same per group (`groups`, the
+group rows carry their index) and, for duplicates, the types to list one
+of. The controller keeps the sections, shows the open page's rows and
+`mark_cleanup` ticks rows from the basket (an item is ticked when it or a
+folder above it is in the basket), counts them on the cards and warns on
+a set whose every copy is ticked; it runs on every change to the basket,
+so ticking from the tab, the selection bar or the review dialog stays in
+step. Similar photos are handed to Slint as `PhotoSet`s and laid out as
+tiles that wrap to the width. The report flattens the sections back into
+headings and rows (`filecleanup::flatten`).
 
 A scan that missed folders gets a card at the top of the Clean up tab
-(`filecleanup::unreadable_rows`) naming them, with the way to a fuller scan
+(`filecleanup::unreadable_section`) naming them, with the way to a fuller scan
 that `elevate.rs` works out per platform. Windows: `ShellExecuteW` with
 `runas` starts `freesize-gui --administrator PATH`, a second window that
 turns on the backup privilege, scans PATH and says "administrator" in its

@@ -245,3 +245,4 @@ body.plain main.notice { margin-top: 12vh; }
 
 .warn { color: var(--warn); }
 td .sub.danger { color: var(--danger); }
+.pick-bar { position: sticky; bottom: 12px; z-index: 5; box-shadow: 0 4px 18px rgba(0,0,0,.18); }

@@ -95,6 +95,40 @@ export struct CleanRow {
     /// A preview, for photos.
     has-image: bool,
     image: image,
+    /// Clean up: whether it has a tick box, and whether it's ticked (in
+    /// the basket). Group rows: every copy is ticked.
+    checkable: bool,
+    checked: bool,
+    /// A short label beside the name ("Keep", "safe"); `warn` draws it,
+    /// or a group's title, in the warning color.
+    badge: string,
+    warn: bool,
+}
+
+/// A set of similar photos, shown side by side.
+export struct PhotoSet {
+    /// The group's index, for its "select extras" button.
+    index: int,
+    title: string,
+    /// Set when every photo of the set is ticked.
+    warning: string,
+    action: string,
+    photos: [CleanRow],
+}
+
+/// A card on the Clean up tab's overview.
+export struct CleanSection {
+    key: string,
+    title: string,
+    note: string,
+    /// What it could free; empty when it isn't about space.
+    size: string,
+    /// "3 selected", when some of it is in the basket.
+    picked: string,
+    /// A search, stop or other button; empty for none.
+    action: string,
+    has-page: bool,
+    warn: bool,
 }
 
 /// One row of the Clean junk screen.
@@ -647,7 +681,7 @@ component LargestPane inherits Rectangle {
                 }
 
                 Button {
-                    text: "Collect all";
+                    text: "Select all";
                     clicked => {
                         root.collect-all();
                     }
@@ -879,6 +913,628 @@ component CleanupPane inherits Rectangle {
             }
 
             end := Rectangle {
+                height: 0px;
+            }
+        }
+    }
+}
+
+/// A tick box drawn by hand, so it follows the model and is big enough to
+/// tap.
+component Tick inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+    width: 36px;
+    height: 36px;
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.toggled();
+        }
+    }
+
+    Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        border-width: root.checked ? 0 : 2px;
+        border-color: touch.has-hover ? Palette.accent-background : Palette.foreground.transparentize(55%);
+        background: root.checked ? Palette.accent-background : transparent;
+        opacity: root.enabled ? 1 : 0.4;
+        if root.checked: Path {
+            width: 14px;
+            height: 14px;
+            viewbox-width: 14;
+            viewbox-height: 14;
+            commands: "M 2 7.5 L 5.5 11 L 12 3.5";
+            stroke: Palette.accent-foreground;
+            stroke-width: 2.2px;
+        }
+    }
+}
+
+/// A small rounded label.
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <bool> warn;
+    in property <bool> accent;
+    /// Over a picture: an opaque background.
+    in property <bool> solid;
+    height: 20px;
+    width: label.preferred-width + 12px;
+    border-radius: 10px;
+    background: root.solid ? Palette.accent-background : root.warn ? Theme.warn.transparentize(80%) : root.accent ? Palette.accent-background.transparentize(80%) : Theme.track;
+    label := Text {
+        text: root.text;
+        font-size: 11px;
+        font-weight: 600;
+        color: root.solid ? Palette.accent-foreground : root.warn ? Theme.warn : root.accent ? Palette.accent-background : Palette.foreground;
+        vertical-alignment: center;
+    }
+}
+
+/// A photo of a similar set: a big preview with its tick box over it.
+component PhotoTile inherits Rectangle {
+    in property <CleanRow> photo;
+    in property <bool> selected;
+    callback select();
+    callback open();
+    callback check();
+    in property <length> size: 156px;
+    width: root.size;
+    height: root.size + 52px;
+    Rectangle {
+        y: 0;
+        width: root.size;
+        height: root.size;
+        border-radius: 8px;
+        clip: true;
+        background: Theme.track;
+        Image {
+            width: 100%;
+            height: 100%;
+            source: root.photo.image;
+            image-fit: cover;
+            opacity: root.photo.checked ? 0.6 : 1;
+        }
+
+        if !root.photo.has-image: Text {
+            text: "No preview";
+            font-size: 11px;
+            color: Theme.dim;
+        }
+        TouchArea {
+            clicked => {
+                root.select();
+            }
+            double-clicked => {
+                root.open();
+            }
+        }
+
+        if root.photo.badge != "": Badge {
+            x: 6px;
+            y: parent.height - self.height - 6px;
+            text: root.photo.badge;
+            solid: true;
+        }
+        if root.photo.checkable: Rectangle {
+            x: 2px;
+            y: 2px;
+            width: 36px;
+            height: 36px;
+            border-radius: 18px;
+            background: Palette.background.transparentize(25%);
+            Tick {
+                checked: root.photo.checked;
+                toggled => {
+                    root.check();
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        y: 0;
+        width: root.size;
+        height: root.size;
+        border-radius: 8px;
+        border-width: root.photo.checked ? 3px : root.selected ? 2px : 0;
+        border-color: root.photo.checked ? Theme.danger : Palette.accent-background;
+    }
+
+    VerticalLayout {
+        y: root.size + 4px;
+        height: 46px;
+        Text {
+            text: root.photo.title;
+            overflow: elide;
+            font-size: 12px;
+        }
+
+        Text {
+            text: root.photo.detail + " · " + root.photo.subtitle;
+            overflow: elide;
+            font-size: 11px;
+            color: Theme.dim;
+        }
+    }
+}
+
+/// The Clean up tab: an overview of cards, each opening a page of rows to
+/// tick. Ticked rows are in the basket, whose bar sits under the tab.
+component CleanupView inherits Rectangle {
+    in property <[CleanSection]> sections;
+    in property <string> summary;
+    /// The open page's key; empty on the overview.
+    in property <string> page;
+    in property <string> page-title;
+    in property <string> page-blurb;
+    in property <string> page-size;
+    in property <string> page-action;
+    in property <string> page-picked;
+    in property <bool> page-warn;
+    in property <[CleanRow]> rows;
+    /// Similar photos, shown instead of `rows` when there are any.
+    in property <[PhotoSet]> photo-sets;
+    /// Type choices, "Every type" first; empty for none.
+    in property <[string]> filters;
+    in-out property <int> filter-index;
+    /// The "select all" button's label; empty for none.
+    in property <string> pick-label;
+    in property <bool> any-picked;
+    in property <int> selected-id;
+    in property <bool> compact;
+    callback open(string);
+    callback back();
+    /// A card's or page's button, by section key; a quarantine batch's
+    /// buttons send "restore <id>" or "empty <id>".
+    callback action(string);
+    callback select(int);
+    callback open-item(int);
+    callback check(int);
+    /// A group's "select extras", by the group's index.
+    callback group(int);
+    callback pick-all();
+    callback pick-none();
+    callback filter-changed(int);
+
+    changed page => {
+        scroll.content-y = 0;
+    }
+
+    // Sized like the home screen's list; see HomePane.
+    scroll := ScrollView {
+        content-width: self.visible-width;
+        content-height: max(column.preferred-height, bottom.y + 10px);
+        column := VerticalLayout {
+            y: 0;
+            width: scroll.visible-width;
+            height: self.preferred-height * 2 + 1000px;
+            alignment: start;
+            padding: root.compact ? 8px : 12px;
+            spacing: 8px;
+
+            // ----- Overview -----
+            if root.page == "": VerticalLayout {
+                spacing: 8px;
+                Text {
+                    text: "Clean up";
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: root.summary;
+                    font-size: 12px;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+            }
+            if root.page == "": VerticalLayout {
+                spacing: 8px;
+                for section in root.sections: Rectangle {
+                    height: card.preferred-height;
+                    border-radius: 8px;
+                    background: card-touch.has-hover && section.has-page ? Palette.alternate-background.darker(4%) : Palette.alternate-background;
+                    border-width: 1px;
+                    border-color: section.warn ? Theme.warn.transparentize(50%) : Palette.border;
+                    card-touch := TouchArea {
+                        enabled: section.has-page;
+                        mouse-cursor: section.has-page ? pointer : default;
+                        clicked => {
+                            root.open(section.key);
+                        }
+                    }
+
+                    card := HorizontalLayout {
+                        padding: 12px;
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            spacing: 2px;
+                            Text {
+                                text: section.title;
+                                font-size: 14px;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                                color: section.warn ? Theme.warn : Palette.foreground;
+                            }
+
+                            Text {
+                                text: section.note;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+
+                            if section.picked != "": Text {
+                                text: section.picked;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Palette.accent-background;
+                            }
+                        }
+
+                        if section.size != "" && !root.compact: Text {
+                            text: section.size;
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        if section.action != "": VerticalLayout {
+                            alignment: center;
+                            Button {
+                                text: section.action;
+                                clicked => {
+                                    root.action(section.key);
+                                }
+                            }
+                        }
+                        if section.has-page: VerticalLayout {
+                            alignment: center;
+                            Button {
+                                text: "Review";
+                                primary: section.action == "" || section.action == "Search again";
+                                clicked => {
+                                    root.open(section.key);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ----- A section's page -----
+            if root.page != "": VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: "‹ All";
+                        clicked => {
+                            root.back();
+                        }
+                    }
+
+                    Text {
+                        text: root.page-title;
+                        font-size: 17px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                        color: root.page-warn ? Theme.warn : Palette.foreground;
+                    }
+
+                    if root.page-size != "": Text {
+                        text: root.page-size;
+                        font-size: 15px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: root.page-blurb;
+                    font-size: 12px;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+
+                if root.filters.length > 0: HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Show";
+                        vertical-alignment: center;
+                    }
+
+                    ComboBox {
+                        horizontal-stretch: 1;
+                        model: root.filters;
+                        current-index <=> root.filter-index;
+                        selected => {
+                            root.filter-changed(self.current-index);
+                        }
+                    }
+                }
+                if root.pick-label != "" || root.page-action != "": HorizontalLayout {
+                    spacing: 8px;
+                    if root.pick-label != "": Button {
+                        text: root.pick-label;
+                        primary: true;
+                        clicked => {
+                            root.pick-all();
+                        }
+                    }
+                    if root.pick-label != "": Button {
+                        text: "Clear";
+                        enabled: root.any-picked;
+                        clicked => {
+                            root.pick-none();
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.page-action != "": Button {
+                        text: root.page-action;
+                        clicked => {
+                            root.action(root.page);
+                        }
+                    }
+                }
+                if root.page-picked != "": Text {
+                    text: root.page-picked;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Palette.accent-background;
+                    wrap: word-wrap;
+                }
+            }
+            if root.page != "" && root.photo-sets.length > 0: VerticalLayout {
+                spacing: 4px;
+                for set in root.photo-sets: VerticalLayout {
+                    spacing: 6px;
+                    HorizontalLayout {
+                        padding-top: 10px;
+                        spacing: 8px;
+                        VerticalLayout {
+                            alignment: end;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: set.title;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+
+                            if set.warning != "": Text {
+                                text: set.warning;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Theme.warn;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        if set.action != "": Button {
+                            text: set.action;
+                            clicked => {
+                                root.group(set.index);
+                            }
+                        }
+                    }
+
+                    // Tiles wrap onto as many lines as the width needs.
+                    tiles := Rectangle {
+                        property <int> columns: max(2, floor((self.width + 8px) / 164px));
+                        property <length> tile: (self.width - (self.columns - 1) * 8px) / self.columns;
+                        height: ceil(set.photos.length / self.columns) * (self.tile + 58px);
+                        for photo[i] in set.photos: PhotoTile {
+                            size: tiles.tile;
+                            x: mod(i, tiles.columns) * (tiles.tile + 8px);
+                            y: floor(i / tiles.columns) * (tiles.tile + 58px);
+                            photo: photo;
+                            selected: photo.id == root.selected-id;
+                            select => {
+                                root.select(photo.id);
+                            }
+                            open => {
+                                root.open-item(photo.id);
+                            }
+                            check => {
+                                root.check(photo.id);
+                            }
+                        }
+                    }
+                }
+            }
+            if root.page != "" && root.photo-sets.length == 0: VerticalLayout {
+                for row in root.rows: VerticalLayout {
+                    if row.kind == 0: VerticalLayout {
+                        padding-top: 10px;
+                        padding-bottom: 6px;
+                        Text {
+                            text: row.title;
+                            font-size: 15px;
+                            font-weight: 600;
+                            wrap: word-wrap;
+                        }
+
+                        if row.subtitle != "": Text {
+                            text: row.subtitle;
+                            font-size: 12px;
+                            color: Theme.dim;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if row.kind == 1: Rectangle {
+                        property <bool> selected: row.id == root.selected-id;
+                        height: row.has-image ? 84px : root.compact ? 56px : 48px;
+                        border-radius: 6px;
+                        background: self.selected ? Palette.selection-background : touch.has-hover ? Palette.alternate-background : transparent;
+                        touch := TouchArea {
+                            clicked => {
+                                root.select(row.id);
+                            }
+                            double-clicked => {
+                                root.open-item(row.id);
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: row.checkable ? 0px : 8px;
+                            padding-right: 8px;
+                            spacing: 6px;
+                            if row.checkable: VerticalLayout {
+                                alignment: center;
+                                Tick {
+                                    checked: row.checked;
+                                    toggled => {
+                                        root.check(row.id);
+                                    }
+                                }
+                            }
+                            if row.has-image: VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 76px;
+                                    height: 76px;
+                                    border-radius: 6px;
+                                    clip: true;
+                                    background: Theme.track;
+                                    border-width: row.checked ? 3px : 0;
+                                    border-color: Theme.danger;
+                                    Image {
+                                        width: 100%;
+                                        height: 100%;
+                                        source: row.image;
+                                        image-fit: cover;
+                                        opacity: row.checked ? 0.55 : 1;
+                                    }
+                                }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    Text {
+                                        text: row.title;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                        color: selected ? Palette.selection-foreground : Palette.foreground;
+                                    }
+
+                                    if row.badge != "": Badge {
+                                        text: row.badge;
+                                        warn: row.warn;
+                                        accent: !row.warn;
+                                    }
+                                }
+
+                                Text {
+                                    text: row.subtitle;
+                                    overflow: elide;
+                                    font-size: 11px;
+                                    color: selected ? Palette.selection-foreground : Theme.dim;
+                                }
+                            }
+
+                            if row.detail != "": Text {
+                                text: row.detail;
+                                vertical-alignment: center;
+                                color: selected ? Palette.selection-foreground : Palette.foreground;
+                            }
+                        }
+                    }
+
+                    if row.kind == 2: HorizontalLayout {
+                        padding-top: 10px;
+                        spacing: 8px;
+                        VerticalLayout {
+                            alignment: end;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: row.title;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+
+                            if row.warn: Text {
+                                text: row.subtitle;
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: Theme.warn;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        if row.action != "": Button {
+                            text: row.action;
+                            clicked => {
+                                root.group(row.id);
+                            }
+                        }
+                    }
+
+                    if row.kind == 3: Rectangle {
+                        height: batch.preferred-height + 12px;
+                        border-radius: 6px;
+                        background: Palette.alternate-background;
+                        batch := HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            y: 6px;
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                Text {
+                                    text: row.title;
+                                    wrap: word-wrap;
+                                }
+
+                                Text {
+                                    text: row.subtitle;
+                                    wrap: word-wrap;
+                                    font-size: 11px;
+                                    color: Theme.dim;
+                                }
+                            }
+
+                            if !root.compact: Text {
+                                text: row.detail;
+                                vertical-alignment: center;
+                            }
+                            Button {
+                                text: "Put back";
+                                clicked => {
+                                    root.action("restore " + row.action);
+                                }
+                            }
+
+                            Button {
+                                text: "Empty";
+                                clicked => {
+                                    root.action("empty " + row.action);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            bottom := Rectangle {
                 height: 0px;
             }
         }
@@ -1896,6 +2552,20 @@ export component AppWindow inherits Window {
     in property <[FileRow]> largest-files;
     in property <[TypeRow]> file-types;
     in property <[CleanRow]> cleanup-rows;
+    in property <[CleanSection]> cleanup-sections;
+    in property <string> cleanup-summary;
+    in property <string> cleanup-page;
+    in property <string> cleanup-page-title;
+    in property <string> cleanup-page-blurb;
+    in property <string> cleanup-page-size;
+    in property <string> cleanup-page-action;
+    in property <string> cleanup-page-picked;
+    in property <bool> cleanup-page-warn;
+    in property <[string]> cleanup-filters;
+    in-out property <int> cleanup-filter-index;
+    in property <string> cleanup-pick-label;
+    in property <bool> cleanup-any-picked;
+    in property <[PhotoSet]> cleanup-photo-sets;
     in property <[Crumb]> crumbs;
     in property <string> focus-size;
     in property <[BubbleItem]> bubbles;
@@ -2012,6 +2682,12 @@ export component AppWindow inherits Window {
     callback grant-permission();
     callback sheet-action(string);
     callback cleanup-action(string);
+    callback cleanup-open(string);
+    callback cleanup-open-item(int);
+    callback cleanup-check(int);
+    callback cleanup-group(int);
+    callback cleanup-pick(bool);
+    callback cleanup-filter(int);
     callback junk-close();
     callback junk-toggle(int);
     callback junk-expand(int);
@@ -2314,14 +2990,53 @@ export component AppWindow inherits Window {
 
                         Tab {
                             title: "Clean up";
-                            CleanupPane {
+                            CleanupView {
+                                sections: root.cleanup-sections;
+                                summary: root.cleanup-summary;
+                                page: root.cleanup-page;
+                                page-title: root.cleanup-page-title;
+                                page-blurb: root.cleanup-page-blurb;
+                                page-size: root.cleanup-page-size;
+                                page-action: root.cleanup-page-action;
+                                page-picked: root.cleanup-page-picked;
+                                page-warn: root.cleanup-page-warn;
                                 rows: root.cleanup-rows;
+                                photo-sets: root.cleanup-photo-sets;
+                                filters: root.cleanup-filters;
+                                pick-label: root.cleanup-pick-label;
+                                any-picked: root.cleanup-any-picked;
                                 selected-id: root.selected-id;
+                                compact: root.compact;
+                                filter-index <=> root.cleanup-filter-index;
+                                open(key) => {
+                                    root.cleanup-open(key);
+                                }
+                                back => {
+                                    root.cleanup-open("");
+                                }
+                                action(key) => {
+                                    root.cleanup-action(key);
+                                }
                                 select(id) => {
                                     root.select-node(id, true);
                                 }
-                                action(title) => {
-                                    root.cleanup-action(title);
+                                open-item(id) => {
+                                    root.cleanup-open-item(id);
+                                }
+                                check(id) => {
+                                    root.cleanup-check(id);
+                                }
+                                group(index) => {
+                                    root.cleanup-group(index);
+                                }
+                                pick-all => {
+                                    root.cleanup-pick(true);
+                                }
+                                pick-none => {
+                                    root.cleanup-pick(false);
+                                }
+                                filter-changed(index) => {
+                                    root.cleanup-filter(index);
                                 }
                             }
                         }
@@ -2430,14 +3145,53 @@ export component AppWindow inherits Window {
 
                 Tab {
                     title: "Clean";
-                    CleanupPane {
+                    CleanupView {
+                        sections: root.cleanup-sections;
+                        summary: root.cleanup-summary;
+                        page: root.cleanup-page;
+                        page-title: root.cleanup-page-title;
+                        page-blurb: root.cleanup-page-blurb;
+                        page-size: root.cleanup-page-size;
+                        page-action: root.cleanup-page-action;
+                        page-picked: root.cleanup-page-picked;
+                        page-warn: root.cleanup-page-warn;
                         rows: root.cleanup-rows;
+                        photo-sets: root.cleanup-photo-sets;
+                        filters: root.cleanup-filters;
+                        pick-label: root.cleanup-pick-label;
+                        any-picked: root.cleanup-any-picked;
                         selected-id: root.selected-id;
+                        compact: root.compact;
+                        filter-index <=> root.cleanup-filter-index;
+                        open(key) => {
+                            root.cleanup-open(key);
+                        }
+                        back => {
+                            root.cleanup-open("");
+                        }
+                        action(key) => {
+                            root.cleanup-action(key);
+                        }
                         select(id) => {
                             root.select-node(id, true);
                         }
-                        action(title) => {
-                            root.cleanup-action(title);
+                        open-item(id) => {
+                            root.cleanup-open-item(id);
+                        }
+                        check(id) => {
+                            root.cleanup-check(id);
+                        }
+                        group(index) => {
+                            root.cleanup-group(index);
+                        }
+                        pick-all => {
+                            root.cleanup-pick(true);
+                        }
+                        pick-none => {
+                            root.cleanup-pick(false);
+                        }
+                        filter-changed(index) => {
+                            root.cleanup-filter(index);
                         }
                     }
                 }
@@ -2468,14 +3222,14 @@ export component AppWindow inherits Window {
                     padding-right: 8px;
                     spacing: 8px;
                     Text {
-                        text: root.basket-count > 0 ? "Basket: " + root.basket-summary : "Moved: " + root.put-back-label;
+                        text: root.basket-count > 0 ? "Selected to remove: " + root.basket-summary : "Moved: " + root.put-back-label;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                         overflow: elide;
                     }
 
                     if root.basket-count > 0: Button {
-                        text: "Review";
+                        text: "Review…";
                         primary: true;
                         clicked => {
                             root.basket-review();
@@ -2537,7 +3291,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Button {
-                        text: root.in-basket ? "Collected" : "Collect";
+                        text: root.in-basket ? "Selected" : "Select";
                         enabled: root.can-delete || root.in-basket;
                         clicked => {
                             root.collect();
@@ -2661,13 +3415,13 @@ export component AppWindow inherits Window {
                 padding-bottom: 18px + (root.compact ? root.safe-area-insets.bottom : 0px);
                 spacing: 8px;
                 Text {
-                    text: "Basket";
+                    text: "Selected to remove";
                     font-size: 18px;
                     font-weight: 600;
                 }
 
                 Text {
-                    text: root.basket-count > 0 ? root.basket-summary : "Empty.";
+                    text: root.basket-count > 0 ? root.basket-summary + ". Look them over: Keep takes one off the list. Nothing is deleted until you confirm, and then it goes to the quarantine, where Put back restores it." : "Nothing is selected.";
                     color: Theme.dim;
                     wrap: word-wrap;
                 }
@@ -2700,7 +3454,7 @@ export component AppWindow inherits Window {
                             }
 
                             Button {
-                                text: "Remove";
+                                text: "Keep";
                                 clicked => {
                                     root.basket-remove(row.id);
                                 }
@@ -2732,7 +3486,7 @@ export component AppWindow inherits Window {
                     spacing: 6px;
                     padding-top: 6px;
                     Button {
-                        text: "Delete all";
+                        text: "Delete all…";
                         primary: true;
                         enabled: root.basket-count > 0;
                         clicked => {
@@ -2755,7 +3509,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Button {
-                        text: "Empty basket";
+                        text: "Clear the selection";
                         enabled: root.basket-count > 0;
                         clicked => {
                             root.basket-clear();

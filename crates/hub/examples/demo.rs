@@ -142,6 +142,14 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
         },
         actions: if platform == Platform::Android {
             vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]
+        } else if attended {
+            // What the desktop app does since 0.10.
+            vec![
+                ActionKind::Delete,
+                ActionKind::Clean,
+                ActionKind::Restore,
+                ActionKind::Empty,
+            ]
         } else {
             vec![ActionKind::Delete]
         },

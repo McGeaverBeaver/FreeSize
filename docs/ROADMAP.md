@@ -357,6 +357,19 @@ Parked, each with its reason:
   (`Finding::can_tick`). Rules removed with the system's own tool, and
   rules whose program is running, still can't. Still to do by hand: the
   QR check in TESTING.md, and ticking a "check first" rule on Windows.
+- 0.16: the Clean up tab redesigned for everyday use (asked for on
+  2026-10-13), on desktops and phones alike. An overview of cards (how
+  much each could free, how many are ticked) opening to a page per card, tick boxes on every row and
+  buttons to tick many at once: every extra copy of the duplicates,
+  keeping one outside caches, not named like a copy and oldest (marked
+  Keep), duplicates of one type only (EXE, JPG, …), all but the largest of
+  each set of similar photos, shown side by side as tiles, the safe system
+  caches. Ticking fills the basket, now called the selection, whose review
+  lists everything once more; a set with every copy ticked is flagged on
+  the page and in the confirmation. The Hub's Junk tab ticks several rules
+  and asks for them in one dialog, and its Largest files tab lists one type
+  and ticks all it lists. Still to do by hand: the Clean up checks in
+  TESTING.md on Windows and on a phone.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

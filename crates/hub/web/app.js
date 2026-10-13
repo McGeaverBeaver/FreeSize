@@ -665,17 +665,38 @@ async function deviceFiles(device, scanArg) {
   const scanId = Number(scanArg) || roots[0].scans[0].id;
   const listed = await api(`/api/scans/${scanId}/files`);
   const pick = canDo(device, "delete") ? deleteBar(device, listed.scan.root, listed.scan.label || listed.scan.root) : null;
+  const typeOf = (f) => { const dot = f.name.lastIndexOf("."); return dot > 0 ? f.name.slice(dot + 1).toLowerCase() : ""; };
+  const types = new Map();
+  listed.files.forEach((f) => { const t = typeOf(f); const v = types.get(t) || [0, 0]; types.set(t, [v[0] + 1, v[1] + f.allocated]); });
+  const ranked = [...types.entries()].sort((a, b) => b[1][1] - a[1][1]).slice(0, 10);
+  let filter = null;
+  const tbody = h("tbody");
+  const filters = h("div", { class: "filters" });
+  const all = h("input", { type: "checkbox", "aria-label": "Choose every file listed",
+    onchange: (e) => { pick.set(shown().map((f) => [f.path, f.allocated]), e.target.checked); } });
+  const shown = () => listed.files.filter((f) => filter === null || typeOf(f) === filter);
+  const draw = () => {
+    const files = shown();
+    tbody.replaceChildren(...files.map((f) => h("tr", {},
+      pick ? h("td", { style: "width:28px" }, pick.box(f.path, f.allocated)) : null,
+      h("td", {}, f.name, h("div", { class: "sub" }, f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : listed.scan.label || listed.scan.root)),
+      h("td", { class: "hide-narrow small" }, day(f.modified)),
+      h("td", { class: "num" }, size(f.allocated)))));
+    all.checked = pick ? files.length > 0 && files.every((f) => pick.has(f.path)) : false;
+    filters.replaceChildren(...(ranked.length > 1 ? [
+      h("button", { class: `small ${filter === null ? "on" : ""}`, onclick: () => { filter = null; draw(); } }, `All (${listed.files.length})`),
+      ...ranked.map(([t, [n, bytes]]) => h("button", { class: `small ${filter === t ? "on" : ""}`, onclick: () => { filter = t; draw(); } },
+        `${t ? t.toUpperCase() : "No type"} (${n}, ${size(bytes)})`))] : []));
+  };
+  draw();
   return h("div", { class: "card" },
     h("div", { class: "row", style: "margin-bottom:10px" },
       h("h2", { class: "grow", style: "margin:0" }, "Largest files"),
       scanPicker(device, scanId, (id) => { location.hash = `#/device/${encodeURIComponent(device.id)}/files/${id}`; })),
+    filters,
     h("div", { class: "table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, pick ? h("th") : null, h("th", {}, "File"), h("th", { class: "hide-narrow" }, "Changed"), h("th", { class: "num" }, "Size"))),
-      h("tbody", {}, listed.files.map((f) => h("tr", {},
-        pick ? h("td", { style: "width:28px" }, pick.box(f.path, f.allocated)) : null,
-        h("td", {}, f.name, h("div", { class: "sub" }, f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : listed.scan.label || listed.scan.root)),
-        h("td", { class: "hide-narrow small" }, day(f.modified)),
-        h("td", { class: "num" }, size(f.allocated))))))),
+      h("thead", {}, h("tr", {}, pick ? h("th", { style: "width:28px" }, all) : null, h("th", {}, "File"), h("th", { class: "hide-narrow" }, "Changed"), h("th", { class: "num" }, "Size"))),
+      tbody)),
     pick ? pick.bar : null);
 }
 
@@ -910,38 +931,70 @@ const JUNK_CATEGORIES = [
   ["developer", "Developer tools"], ["trash", "Trash and downloads"],
 ];
 
-/** What the device's junk cleaner found, by category, with a Clean request per rule. */
+/** What the device's junk cleaner found, by category. Rules are ticked
+ * (or "Clean…" asked for one at a time) and asked for in one go. */
 function deviceJunk(device) {
   const report = device.junk_report;
   if (!report) return h("div", { class: "card empty" }, h("h2", {}, "No junk report"));
   const entries = report.entries || [];
+  const askable = (e) => canDo(device, "clean") && e.safety !== "use_tool" && !e.running;
+  const chosen = new Set();
+  const boxes = new Map();
+  const summary = h("span", { class: "grow" });
+  const ask = h("button", { class: "primary" }, "Ask to clean…");
+  const bar = h("div", { class: "row callout pick-bar", style: "display:none" }, summary, ask);
+  const refresh = () => {
+    const picked = entries.filter((e) => chosen.has(e.kind));
+    summary.textContent = `${count(picked.length, "rule", "rules")} ticked, ${size(picked.reduce((a, e) => a + e.bytes, 0))}`
+      + (picked.some((e) => e.safety === "check_first") ? " · \"check first\" ones go to the quarantine" : "");
+    bar.style.display = picked.length ? "flex" : "none";
+    boxes.forEach((box, kind) => { box.checked = chosen.has(kind); });
+  };
+  const set = (list, on) => { list.forEach((e) => (on ? chosen.add(e.kind) : chosen.delete(e.kind))); refresh(); };
+  const cleanLines = (e) => [`${e.label}: ${count(e.items, "item", "items")}, ${size(e.bytes)}. ${e.blurb}`,
+    e.safety === "check_first" ? "  These go to the device's quarantine, to put back or empty later." : "  Deleted for good; the app makes it again if it needs it."];
+  const askFor = (list) => requestDialog(device,
+    list.map((e) => ({ type: "clean_junk", kind: e.kind, label: e.label, bytes: e.bytes })),
+    [list.length > 1 ? `Clean up ${count(list.length, "rule", "rules")}, ${size(list.reduce((a, e) => a + e.bytes, 0))}:` : "Clean up:",
+      ...list.flatMap(cleanLines)]);
+  ask.addEventListener("click", () => askFor(entries.filter((e) => chosen.has(e.kind))));
+  const safe = entries.filter((e) => askable(e) && e.safety === "safe");
   const head = h("div", { class: "card" },
     h("h2", {}, "Junk"),
     h("p", { class: "dim small" }, entries.length
       ? `${size(report.total)} found ${ago(report.taken)}; ${size(report.safe)} is safe to clean now.`
       : `Nothing found in the known places, ${ago(report.taken)}.`),
-    h("p", { class: "hint" }, "Each Clean… is a request the device approves. Safe items are deleted; \"check first\" items go to the device's quarantine, where Put back restores them; what the system should remove itself names its tool. An app that's running is skipped until it's closed."));
+    canDo(device, "clean") && entries.some(askable) ? h("div", { class: "row" },
+      safe.length ? h("button", { class: "primary", onclick: () => set(safe, true) }, `Tick the safe ones (${size(safe.reduce((a, e) => a + e.bytes, 0))})`) : null,
+      h("button", { onclick: () => set(entries, false) }, "Clear")) : null,
+    h("p", { class: "hint" }, "Tick what should go, then Ask to clean: the device shows the list and approves it. Safe items are deleted; \"check first\" items go to the device's quarantine, where Put back restores them; what the system should remove itself names its tool. An app that's running is skipped until it's closed."));
   const cards = JUNK_CATEGORIES.map(([key, title]) => {
     const rows = entries.filter((e) => e.category === key);
     if (!rows.length) return null;
-    return h("div", { class: "card table-wrap" }, h("h2", {}, title),
+    const pickable = rows.filter(askable);
+    return h("div", { class: "card table-wrap" },
+      h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, title),
+        pickable.length > 1 ? h("button", { class: "small", onclick: () => set(pickable, !pickable.every((e) => chosen.has(e.kind))) }, "Tick all here") : null),
       h("table", {}, h("tbody", {}, rows.map((e) => {
-        const askable = canDo(device, "clean") && e.safety !== "use_tool" && !e.running;
         const badge = e.running ? h("span", { class: "badge warn" }, "in use")
           : e.safety === "safe" ? h("span", { class: "badge ok" }, "safe")
           : e.safety === "check_first" ? h("span", { class: "badge warn" }, "check first")
           : h("span", { class: "badge" }, "its own tool");
+        let box = null;
+        if (askable(e)) {
+          box = h("input", { type: "checkbox", "aria-label": `Tick ${e.label}`,
+            onchange: (ev) => { if (ev.target.checked) chosen.add(e.kind); else chosen.delete(e.kind); refresh(); } });
+          boxes.set(e.kind, box);
+        }
         return h("tr", {},
+          h("td", { style: "width:28px" }, box),
           h("td", {}, e.label, " ", badge, e.refills ? h("span", { class: "badge", style: "margin-left:4px" }, "refills") : null,
             h("div", { class: "sub" }, e.blurb, e.safety === "use_tool" ? ` Tool: ${e.tool}` : "")),
           h("td", { class: "num" }, size(e.bytes), h("div", { class: "sub" }, count(e.items, "item", "items"))),
-          h("td", { class: "num" }, askable ? h("button", { class: "small", onclick: () =>
-            requestDialog(device, { type: "clean_junk", kind: e.kind, label: e.label, bytes: e.bytes },
-              [`Clean up ${e.label}: ${count(e.items, "item", "items")}, ${size(e.bytes)}.`, e.blurb,
-               e.safety === "check_first" ? "These go to the device's quarantine, to put back or empty later." : "Deleted for good; the app makes it again if it needs it."]) }, "Clean…") : null));
+          h("td", { class: "num" }, askable(e) ? h("button", { class: "small", onclick: () => askFor([e]) }, "Clean…") : null));
       }))));
   });
-  return h("div", { class: "stack" }, head, cards);
+  return h("div", { class: "stack" }, head, cards, bar);
 }
 
 function deviceQuarantine(device) {
@@ -1612,23 +1665,29 @@ PAGES.requests = async () => {
 
 /** Asks a device to do something, after showing exactly what. */
 function requestDialog(device, action, lines) {
+  const actions = Array.isArray(action) ? action : [action];
   dialog((close) => {
     const reason = h("textarea", { maxlength: 500, placeholder: "Optional: shown on the device with the request" });
     const who = device.info && device.info.attended
       ? `${device.name} shows the request to whoever is at it.`
       : `Nobody is at ${device.name}, so its approver's phone gets the request.`;
     const send = async () => {
+      let sent = 0;
       try {
-        await api(`/api/devices/${encodeURIComponent(device.id)}/commands`, { method: "POST", body: { action, reason: reason.value } });
+        for (const one of actions) {
+          await api(`/api/devices/${encodeURIComponent(device.id)}/commands`, { method: "POST", body: { action: one, reason: reason.value } });
+          sent += 1;
+        }
         close();
-        toast("Sent. The device will ask before doing it.");
+        toast(actions.length > 1 ? `Sent ${actions.length} requests. The device will ask before doing them.` : "Sent. The device will ask before doing it.");
         location.hash = `#/device/${encodeURIComponent(device.id)}/requests`;
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(sent ? `Sent ${sent} of ${actions.length}; then: ${e.message}` : e.message, true); }
     };
     return [
       h("h2", {}, "Ask the device"),
       h("div", { class: "paths" }, lines.map((l) => h("div", {}, l))),
       h("p", { class: "callout", style: "margin-top:12px" }, who,
+        actions.length > 1 ? ` Each of the ${actions.length} is its own request, so it asks about each.` : "",
         " Nothing happens until someone approves it there. The request expires in 24 hours."),
       h("label", {}, "Reason"), reason,
       h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: send }, "Send request")),
@@ -1654,7 +1713,7 @@ function deleteBar(device, root, label) {
   const chosen = new Map();
   const summary = h("span", { class: "grow small" });
   const button = h("button", { class: "danger small", disabled: true }, "Ask to delete…");
-  const bar = h("div", { class: "row callout", style: "margin-top:12px;display:none" }, summary, button);
+  const bar = h("div", { class: "row callout pick-bar", style: "margin-top:12px;display:none" }, summary, button);
   const refresh = () => {
     const total = [...chosen.values()].reduce((a, b) => a + b, 0);
     summary.textContent = `${count(chosen.size, "item", "items")} chosen, ${size(total)}`;
@@ -1667,12 +1726,25 @@ function deleteBar(device, root, label) {
     requestDialog(device, { type: "delete", root, paths, bytes: total },
       [`Delete ${count(paths.length, "item", "items")} (${size(total)}) in ${label}:`, ...paths.map((p) => `${root}/${p}`)]);
   });
-  const box = (path, bytes) => h("input", {
-    type: "checkbox", "aria-label": `Choose ${path}`,
-    onclick: (e) => e.stopPropagation(),
-    onchange: (e) => { if (e.target.checked) chosen.set(path, bytes); else chosen.delete(path); refresh(); },
-  });
-  return { bar, box };
+  const boxes = new Map();
+  const box = (path, bytes) => {
+    const input = h("input", {
+      type: "checkbox", "aria-label": `Choose ${path}`,
+      onclick: (e) => e.stopPropagation(),
+      onchange: (e) => { if (e.target.checked) chosen.set(path, bytes); else chosen.delete(path); refresh(); },
+    });
+    input.checked = chosen.has(path);
+    boxes.set(path, input);
+    return input;
+  };
+  /** Ticks (or unticks) several at once: [[path, bytes], ...]. */
+  const set = (items, on) => {
+    items.forEach(([path, bytes]) => (on ? chosen.set(path, bytes) : chosen.delete(path)));
+    boxes.forEach((input, path) => { input.checked = chosen.has(path); });
+    refresh();
+  };
+  const has = (path) => chosen.has(path);
+  return { bar, box, set, has };
 }
 
 PAGES.settings = async () => {
