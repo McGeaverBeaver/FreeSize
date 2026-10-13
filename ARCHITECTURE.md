@@ -618,8 +618,11 @@ channels.
   check. A poll waits up to 60 s on a per-device `Notify`, woken when
   something arrives for it.
 - `commands.rs`: requests from the dashboard, checked against what the
-  device reported (the paths must be in its newest scan of that folder, the
-  app or junk in its report), signed and queued. States: queued, delivered,
+  device reported (the folder must be one the device scanned, and the sizes
+  shown come from that scan; an Unraid finding, app, junk kind or
+  quarantine batch must be in its report; from 0.8.4 the paths of a delete
+  must be in the scan too), signed and queued. The device checks every
+  path again before asking anyone. States: queued, delivered,
   shown, needs_approver, running, done, failed, denied, expired, cancelled.
   Undelivered work is sent again after 10 minutes and expires after a day.
   For a device without anyone at it, the request goes to the approver's

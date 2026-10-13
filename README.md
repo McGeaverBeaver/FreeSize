@@ -530,12 +530,30 @@ The DiskTree app on a phone only hears from the Hub while it's open. Turn on
 the request alert (Alerts → When to alert) and add ntfy or Pushover, and
 you'll get a notification to open it.
 
+### What a device sends
+
+Nothing leaves a device until it's paired, and then only to your Hub: its
+name, operating system and host name; each disk's size and free space; after
+a scan, the paths and sizes of the 10,000 biggest folders, the 500 biggest
+files with their dates, and the 100 biggest file types; on Android, every
+installed app with its size, when it was last opened and where it came
+from; on Unraid, the shares per disk, container and VM names with what they
+use, which files are open and by which process, and what's in the
+quarantine. Nothing is sent anywhere else, and no file contents are ever
+sent. The Hub keeps scans for a week, then one a day for three months, one
+a week for a year and one a month after that; removing a device deletes
+everything it reported.
+
 ### Running the Hub
 
 The Hub is one program with its database (SQLite) and key in a data folder.
 **Back that folder up**: devices trust the key, and a new one means pairing
-every device again. Keep the Hub off the internet: bind it to a LAN or
-WireGuard address, and put HTTPS in front with a reverse proxy.
+every device again. Put HTTPS in front with a reverse proxy. Whether the Hub
+is reachable from the internet is your choice: on a LAN or WireGuard address
+only your own devices see it; reachable from outside, sign-in goes through
+Authentik's own protections and pairing codes are one-time and short-lived,
+and the Hub limits wrong guesses, but the devices' reports (folder and file
+names) are only as private as your HTTPS.
 
 **Unraid**: the template is in `unraid/disktree-hub.xml`. Until it's in
 Community Applications, add it from the Unraid terminal, then pick
@@ -558,9 +576,15 @@ docker run -d --name disktree-hub --restart unless-stopped \
   -p 192.168.10.200:9090:9090 -v /srv/disktree-hub:/data \
   -e DISKTREE_HUB_URL=https://disktree.home.lan \
   -e DISKTREE_OIDC_ISSUER=https://auth.home.lan/application/o/disktree/ \
-  -e DISKTREE_OIDC_CLIENT_ID=... -e DISKTREE_OIDC_CLIENT_SECRET=... \
+  -e DISKTREE_OIDC_CLIENT_ID=... \
+  -v /srv/disktree-hub-secret:/run/secrets/oidc:ro \
+  -e DISKTREE_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
   ghcr.io/mcgeaverbeaver/disktree-hub:latest
 ```
+
+The client secret comes from a file (`/srv/disktree-hub-secret` here, holding
+just the secret) rather than `-e DISKTREE_OIDC_CLIENT_SECRET=...`, which
+would stay in your shell history and show in `docker inspect`.
 
 The container runs the Hub as `PUID`:`PGID` (99:100 by default) and gives
 it the data folder. The image is built for amd64 and arm64 by
@@ -783,7 +807,10 @@ the array stops so it never holds a disk, and logs to
 `/etc/rc.d/rc.disktree start|stop|restart|status`. Removing the plugin
 keeps its settings and Hub pairing in `/boot/config/plugins/disktree`, and
 anything still in the quarantine stays in `.disktree-quarantine` at the top
-of each disk until you delete it.
+of each disk until you delete it. The pairing file there holds the server's
+private key; the flash drive can't keep file permissions, so make sure the
+`flash` share isn't open to everyone on your network (Shares → flash →
+Security).
 
 ### With the Hub
 
@@ -995,8 +1022,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work, and
 
 ## Licensing
 
-No license has been chosen for this project yet. Note that Slint is available
-under GPLv3, under a royalty-free license for desktop and mobile apps that
-requires attribution (for example a "Made with Slint" badge in the About box or
-on the website), or under a paid license. Pick the one that matches how you
-want to distribute DiskTree.
+DiskTree will be released under the GNU General Public License, version 3 or
+later (decided 2026-10-12; the LICENSE file arrives with 0.9, together with
+the "Made with Slint" attribution Slint's royalty-free license asks for).
+Until the file is in the repository, no license is granted.

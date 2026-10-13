@@ -19,6 +19,9 @@ else that can delete:
   (for example Unraid's flash drive, `system` share and the appdata of
   installed containers), and admins can add their own.
 - **Everything is logged:** who asked, who approved, what ran, the result.
+- **A grant never covers what can't be undone.** Emptying the quarantine
+  and removing Docker images are asked for every time, with the paths
+  shown, however long a grant for deleting is still running.
 
 ## Done
 
@@ -110,69 +113,151 @@ else that can delete:
   which disks hold each folder and ticks them; a folder on several disks
   moves from each, one after another.
 
-Left over:
-- From 2b/2c: old downloads and screen recordings as their own groups
-  (phase 6's junk cleaner picks them up). Docker's build cache is cleaned
-  on Unraid since 0.8.
-- From 2d: an Apps bubble view on desktops (an app's install folder plus its
-  AppData/Library/cache folders, gathered across drives); Epic and GOG game
-  artwork.
-- From 3, each held back for a reason:
-  - **The Hub on Windows** as a service from the installer, with a firewall
-    rule for private networks: needs the installer (NSIS) and a Windows
-    service wrapper, tested on real Windows. The Hub runs in Docker Desktop
-    meanwhile.
-  - **The phone in the background**: the Android app only reports and gets
-    prompts while it's open (an alert nudges you to open it). A small Java
-    part with WorkManager fixes that, together with Shizuku below.
-  - **More actions**: removing packages (apt, dnf, Flatpak, Snap, winget,
-    Homebrew), Docker cleanup outside Unraid and making OneDrive/Nextcloud files
-    online-only. Each needs its own checks of what's safe; deleting files,
-    cleaning junk and uninstalling Android apps come first.
-  - **Scanning over SSH** without an agent: uploading `ncdu -o` files covers
-    it for now, without the Hub holding SSH keys.
-  - **Mass-change warnings** (thousands of files rewritten, a new extension
-    everywhere): needs file-level changes between scans, which the summaries
-    don't keep.
-  - **Email alerts and scheduled digest reports**: ntfy, Gotify, Pushover
-    and webhooks (which can reach email through Home Assistant or n8n)
-    cover alerts for now.
-  - **Disk health from Scrutiny**, **S3/B2/MinIO buckets**, **per-user
-    totals** for shares and Nextcloud, **tags and keep marks** on what's
-    found, and **MQTT discovery** for Home Assistant (the REST sensor works
-    meanwhile).
-  - **An MCP server** for AI assistants: read-only first, with actions
-    still approved on the device.
-- From 2e, each held back for a reason:
-  - **Shizuku mode on Android** (batch cache clearing and `Android/data`
-    through an unrooted phone's helper): needs a Java part in the APK, which
-    the Hub's background agent needs too, so the two come together.
-    Sideloaded or F-Droid builds only; Play restricts it.
-  - **Shrinking photos** (SD Maid SE's Squeezer): rewrites people's photos,
-    so it waits for a quarantine with restore on phones and desktops (servers
-    have one since 0.8) to keep the originals until the user is happy.
-  - **Blurry photos**: a sharpness score per photo, on top of the similar
-    photos finder, to pick the best of a group.
-  - **NTFS compression in place** and **fast Windows scans** from the
-    Master File Table and change journal (as WizTree and SpaceObServer do):
-    both need administrator rights and testing on real Windows machines
-    with NTFS drives, which the Linux build machine can't stand in for.
-  - **btrfs snapshots and APFS purgeable space** in the hidden space
-    explanation (ZFS, Windows shadow copies and Time Machine are done).
-  - **Leftovers of uninstalled programs** in AppData and `~/Library`:
-    matching folders to installed programs is reliable for the icons but not
-    yet reliable enough to call a folder abandoned. Phase 6's junk cleaner
-    picks it up once it is.
-- From 4, each held back for a reason:
-  - **Container logs, writable layers and orphan volumes** are only shown:
-    Docker keeps writing to a running container's log, a layer is part of
-    the container, and a volume's data can't go to the quarantine without
-    Docker losing track of it. The Docker tab handles them.
-  - **Community Applications**: the plugin installs from its `.plg` URL
-    until it's submitted there; the repository is public since 0.8.3, so
-    it can be.
-  - **Unraid's own notifications** for full disks: the Hub's alerts cover
-    it once paired.
+Left over and planned (the release it goes in is under Next releases):
+- **A quarantine on phones and desktops**, with one Put back for everything,
+  the basket's own undo folded in (0.9). Shrinking photos (SD Maid SE's
+  Squeezer) waits for it, since it rewrites people's photos.
+- **The phone in the background**: the Android app only reports and gets
+  prompts while it's open (an alert nudges you to open it). One small Java
+  Worker class, compiled by `build-apk.sh`, scheduled every 15 minutes and
+  calling into Rust, fixes that; **Shizuku mode** (batch cache clearing and
+  `Android/data` through an unrooted phone's helper) needs the same Java part
+  and follows it. Sideloaded builds only; Play restricts it (0.14).
+- **Community Applications** for the plugin and the Hub template (0.9.1).
+- **btrfs snapshots, APFS snapshots and purgeable space** in the hidden space
+  explanation, and Nextcloud's own data folder (phase 8, 0.11).
+- From 2b/2c: old downloads and screen recordings as their own groups, and
+  **leftovers of uninstalled programs** in AppData and `~/Library` once
+  matching folders to programs is reliable enough to call one abandoned
+  (phase 6, 0.10).
+- **Making Nextcloud files online-only** on Windows (phase 5, 0.13).
+
+Parked, each with its reason:
+- **The Hub on Windows** as a service from the installer: needs the
+  installer (NSIS) and a Windows service wrapper, tested on real Windows.
+  The Hub runs in Docker Desktop meanwhile.
+- **An Apps bubble view on desktops** and **Epic and GOG game artwork**:
+  nice, not asked for.
+- **Removing packages** (apt, dnf, Flatpak, Snap, winget, Homebrew) and
+  **Docker cleanup outside Unraid**: each needs its own checks of what's
+  safe; deleting files, cleaning junk and uninstalling Android apps come
+  first.
+- **Scanning over SSH** without an agent: uploading `ncdu -o` files covers
+  it, without the Hub holding SSH keys.
+- **Mass-change warnings** (thousands of files rewritten, a new extension
+  everywhere): needs file-level changes between scans, which the summaries
+  don't keep.
+- **Email alerts and scheduled digest reports**: ntfy, Gotify, Pushover and
+  webhooks (which can reach email through Home Assistant or n8n) cover it.
+- **Disk health from Scrutiny**, **S3/B2/MinIO buckets**, **per-user
+  totals** for shares and Nextcloud, **tags and keep marks** on what's
+  found, and **MQTT discovery** for Home Assistant (the REST sensor works):
+  each is for someone who hasn't asked yet.
+- **An MCP server** for AI assistants: read-only first, with actions still
+  approved on the device; after the things above.
+- **Blurry photos**: a sharpness score per photo, on top of the similar
+  photos finder, to pick the best of a group.
+- **NTFS compression in place** and **fast Windows scans** from the Master
+  File Table and change journal (as WizTree does): both need administrator
+  rights and a real Windows machine with NTFS drives, and the fast path only
+  pays on NTFS.
+- **Container logs, writable layers and orphan volumes** stay only shown:
+  Docker keeps writing to a running container's log, a layer is part of the
+  container, and a volume's data can't go to the quarantine without Docker
+  losing track of it.
+- **Unraid's own notifications** for full disks: the Hub's alerts cover it
+  once paired.
+- **Editing the Nextcloud client's configuration** to add a sync folder in
+  place: one wrong write makes the client resync or forget a folder, and the
+  client has no supported way. Dropped from phase 5.
+
+## Next releases
+
+Each release is small enough to ship in a few weeks, and each says what
+"done" means. Trust and the quarantine come before any new way to delete;
+the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
+half ships even if an action stalls on a device nobody has.
+
+- **0.8.4, fixes.** The Hub sign-in fix for providers without a signing
+  key. Emptying the quarantine and Docker cleanup get their own action
+  kinds that a device never grants. Unraid works out its protection rules
+  when a request arrives, not at the last round. Scanned roots are
+  canonicalized, so a root that is a symlink can't lead a delete out.
+  The Hub refuses paths that aren't in the device's newest scan. Pairing
+  over plain `http://` to anything but the local machine warns. The README
+  reads the client secret from a file. Done when each has a test, the
+  checks pass, and the plugin is installed on a real server from the
+  release and its log, status and a quarantine add and restore look right.
+- **0.8.5, the rename to FreeSize.** Crates, binaries (`freesize`,
+  `freesize-gui`, `freesize-hub`), the Docker image, the plugin
+  (`freesize.plg`, migrating `/boot/config/plugins/disktree`), the data
+  folders (migrated on first start), the pairing link scheme (both accepted
+  for one release), the Android package id
+  (`io.github.mcgeaverbeaver.freesize`; a new id is a new app to Android, so
+  the old one is uninstalled once; the signing key stays). The wire names
+  inside the protocol stay as they are. Done when a 0.8.4 plugin, Hub,
+  Windows app and phone each upgrade with pairing, settings, history and
+  quarantine intact.
+- **0.9, trust and updates.** The license (GPL-3.0-or-later) and a
+  SECURITY.md with the threat model and what leaves a device. CI on every
+  push for clippy and tests on Windows, macOS and Linux. The quarantine on
+  desktops and phones. Signed release sums: `release.sh` signs
+  `SHA256SUMS.txt` with a release key and the apps carry the public key.
+  An update check and in-app updater on Android (through the package
+  installer, which asks), Windows and Linux (download, verify, swap the
+  executable, relaunch), opt-in on devices or through the Hub, with a beta
+  channel for the people who help test. The Hub shows devices running old
+  versions. The audit log's head hash goes to the log and to alerts, so the
+  chain has an anchor outside the database. A retention setting. Limits per
+  address on pairing and sign-in, since the Hub may be reachable from the
+  internet. A TESTING.md checklist per release and issue templates. The
+  package and signing key registered with Google under a limited
+  distribution account. Done when a 0.9.0 phone, Windows PC and Linux box
+  each update themselves to 0.9.1 from the app, an edited sums file is
+  refused, and a delete on the phone lands in a quarantine that Put back
+  restores byte for byte.
+- **0.9.1, out in the open.** Community Applications submission for the
+  plugin and the Hub template (the license, a `ca_profile.xml`, the plugin
+  wrapper XML pointing at the raw `.plg`, a support thread on the forum);
+  the README split into a user page and a developer page. Done when both
+  appear in the Apps tab on a clean Unraid 7.3 install and install from
+  there.
+- **0.10, the junk cleaner (phase 6).** As described there, with three
+  constraints: a fixture test per rule, a blurb and a "refills" flag per
+  item, running apps skipped; "check first" items go to the quarantine and
+  are never ticked. Done when, on a Windows machine, a Linux box and a
+  phone, the cleaner lists nothing the system's own tool would refuse,
+  frees what it says within a few percent, and the result screen shows
+  what was skipped.
+- **0.11, where the space goes, and balancing (phase 8 and Unraid).**
+  Nextcloud's data folder read on the server (previews, versions, trash,
+  appdata, per user, with the retention settings that would have cleared
+  them); docker.img writers named per container; the mover keeps sparse
+  files sparse and copies extended attributes, cleans stale partial files,
+  and offers "empty the quarantine once every copy checked out" as one more
+  tick; the empty-a-disk and gather-a-share presets as plans of folder
+  moves; a round drops each disk's tree once it's used; progress per file.
+  Done when the Nextcloud numbers match `du` within 1%, a stopped VM's
+  sparse vdisk moves with its holes kept, and a round on a big array logs
+  its peak memory under a set number.
+- **0.12, copies, read only (phase 5, first half).** Connect Nextcloud
+  through Login Flow v2; file ids, sizes and checksums over WebDAV; each
+  desktop client's sync journal; the Android app's folder; the Hub joins
+  on file id and shows "kept on N devices" per folder, with the "only copy"
+  risk report. Done when the count is right for 20 files checked by hand
+  on three devices and the risk report lists a file kept on one device only.
+- **0.13, copies, actions (phase 5, second half).** Online-only on
+  Windows, uploaded camera photos to the phone's quarantine, moving a
+  folder into the sync folder, creating folders on Nextcloud, External
+  storage on Unraid. macOS and Linux show and point to the client. Done
+  when a 10 GB folder on a Windows PC becomes online-only after the next
+  sync with the files still listed, comes back on demand, and nothing is
+  freed before the hash matches.
+- **0.14, the phone in the background.** The Java Worker, approvals as
+  notifications, then Shizuku. Done when a phone with the app closed
+  reports within 15 minutes of a scan and shows an approval within 15
+  minutes of a request, over a day, without the battery screen listing
+  FreeSize above the usual apps.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 
@@ -198,6 +283,10 @@ Built in 0.7, apart from what's listed under Done → "From 3".
 - Listens on one address and port (e.g. `192.168.10.200:9090`); binding it
   to the WireGuard address keeps it off the internet. HTTPS through a reverse
   proxy with a real certificate is recommended even inside the VPN.
+- Whether the Hub is reachable from the internet is the admin's choice, so
+  the Hub is built as if it were: limits per address on pairing and
+  sign-in, secure cookies, a proper sign-out at the provider, and a warning
+  when a device pairs over plain `http://`.
 
 **Admin sign-in**
 - OAuth 2.0 / OpenID Connect against Authentik (authorization code flow
@@ -233,12 +322,14 @@ Built in 0.7, apart from what's listed under Done → "From 3".
 
 **Agents**
 
+What is built today; the parked list has the rest.
+
 | Platform | Reports | Can do (after approval) |
 |---|---|---|
-| Android | Everything the app shows; only while open until the app gets a small Java part for background work | Delete junk and trash; uninstall (Android still shows its own confirmation) |
-| Linux | Disks, folders, apt/dnf/flatpak/snap, Docker | Remove packages, delete files (via polkit/sudo per action) |
-| Windows | Disks, installed programs | `winget` uninstall, delete files, make OneDrive/Nextcloud files online-only |
-| macOS | Disks, apps, Homebrew | Move apps to Trash, `brew uninstall` (needs a Mac to build) |
+| Android | Everything the app shows; only while open until 0.14 | Delete (permanently, until the phone's quarantine in 0.9); clean junk; uninstall (Android still shows its own confirmation) |
+| Windows, macOS, Linux app | Disks and the folders the person scans | Delete to the Recycle Bin or Trash |
+| Linux server (`disktree agent`) | Disks and the folders given with `--scan` | Delete to a quarantine on the same file system; put back |
+| Unraid plugin | Disks, pools, shares per disk, Docker, VMs, activity, permissions, the quarantine | Delete to the disk's quarantine; put back; empty; remove unused images and the build cache |
 
 **History and reports**
 - Every device sends folder totals after each scan (not every file, which
@@ -314,20 +405,34 @@ Answers "what's taking up the array?" and never breaks the server.
 
 ## Phase 5: Nextcloud and "do I have a copy?"
 
-- **Nextcloud server app:** exports each user's file index (path, size,
-  modification time, checksum) and reports server-side space: trash bin,
-  file versions, previews.
-- **Desktop agents** read the Nextcloud client's sync folders and sync
-  journals: which files are synced, which are kept on the device ("always
-  available offline") and which are online-only placeholders.
-- **Android:** the Nextcloud app's offline copies (`Android/media`) and
-  camera photos already auto-uploaded.
+Checked against Nextcloud 35 and desktop client 35 on 2026-10-12.
+
+- **Nextcloud beside the plugin is the supported setup**: the plugin reads
+  Nextcloud's data folder on the server's disks, hashes files there and
+  never downloads anything to check a copy. Nextcloud elsewhere works
+  through WebDAV, read-only and slower.
+- **Connecting:** the Hub gets an app password with Nextcloud's Login Flow
+  v2 (`/index.php/login/v2`, then polling until the person has signed in in
+  a browser). Over WebDAV it reads each file's id (`oc:fileid`, the same on
+  every client of that server), size and checksums. Trash and versions have
+  no size on their roots: the items are summed, or the folders read on the
+  server.
+- **Desktop agents** read the client's sync journal, `.sync_<12 hex>.db`
+  next to each sync folder: `metadata.fileid`, `contentChecksum` and its
+  type, and the `flags` table's pin state (always local, online-only,
+  inherited), which is what the person asked for, not what is on disk; what
+  is on disk comes from the placeholder itself.
+- **Android:** the Nextcloud app's offline copies under
+  `Android/media/com.nextcloud.client/nextcloud/<account>/` (readable with
+  All files access) and camera photos already auto-uploaded.
 - **Matching** local files to copies on Nextcloud and on other devices:
   name, size and date find candidates, a content hash confirms them. Shown as
   "verified copy" or "likely copy".
-- Nextcloud often leaves its checksum column empty, so the server app
-  hashes files itself and caches the result by file id, size and
-  modification time.
+- Nextcloud's checksum column stays empty unless a client sent one with the
+  upload, and `files:scan` never fills it. A WebDAV `PATCH` on the file
+  with `X-Recalculate-Hash: sha256` makes the server compute and store it,
+  so the Hub asks for that, one file at a time, above a size that matters;
+  no hashing service of its own is needed.
 - **Immich** as another source of copies: its API checks photos by checksum.
 - **Bitrot check** from the same hashes: content changed while the
   modification time didn't.
@@ -381,21 +486,22 @@ Suggestions this enables:
      uploads it; once its journal shows every file synced at the right
      size, DiskTree makes it online-only. The files stay where the person
      sees them, and the space is freed.
-  2. **In place, on Windows:** the folder becomes a sync folder of its own
-     with online-only files (D:\Videos ↔ `/Archive/Videos`), so its path
-     doesn't change. The client has no API for adding one: DiskTree backs up
-     its config file, stops the client, adds the pair and starts it again,
-     approved on the device. Only when chosen.
-  3. **On Unraid, no second copy:** the share is added to Nextcloud as
-     External storage, so every device reaches it without copying it.
-- **Online-only on each platform:** Windows like Explorer's "Free up space"
-  (`attrib +U -P` on the placeholders; reversible, no client change).
-  macOS: the newer client's File Provider; whether DiskTree can free files
-  from outside it needs testing. Linux: online-only files are experimental
-  in the client, so selective sync, done in the client. Android: the
-  Nextcloud app's "available offline" setting is private to it, so DiskTree
-  shows what's kept and points to the setting; uploaded camera photos are
-  freed through the quarantine, as Google Photos' "Free up space" does.
+  2. **On Unraid, no second copy:** the share is added to Nextcloud as
+     External storage (`occ files_external:create` with the `local`
+     backend, run in the container), so every device reaches it without
+     copying it. Changes on disk need a scan or the mount's "check for
+     changes" setting.
+- **Online-only on each platform:** Windows like Explorer's "Free up space":
+  the unpinned attribute on the placeholders (`attrib +U -P`), which the
+  Nextcloud client honours on its next sync run, not at once; the UI says
+  so; `attrib -U +P` brings a file back the same way. macOS: the client's
+  File Provider (macOS 14 and up) gives no way for another app to evict a
+  file, so DiskTree shows what's kept and points to Finder. Linux: client 35
+  ships a FUSE-based virtual files mode marked beta, so DiskTree shows and
+  points to the client. Android: the Nextcloud app's "available offline"
+  setting is private to it, so DiskTree shows what's kept and points to the
+  setting; uploaded camera photos are freed through the quarantine, as
+  Google Photos' "Free up space" does.
 
 ### Safety
 
@@ -410,11 +516,12 @@ Suggestions this enables:
 
 ### In this order
 
-1. Read only: connecting Nextcloud, the clients' sync state on each
-   device, and "kept on N devices".
-2. Suggestions: moving into Nextcloud, and camera photos already uploaded.
-3. Actions: online-only, moving into the sync folder, creating folders on
-   Nextcloud, then the in-place sync and External storage.
+1. Read only (0.12): connecting Nextcloud, the clients' sync state on each
+   device, "kept on N devices", and the only-copy risk report.
+2. Actions (0.13): online-only on Windows, camera photos already uploaded,
+   moving into the sync folder, creating folders on Nextcloud, External
+   storage on Unraid. Each approved on the device it happens on, and nothing
+   freed before the hash matches.
 
 ## Phase 6: Junk cleaner on every device
 
@@ -466,8 +573,54 @@ it means, and the person ticks what goes.
 - **Left out on purpose:** registry cleaning (frees nothing and can break
   Windows), memory "boosters", and browser history, cookies and saved
   passwords (privacy rather than space, and cleaning them signs people out).
+- **Three rules for building it:** every rule has a fixture test (a made-up
+  folder it must find and one it must not); every item has a blurb and says
+  whether it refills; an app that's running is skipped, and "check first"
+  items are never ticked.
 - Builds on the system and app cache rules (0.6), Android's Free up space
-  (0.3) and the quarantine (0.8).
+  (0.3) and the quarantine (0.8, everywhere from 0.9).
+
+## Phase 7: Updates from inside the apps
+
+A new release shows up in the app, and the app installs it itself where the
+platform allows.
+
+- **Android:** the app downloads the APK and hands it to Android's package
+  installer, which asks the person (the `REQUEST_INSTALL_PACKAGES`
+  permission; the same signing key, which `build-apk.sh` guarantees).
+- **Windows and Linux:** the app downloads the archive, checks it, swaps its
+  one executable and starts again. On Windows an unsigned executable gets
+  SmartScreen's warning on every update and a signed one carries its
+  reputation forward; an EV certificate no longer skips the warning, so
+  either a code-signing certificate comes with the updater or the "Run
+  anyway" click is documented.
+- **The Unraid plugin** already updates through its `.plg` on the Plugins
+  page.
+- **The Hub** in Docker can't replace itself: it shows that a newer version
+  exists and which devices run old versions (every device reports its app
+  version already), and Unraid's Docker page or Watchtower does the pull.
+- **Checking the download:** a sums file from the same server proves
+  nothing, so `release.sh` signs `SHA256SUMS.txt` with a release key and the
+  apps carry the public key (the Ed25519 code in `crates/proto`).
+- **Privacy:** an update check is a request to GitHub, so it's opt-in on
+  devices, or goes through the Hub, which checks once for everyone. A beta
+  channel for the people who help test.
+
+## Phase 8: Where the space goes
+
+The question every tool's users ask and none answers in full: used space
+that no file in the scan accounts for, on every platform.
+
+- Done: ZFS snapshots, Windows shadow copies and restore points, Time
+  Machine's local snapshots, docker.img on Unraid.
+- **Nextcloud's own data folder**, read on the server by the plugin:
+  previews (`appdata_*/preview`), versions, trash and appdata, per user,
+  with the retention settings that would have cleared them and whether the
+  background job that clears them is running.
+- **docker.img writers:** which container writes inside its own layer and
+  fills the image.
+- **macOS:** purgeable space and System Data, and APFS snapshots.
+- **btrfs snapshots.**
 
 ## Traps to remember
 
@@ -478,10 +631,26 @@ it means, and the person ticks what goes.
 - **Store policy:** Google Play limits All files access, `QUERY_ALL_PACKAGES`
   and Shizuku-style automation. DiskTree ships as an APK; a Play version
   would lose features.
-- **Licenses:** code from GPL tools (QDirStat, WinDirStat, Filelight) can't
-  be copied in unless DiskTree is GPL; ncdu, gdu, dua and Scrutiny are MIT.
-  Slint's royalty-free license asks for attribution. DiskTree's own license
-  is still to be chosen.
+- **Licenses:** DiskTree is GPL-3.0-or-later (decided 2026-10-12), so code
+  and rules from GPL tools (QDirStat, WinDirStat, Filelight, BleachBit, SD
+  Maid SE) may come in; ncdu, gdu, dua, Scrutiny and Czkawka's core are
+  MIT. Slint's royalty-free license asks for attribution ("Made with
+  Slint" in the About box).
+- **Google's developer verification** for Android doesn't touch APKs people
+  install directly until its global phase in 2027 (from September 2026 it
+  applies to the big stores in four countries). Before then the package and
+  its signing key get registered; a limited-distribution account covers 20
+  devices at no cost, a full one costs $25.
+- **Background work on Android** needs a Java or Kotlin class declared in
+  the manifest; Rust can't register one alone. Periodic work every 15
+  minutes is the shape for the agent; a data-sync foreground service is
+  capped at 6 hours a day on Android 15.
+- **Windows' own documents disagree** about Storage Sense's default for
+  OneDrive files (never, or online-only after 30 days from Windows 11 22H2),
+  so the cleaner reads the live setting rather than assuming.
+- **The audit chain proves nothing on its own**: whoever can edit the
+  database can rewrite the chain. Its head hash has to go somewhere else
+  (the log, an alert channel).
 - **An agent that runs as root or SYSTEM and can delete** raises the stakes:
   keep device approvals for every destructive action, and make every remote
   view read-only by default (JAM made SpaceObServer's web access read-only
@@ -510,7 +679,22 @@ it means, and the person ticks what goes.
 
 - Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5) and
   2e (0.6). The Hub (phase 3) is in 0.7, the Unraid plugin (phase 4), with
-  the quarantine and the approver in its settings page, in 0.8. Nextcloud
-  (phase 5) is next.
+  the quarantine and the approver in its settings page, in 0.8.
+- After 0.8.3 (decided 2026-10-12): 0.8.4 fixes, 0.8.5 the rename to
+  FreeSize, 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
+  0.10 the junk cleaner (phase 6), 0.11 where the space goes (phase 8) and
+  balancing, 0.12 Nextcloud read-only, 0.13 Nextcloud actions, 0.14 the
+  phone in the background. See Next releases.
+- Nothing that deletes ships on a platform before that platform has the
+  quarantine.
+- The name is FreeSize; the Android package id is
+  `io.github.mcgeaverbeaver.freesize`, since the project has no domain.
+- The license is GPL-3.0-or-later for everything.
+- Nextcloud beside the plugin is the supported setup; elsewhere works
+  read-only through WebDAV.
+- The Hub is built as if reachable from the internet; whether it is stays
+  the admin's choice.
+- The Android app gets one small Java Worker class for background work; the
+  logic stays in Rust.
 - Screenless devices use a designated approver who can only be changed on
   the device (see Approvals).
