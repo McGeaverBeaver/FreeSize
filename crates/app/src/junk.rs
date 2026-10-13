@@ -1261,7 +1261,10 @@ mod tests {
         assert!(rows[3].enabled && !rows[3].ticked);
         assert_eq!(
             state.summary(),
-            "1 ticked · 1 to check first · 1 with the system's tools · 12 B found in all"
+            format!(
+                "1 ticked · 1 to check first · 1 {} · 12 B found in all",
+                tools_short()
+            )
         );
         assert_eq!(state.headline(), "Free 4 B");
         // Unticking, ticking a "check first" rule, and a rule removed with
