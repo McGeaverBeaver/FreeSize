@@ -103,6 +103,13 @@ cp "$work/base.apk" "$work/unsigned.apk"
 # Native libraries stored, not compressed (extractNativeLibs is false), so
 # Android maps them from the APK; zipalign puts them on 16 KB boundaries.
 (cd "$work/lib" && zip -q -0 -r "$work/unsigned.apk" lib)
+# FREESIZE_APK_EXTRA_ASSET: one file to carry in assets/, such as Google's
+# adi-registration.properties for proving the package is ours.
+if [ -n "${FREESIZE_APK_EXTRA_ASSET:-}" ]; then
+    mkdir -p "$work/extra/assets"
+    cp "$FREESIZE_APK_EXTRA_ASSET" "$work/extra/assets/"
+    (cd "$work/extra" && zip -q -r "$work/unsigned.apk" assets)
+fi
 "$build_tools/zipalign" -P 16 -f 4 "$work/unsigned.apk" "$work/aligned.apk"
 mkdir -p "$(dirname "$output")"
 "$build_tools/apksigner" sign --ks "$CARGO_APK_RELEASE_KEYSTORE" \

@@ -214,6 +214,13 @@ download by hand. The private key never leaves the build machine (mode
 commit the new public half, and the next release is installed by hand once.
 See [release/README.md](release/README.md).
 
+`scripts/owner-setup.sh` walks the owner through the one-time jobs in
+order: this key, backing up the keys, two-factor sign-in on GitHub, the
+Community Applications submission, and registering the Android package
+with Google (`scripts/owner-setup.sh 7` resumes once Google has verified
+the developer). For Google's ownership proof it builds an APK with
+`FREESIZE_APK_EXTRA_ASSET` set, which `build-apk.sh` puts in `assets/`.
+
 ### Android signing key
 
 Android only installs an update if it's signed with the same key as the
