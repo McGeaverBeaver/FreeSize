@@ -40,6 +40,13 @@ pub enum Command {
         #[arg(long, global = true, env = "FREESIZE_AGENT_STATE", value_name = "FILE")]
         state: Option<PathBuf>,
     },
+    /// The release key: make it, sign a release's sums, check a download.
+    Release {
+        #[command(subcommand)]
+        action: crate::release::ReleaseAction,
+    },
+    /// Check for a newer release, and install it over this program.
+    Update(crate::update::UpdateArgs),
     /// The Unraid plugin's background work, and the commands its page uses.
     #[cfg(unix)]
     Unraid {
@@ -159,6 +166,8 @@ pub fn main(command: Command) -> ExitCode {
                 ApproverAction::Clear => clear_approver(&path),
             }
         }
+        Command::Release { action } => crate::release::main(action),
+        Command::Update(args) => crate::update::main(args),
         #[cfg(unix)]
         Command::Unraid { action, dirs } => crate::unraid::main(action, dirs),
     };

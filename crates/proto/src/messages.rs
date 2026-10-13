@@ -351,6 +351,20 @@ pub struct PollResponse {
     /// The Hub's address has changed (it serves HTTPS now): move there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_to: Option<Signed<HubAddress>>,
+    /// A newer FreeSize release the Hub knows of (with its update check
+    /// on), for devices running an older version. Only a hint: the device
+    /// still verifies the release's signature before installing anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest: Option<LatestRelease>,
+}
+
+/// A release newer than the device's version.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LatestRelease {
+    /// "0.9.1".
+    pub version: String,
+    /// The release's page.
+    pub url: String,
 }
 
 /// The admin a command comes from.

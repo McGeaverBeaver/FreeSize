@@ -1,0 +1,353 @@
+//! The app's quarantine: deleting moves files aside on the same disk, where
+//! Put back restores them byte for byte; the space is freed only when
+//! someone empties it. Shared with the Hub's requests, so a delete from the
+//! dashboard lands in the same place as one made here.
+//!
+//! On a desktop the quarantine for the disk FreeSize's data lives on is in
+//! that data folder, which the person owns; other disks (and the phone's
+//! shared storage) get `.disktree-quarantine` at their top, as servers do.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+use freesize_agent::quarantine::{MountPlaces, Moved, Place, Places, QUARANTINE_DIR, Quarantine};
+use freesize_core::format_size;
+use freesize_proto::unraid::QuarantineBatch;
+
+use crate::CleanRow;
+use crate::insights::ago;
+
+/// The Clean up tab's section, and the id of its button.
+pub const HEADING: &str = "Quarantine";
+/// Prefixes of the Clean up tab's per-batch buttons (the batch id follows).
+pub const RESTORE_PREFIX: &str = "restore ";
+pub const EMPTY_PREFIX: &str = "empty ";
+/// The heading's button: empties every batch, after the confirmation.
+pub const EMPTY_ALL: &str = "Empty all";
+/// The home screen's button for the same.
+pub const EMPTY_ALL_ACTION: &str = "quarantine-empty-all";
+
+const BATCH: i32 = 3;
+
+/// Where quarantines are on this device.
+struct DevicePlaces {
+    mounts: MountPlaces,
+    /// The quarantine in FreeSize's data folder, and the top of the disk
+    /// that folder is on.
+    own: Option<(PathBuf, PathBuf)>,
+    extra: Mutex<Vec<PathBuf>>,
+}
+
+impl Places for DevicePlaces {
+    fn places(&self, path: &Path) -> Result<Vec<Place>, String> {
+        let mut places = self.mounts.places(path)?;
+        if let Some((own, disk)) = &self.own {
+            for place in &mut places {
+                if place.quarantine == disk.join(QUARANTINE_DIR) {
+                    place.quarantine = own.clone();
+                }
+            }
+        }
+        let mut extra = self.extra.lock().unwrap_or_else(|e| e.into_inner());
+        for place in &places {
+            if !extra.contains(&place.quarantine) {
+                extra.push(place.quarantine.clone());
+            }
+        }
+        Ok(places)
+    }
+
+    fn roots(&self) -> Vec<PathBuf> {
+        let mut roots = self.mounts.roots();
+        roots.extend(self.own.iter().map(|(own, _)| own.clone()));
+        roots.extend(
+            self.extra
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .cloned(),
+        );
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+}
+
+fn store() -> &'static Quarantine {
+    static STORE: OnceLock<Quarantine> = OnceLock::new();
+    STORE.get_or_init(|| {
+        let mut roots: Vec<PathBuf> = crate::locations::list()
+            .into_iter()
+            .map(|l| l.path)
+            .collect();
+        if let Some(home) = std::env::home_dir() {
+            roots.push(home);
+        }
+        let own = (!cfg!(target_os = "android"))
+            .then(crate::growth::data_dir)
+            .flatten()
+            .and_then(|data| {
+                let disk = freesize_agent::quarantine::filesystem_root(&data).ok()?;
+                Some((data.join("quarantine"), disk))
+            });
+        Quarantine::new(Box::new(DevicePlaces {
+            mounts: MountPlaces::new(&roots),
+            own,
+            extra: Mutex::new(Vec::new()),
+        }))
+    })
+}
+
+/// A batch id for a delete made here: the time, and a counter for several
+/// in one second.
+fn batch_id() -> String {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    format!(
+        "a{}-{}",
+        freesize_agent::now(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// Moves `paths` into the quarantine as one batch, for the person at this
+/// device. Returns the bytes set aside and a message per item that
+/// couldn't be moved.
+pub fn delete_all(paths: &[PathBuf], reason: &str) -> (u64, Vec<String>) {
+    let moved = move_in(&batch_id(), "", reason, paths);
+    let bytes = moved.results.iter().flatten().sum();
+    let errors = paths
+        .iter()
+        .zip(&moved.results)
+        .filter_map(|(path, result)| {
+            result
+                .as_ref()
+                .err()
+                .map(|err| format!("{}: {err}", path.display()))
+        })
+        .collect();
+    (bytes, errors)
+}
+
+/// Moves one item into the quarantine.
+pub fn delete(path: &Path) -> Result<(), String> {
+    let (_, errors) = delete_all(std::slice::from_ref(&path.to_path_buf()), "");
+    match errors.into_iter().next() {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
+}
+
+/// Moves items in as batch `id` (a Hub request's id, or one made here).
+pub fn move_in(id: &str, by: &str, reason: &str, paths: &[PathBuf]) -> Moved {
+    store().move_in(id, by, reason, paths, freesize_agent::now())
+}
+
+/// What the quarantine holds, newest first.
+pub fn list() -> Vec<QuarantineBatch> {
+    store().list()
+}
+
+/// Puts a batch back where it was; says what happened.
+pub fn restore(id: &str) -> Result<String, String> {
+    store().restore(id)
+}
+
+/// Deletes batches for good; the bytes freed.
+pub fn empty(ids: &[String]) -> Result<u64, String> {
+    store().empty(ids)
+}
+
+pub fn total(batches: &[QuarantineBatch]) -> u64 {
+    batches.iter().map(|b| b.bytes).sum()
+}
+
+/// Items of these batches, for the confirmation before emptying.
+pub fn confirm_text(batches: &[QuarantineBatch]) -> String {
+    let items: Vec<&str> = batches
+        .iter()
+        .flat_map(|b| b.items.iter().map(|i| i.original.as_str()))
+        .collect();
+    let mut text = format!(
+        "Delete {} for good, freeing {}? They can't be put back after this.",
+        if items.len() == 1 {
+            "this item".to_string()
+        } else {
+            format!("these {} items", items.len())
+        },
+        format_size(total(batches))
+    );
+    for item in items.iter().take(12) {
+        text.push_str("\n• ");
+        text.push_str(item);
+    }
+    if items.len() > 12 {
+        text.push_str(&format!("\n• … and {} more", items.len() - 12));
+    }
+    text
+}
+
+/// The home screen's Quarantine section: nothing when it's empty.
+pub fn home_rows(batches: &[QuarantineBatch]) -> Vec<crate::HomeRow> {
+    if batches.is_empty() {
+        return Vec::new();
+    }
+    let items: usize = batches.iter().map(|b| b.items.len()).sum();
+    vec![
+        crate::home::heading(HEADING, "", None),
+        crate::home::notice(
+            &format!(
+                "{} set aside by deleting ({})",
+                if items == 1 {
+                    "One item".to_string()
+                } else {
+                    format!("{items} items")
+                },
+                format_size(total(batches))
+            ),
+            "Deleted files wait here until you empty the quarantine, which frees their space. \
+             A scan's Clean up tab lists each batch, to put back or empty on its own.",
+            Some((EMPTY_ALL, EMPTY_ALL_ACTION)),
+        ),
+    ]
+}
+
+/// The Clean up tab's Quarantine section: nothing when it's empty.
+pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
+    if batches.is_empty() {
+        return Vec::new();
+    }
+    let mut rows = vec![CleanRow {
+        kind: 0,
+        title: HEADING.into(),
+        subtitle: format!(
+            "{} set aside by deleting, in {}. Put back restores a batch where it was; Empty \
+             frees its space for good. Nothing here is emptied on its own.",
+            format_size(total(batches)),
+            if batches.len() == 1 {
+                "one batch".to_string()
+            } else {
+                format!("{} batches", batches.len())
+            }
+        )
+        .into(),
+        action: EMPTY_ALL.into(),
+        ..Default::default()
+    }];
+    rows.extend(batches.iter().map(|batch| {
+        let names: Vec<String> = batch
+            .items
+            .iter()
+            .take(3)
+            .map(|i| {
+                Path::new(&i.original)
+                    .file_name()
+                    .map_or_else(|| i.original.clone(), |n| n.to_string_lossy().into_owned())
+            })
+            .collect();
+        let mut subtitle = names.join(", ");
+        if batch.items.len() > 3 {
+            subtitle.push_str(&format!(" and {} more", batch.items.len() - 3));
+        }
+        let who = if batch.by.is_empty() {
+            "deleted here".to_string()
+        } else {
+            format!("asked by {} from the Hub", batch.by)
+        };
+        let reason = if batch.reason.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", batch.reason)
+        };
+        CleanRow {
+            kind: BATCH,
+            title: format!(
+                "{} · {who}{reason}",
+                if now - batch.when < 60 {
+                    "Just now".to_string()
+                } else {
+                    ago(now.max(0) as u64, batch.when.max(0) as u64)
+                }
+            )
+            .into(),
+            subtitle: subtitle.into(),
+            detail: format_size(batch.bytes).into(),
+            action: batch.id.clone().into(),
+            ..Default::default()
+        }
+    }));
+    rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freesize_proto::unraid::QuarantineItem;
+
+    #[test]
+    fn the_section_lists_batches_with_their_buttons() {
+        assert!(rows(&[], 1000).is_empty());
+        let batches = vec![QuarantineBatch {
+            id: "a1-0".into(),
+            when: 900,
+            by: String::new(),
+            reason: String::new(),
+            bytes: 2048,
+            items: (0..5)
+                .map(|n| QuarantineItem {
+                    original: format!("/home/me/file{n}.txt"),
+                    stored: String::new(),
+                    bytes: 400,
+                })
+                .collect(),
+        }];
+        let rows = rows(&batches, 1000);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title.as_str(), HEADING);
+        assert_eq!(rows[0].action.as_str(), EMPTY_ALL);
+        assert_eq!(rows[1].kind, BATCH);
+        assert_eq!(rows[1].action.as_str(), "a1-0");
+        assert!(rows[1].title.contains("deleted here"), "{}", rows[1].title);
+        assert!(
+            rows[1].subtitle.contains("and 2 more"),
+            "{}",
+            rows[1].subtitle
+        );
+        let text = confirm_text(&batches);
+        assert!(text.contains("these 5 items") && text.contains("/home/me/file4.txt"));
+    }
+
+    #[test]
+    fn deleting_puts_things_aside_and_put_back_restores_them() {
+        let dir =
+            std::env::temp_dir().join(format!("freesize-app-quarantine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("keep-me.txt");
+        std::fs::write(&file, b"precious").unwrap();
+        let before = list().len();
+        let (bytes, errors) = delete_all(std::slice::from_ref(&file), "a test");
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(bytes > 0);
+        assert!(!file.exists());
+        let batches = list();
+        assert_eq!(batches.len(), before + 1);
+        let batch = batches
+            .iter()
+            .find(|b| b.reason == "a test")
+            .expect("the batch is listed");
+        assert_eq!(batch.items[0].original, file.to_string_lossy());
+        restore(&batch.id).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"precious");
+        // Deleted again and emptied: gone for good.
+        delete(&file).unwrap();
+        let id = list()
+            .into_iter()
+            .find(|b| b.items.iter().any(|i| i.original == file.to_string_lossy()))
+            .map(|b| b.id)
+            .unwrap();
+        assert!(empty(&[id]).unwrap() > 0);
+        assert!(!file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

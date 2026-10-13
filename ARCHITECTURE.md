@@ -441,7 +441,35 @@ complete). Android's trash comes from MediaStore's Files collection queried
 with `QUERY_ARG_MATCH_TRASHED`. The same collection's `owner_package_name`
 column says which app saved each file; `media_by_owner` adds those up per app
 and picks the folder holding most of them for the Browse button. Deleting
-runs on a worker thread after the shared confirmation dialog.
+runs on a worker thread after the shared confirmation dialog, into the
+quarantine like every delete in the app.
+
+### Quarantine and updates (`quarantine.rs`, `updater.rs`)
+
+Every delete in the app (the selection, the basket, junk, a Hub request)
+goes through `quarantine.rs`, a thin wrapper over the agent's `Quarantine`
+with the app's own `Places`: the quarantine for the disk FreeSize's data
+folder is on is `<data>/quarantine`, which the person owns, and other
+disks (and Android's shared storage) get `.disktree-quarantine` at their
+top as on servers. Batches made here are `a<time>-<n>`; a Hub request's
+batch is the request's id, so the dashboard can put it back. The Clean up
+tab lists the batches (`CleanRow` kind 3, with Put back and Empty, and
+Empty all on the heading, each through the shared confirmation dialog
+listing the paths) and the home screen says what the quarantine holds;
+after every change the app reports the quarantine to the Hub. Nothing in
+it is emptied on a timer.
+
+`updater.rs` keeps `update.json` (`check`, off until turned on; `channel`;
+`checked`) and the Updates section's state machine: `Checking`, `Found`,
+`Downloading`, `Failed`. The check and the install run on worker threads
+through the agent's `update` module with the app's transport; the Hub's
+hint from a poll (`Event::Latest`) shows as "Your Hub says…" without the
+device's own check. A desktop install swaps `freesize-gui` and `freesize`
+beside the running one and relaunches through `install::relaunch`, then
+quits the event loop; `updater::tidy` at start removes the `.old` file.
+Android writes the verified APK to `Download/FreeSize` and opens it
+through MediaStore (`android::install_apk`, retrying while Android indexes
+it), which starts the package installer; it never installs on its own.
 
 `cleanup::reviews` finds what's worth looking through but isn't junk:
 screenshots in `Pictures/Screenshots` and `DCIM/Screenshots` not changed
@@ -568,6 +596,13 @@ line), and the server (`hub`).
 - **Keys** (`keys.rs`): Ed25519 key pairs. A key's fingerprint is the first
   10 bytes of its SHA-256 in Crockford base32, `XXXX-XXXX-XXXX-XXXX`, short
   enough to compare by eye or type.
+- **Signed releases** (`release.rs`): `release.sh` signs `SHA256SUMS.txt`
+  with the release key (domain `freesize-release-v1`, so a release
+  signature can't stand in for a device's); the public half is compiled in
+  from `release/public-key.txt` (`release_key()` is `None` while the file
+  holds no key), and `matches_sums` checks a downloaded file against the
+  signed sums. `PollResponse.latest` is the Hub's hint about a newer
+  release, only ever a pointer: the device verifies before installing.
 - **Signed requests** (`signing.rs`): every call a device makes carries
   `x-disktree-device`, `-time`, `-nonce` and `-signature` headers. The
   signature covers `disktree-request-v1`, the method, path, time, nonce and
@@ -582,7 +617,8 @@ line), and the server (`hub`).
   `freesize://pair?hub=<url>&code=XXXX-XXXX-XXXX&key=<fingerprint>`;
   `disktree://` links from before the rename are read too. Codes
   are 60 random bits in Crockford base32, which forgives O/0 and I/1 mix-ups;
-  the Hub stores only their hash, for 10 minutes and one use, and allows 20
+  the Hub stores only their hash, for 10 minutes and one use, and allows 10
+  wrong guesses a minute from one address and 20
   wrong guesses a minute.
 - **Messages** (`messages.rs`): `DeviceInfo` (name, platform, what it can
   do, whether someone is at it, its approver and grants, and `rights`: whose
@@ -610,7 +646,9 @@ whole array, rather than every file.
   authority as PEM, used for the Hub's address and nothing else). Desktops
   and servers use ureq (the system's TLS on Windows and macOS, rustls with
   the system's certificates elsewhere, no redirects), with exactly the
-  authority as root when one is pinned; Android passes Java's
+  authority as root when one is pinned; a separate `download` method
+  follows redirects with the system's certificates, for releases on
+  GitHub (up to 512 MB); Android passes Java's
   `HttpURLConnection` in through JNI, with an `SSLSocketFactory` whose trust
   manager holds only the authority when one is pinned, and when Java
   throws, the error is Java's own message (the manifest allows plain
@@ -657,9 +695,20 @@ in between. The app (`crates/app/src/hub.rs`) has a worker thread for
 reports and answers and a second one for polling, so an answer goes out at
 once; the first poll after starting asks the Hub to send everything still
 open again, so a prompt shown before the app closed comes back. Prompts go
-to the controller through a channel; on the desktop deletes go to the
-Trash, on Android they're deleted, as everywhere else in the app. The
-command line's agent sends deletes to the quarantine.
+to the controller through a channel; deletes go to the app's quarantine
+as one batch under the request's id, and the executor's note tells the
+approver so. The command line's agent sends deletes to the quarantine too.
+- `update.rs`: `check` asks GitHub's releases API (a `User-Agent` naming
+  the version, nothing else) for the newest release on the channel newer
+  than this build, skipping drafts and, on the stable channel,
+  pre-releases; `verified_sums` fetches `SHA256SUMS.txt` and its `.sig`
+  and refuses anything the built-in release key didn't sign (or everything,
+  in a build without the key); `download` fetches the file for this
+  platform (`asset_name`: the Linux tarball, the Windows zip, the APK) and
+  refuses one that doesn't match the signed sums. `install.rs` (feature
+  `install`, desktops) unpacks `.tar.gz` and `.zip`, writes the new file
+  beside the old, renames the old to `.old` and the new into place (Windows
+  can rename a running program but not overwrite it), and relaunches.
 
 ### Server (`crates/hub`)
 
@@ -729,7 +778,23 @@ it scans as its user.
   compared in constant time.
 - `audit.rs`: an append-only log; each entry's hash covers its fields and the
   previous entry's hash, and `verify` finds the first changed or missing
-  one.
+  one. `head` is the newest entry's id and hash: `maintenance.rs` logs it
+  once a day and `alerts.rs` appends it to every alert's text, so the
+  chain's end is recorded outside the database.
+- `limits.rs`: attempts in the last minute per address and in all, for
+  wrong pairing codes (10 and 20) and sign-in starts and failed callbacks
+  (30 and 300); the address comes from the connection (`Via`).
+- `maintenance.rs`: once a day, scans and disk samples older than
+  `--retention-days` go (0 keeps them, thinned by `history.rs`), and the
+  audit head is logged.
+- `updates.rs`: with `FREESIZE_UPDATE_CHECK=on`, once a day the agent's
+  `update::check` asks GitHub for the newest release on the channel; the
+  result is in `Shared.latest`, `/api/me` shows it in Settings, and `poll`
+  answers with `latest` to a device whose reported version is older. The
+  Hub never downloads or installs anything.
+- `dashboard.rs` also reads each device's app version out of its name and
+  marks it `behind` when it's older than the Hub's, which the device cards
+  and the device page show.
 - `web/`: the dashboard, plain JavaScript without a build step. All text
   goes in through `textContent`; the page's CSP allows scripts and styles
   from the Hub only, so styles are set through the CSSOM.
@@ -880,6 +945,14 @@ drafts are often made public on GitHub's website, which can't move the
 tag; `--publish` makes a draft public and points `latest` at it again. The script only publishes a clean checkout that
 matches GitHub, and lets `gh release create --target` create the tag for
 that commit.
+
+`SHA256SUMS.txt` is signed with the release key when
+`~/.freesize/release-key` (or `FREESIZE_RELEASE_KEY`) exists, with
+`freesize release sign` and checked back with `freesize release verify`
+against `release/public-key.txt`; without the key the script warns and the
+release is unsigned, so apps won't install it themselves. `freesize release
+key` makes the key once. `TESTING.md` is the by-hand checklist for a
+release.
 
 ## Possible next steps
 

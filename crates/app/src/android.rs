@@ -476,6 +476,26 @@ fn open_market(market: &str, web: &str, store: Option<&str>) {
     }
 }
 
+/// Opens a web page in the browser.
+pub fn open_url(url: &str) -> Result<(), String> {
+    with_activity(|env, activity| view_url(env, activity, url, None))
+        .map_err(|err| format!("couldn't open {url}: {err}"))
+}
+
+/// Hands a verified APK in shared storage to Android's package installer,
+/// which asks before installing (and refuses one signed with another key).
+/// The file is opened through MediaStore, so Android has to have indexed
+/// it; a fresh file usually is within a second.
+pub fn install_apk(file: &std::path::Path) -> Result<(), String> {
+    for _ in 0..10 {
+        match open_file(file)? {
+            Opened::Shown => return Ok(()),
+            Opened::Indexing => std::thread::sleep(std::time::Duration::from_millis(500)),
+        }
+    }
+    Err("Android hasn't indexed the file yet".into())
+}
+
 /// Opens an app's page in the store that installed it.
 pub fn open_in_store(package: &str, installer: Option<&str>) {
     open_market(
@@ -1863,16 +1883,32 @@ impl freesize_agent::Transport for JavaTransport {
             freesize_agent::Trust::Authority(pem) => Some(pem.as_str()),
             freesize_agent::Trust::System => None,
         };
-        with_activity(
-            |env, _| match http(env, method, url, headers, body, timeout_secs, ca) {
+        with_activity(|env, _| {
+            match http(env, method, url, headers, body, timeout_secs, ca, false) {
                 Ok(answer) => Ok(Ok(answer)),
                 // Java's own reason, like "Cleartext HTTP traffic to … not
                 // permitted" or "failed to connect to …", instead of jni's
                 // "Java exception was thrown".
                 Err(jni::errors::Error::JavaException) => Ok(Err(java_reason(env))),
                 Err(err) => Err(err),
-            },
-        )
+            }
+        })
+        .map_err(|err| format!("{err}"))?
+    }
+
+    fn download(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        timeout_secs: u64,
+    ) -> Result<(u16, Vec<u8>), String> {
+        with_activity(|env, _| {
+            match http(env, "GET", url, headers, None, timeout_secs, None, true) {
+                Ok(answer) => Ok(Ok(answer)),
+                Err(jni::errors::Error::JavaException) => Ok(Err(java_reason(env))),
+                Err(err) => Err(err),
+            }
+        })
         .map_err(|err| format!("{err}"))?
     }
 }
@@ -2010,6 +2046,7 @@ fn pinned_socket_factory<'l>(env: &mut Env<'l>, ca_pem: &str) -> JniResult<JObje
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn http(
     env: &mut Env,
     method: &str,
@@ -2018,6 +2055,7 @@ fn http(
     body: Option<&[u8]>,
     timeout_secs: u64,
     ca: Option<&str>,
+    follow: bool,
 ) -> JniResult<(u16, Vec<u8>)> {
     env.with_local_frame(32, |env| -> JniResult<(u16, Vec<u8>)> {
         let https = url.starts_with("https://");
@@ -2072,7 +2110,7 @@ fn http(
             &conn,
             jni_str!("setInstanceFollowRedirects"),
             jni_sig!("(Z)V"),
-            &[JValue::Bool(false)],
+            &[JValue::Bool(follow)],
         )?;
         for (name, value) in headers {
             let name = env.new_string(name)?;

@@ -36,10 +36,12 @@ use crate::hub::{self, Hub};
 use crate::insights::{self, View};
 use crate::moves;
 use crate::owners::Owners;
+use crate::quarantine;
 use crate::report;
 use crate::rows::{self, TreeRows};
 use crate::scans;
 use crate::similar;
+use crate::updater::{self, Updater};
 use crate::{
     AppWindow, BasketRow, BubbleItem, CleanRow, Crumb, FileRow, HomeRow, MapRect, SheetAction,
     TypeRow, actions, locations,
@@ -270,6 +272,15 @@ pub struct Controller {
     /// The connection to a FreeSize Hub, if paired.
     hub: Hub,
     hub_status: String,
+    /// The update check and installer, with the Updates section's state.
+    updater: Updater,
+    /// What the quarantine held when last looked, for the Clean up tab and
+    /// the home screen.
+    quarantine: Vec<freesize_proto::unraid::QuarantineBatch>,
+    /// A Put back or Empty running on a worker thread.
+    quarantine_job: Option<Slot<Result<String, String>>>,
+    /// Batches to empty once the confirmation is answered.
+    pending_empty: Option<Vec<String>>,
     /// Picks up the Hub's events; slower than `timer`.
     hub_timer: Timer,
     /// Requests from the Hub waiting to be shown, and the one on screen.
@@ -336,17 +347,21 @@ fn os_name() -> String {
     freesize_proto::Platform::current().label().to_string()
 }
 
+type SharedTransport = Arc<dyn freesize_agent::Transport + Send + Sync>;
+
+/// This platform's HTTP client, for the Hub and for update checks.
+fn transport() -> SharedTransport {
+    #[cfg(target_os = "android")]
+    return Arc::new(crate::android::JavaTransport);
+    #[cfg(not(target_os = "android"))]
+    Arc::new(freesize_agent::UreqTransport::new())
+}
+
 /// The Hub connection, with this platform's HTTP client and actions.
-fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>) -> Hub {
+fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>, transport: SharedTransport) -> Hub {
     let path = growth::data_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("hub.json");
-    #[cfg(target_os = "android")]
-    let transport: Arc<dyn freesize_agent::Transport + Send + Sync> =
-        Arc::new(crate::android::JavaTransport);
-    #[cfg(not(target_os = "android"))]
-    let transport: Arc<dyn freesize_agent::Transport + Send + Sync> =
-        Arc::new(freesize_agent::UreqTransport::new());
     let executor = Arc::new(hub::AppExecutor { junk: junk.clone() });
     let mut roots: Vec<PathBuf> = locations::list().into_iter().map(|l| l.path).collect();
     if let Some(home) = std::env::home_dir() {
@@ -360,9 +375,15 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>) -> Hub {
                 freesize_proto::ActionKind::Delete,
                 freesize_proto::ActionKind::Uninstall,
                 freesize_proto::ActionKind::Clean,
+                freesize_proto::ActionKind::Restore,
+                freesize_proto::ActionKind::Empty,
             ]
         } else {
-            vec![freesize_proto::ActionKind::Delete]
+            vec![
+                freesize_proto::ActionKind::Delete,
+                freesize_proto::ActionKind::Restore,
+                freesize_proto::ActionKind::Empty,
+            ]
         },
         roots,
         keep: vec![path.clone()],
@@ -379,6 +400,7 @@ pub fn install(
     elevated: bool,
 ) -> Rc<RefCell<Controller>> {
     let hub_junk: Arc<Mutex<Vec<cleanup::Junk>>> = Arc::default();
+    let transport = transport();
     let ctl = Rc::new_cyclic(|me| {
         RefCell::new(Controller {
             me: me.clone(),
@@ -425,8 +447,12 @@ pub fn install(
             page: None,
             home_scroll: 0.0,
             sheet: None,
-            hub: new_hub(&hub_junk),
+            hub: new_hub(&hub_junk, transport.clone()),
             hub_status: String::new(),
+            updater: Updater::new(growth::data_dir(), transport.clone()),
+            quarantine: quarantine::list(),
+            quarantine_job: None,
+            pending_empty: None,
             hub_timer: Timer::default(),
             prompts: VecDeque::new(),
             prompt: None,
@@ -780,16 +806,48 @@ impl Controller {
             && let Some((freed, errors)) = take(job)
         {
             self.cleanup_job = None;
-            let mut text = format!("Freed {}.", format_size(freed));
+            let mut text = format!(
+                "Moved {} to the quarantine; empty it to free the space.",
+                format_size(freed)
+            );
             if !errors.is_empty() {
                 text.push_str(&format!(
-                    " {} couldn't be deleted, for example {}",
+                    " {} couldn't be moved, for example {}",
                     plural(errors.len() as u64, "item", "items"),
                     errors[0]
                 ));
             }
             self.set_status(&text);
+            self.quarantine_changed();
             self.start_apps_job();
+        }
+
+        if let Some(job) = &self.quarantine_job
+            && let Some(result) = take(job)
+        {
+            self.quarantine_job = None;
+            self.set_status(&result.unwrap_or_else(|err| format!("Couldn't do that: {err}")));
+            self.quarantine_changed();
+        }
+
+        if self.updater.busy() || self.updater.due(apps::now() as i64) {
+            if self.updater.due(apps::now() as i64) {
+                self.updater.check(apps::now() as i64);
+            }
+            let (status, relaunch) = self.updater.poll();
+            if let Some(status) = &status {
+                self.set_status(status);
+            }
+            if status.is_some() || !self.updater.busy() {
+                self.refresh_home();
+            }
+            if let Some(exe) = relaunch
+                && let Err(err) = updater::relaunch(&exe)
+            {
+                self.set_status(&format!(
+                    "Updated, but the new FreeSize couldn't be started ({err}); start it yourself."
+                ));
+            }
         }
 
         if let DupeSearch::Running { result, .. } = &self.dupes {
@@ -880,6 +938,8 @@ impl Controller {
             || self.return_watch.is_some()
             || self.apk_job.is_some()
             || self.cleanup_job.is_some()
+            || self.quarantine_job.is_some()
+            || self.updater.busy()
             || matches!(self.dupes, DupeSearch::Running { .. })
             || matches!(self.photos, PhotoSearch::Running { .. })
             || self.pending_open.is_some()
@@ -972,6 +1032,7 @@ impl Controller {
                                     r.errors,
                                     true,
                                 )),
+                                quarantine: Some(quarantine::list()),
                                 ..freesize_proto::Report::default()
                             });
                         }
@@ -1151,7 +1212,12 @@ impl Controller {
             zoom: self.app_zoom.as_deref(),
             hub: Some(&card),
         };
-        sync_model(&self.home_rows, home::rows(&self.apps, options));
+        let mut rows = home::rows(&self.apps, options);
+        if page.is_none() {
+            rows.extend(quarantine::home_rows(&self.quarantine));
+            rows.extend(self.updater.rows(apps::now() as i64));
+        }
+        sync_model(&self.home_rows, rows);
         self.update_app_bubbles(false);
     }
 
@@ -1291,7 +1357,35 @@ impl Controller {
     }
 
     fn home_action(&mut self, id: &str) {
+        let now = apps::now() as i64;
         match id {
+            updater::TOGGLE => {
+                self.updater.toggle(now);
+                self.ensure_ticking();
+                self.refresh_home();
+            }
+            updater::CHANNEL => {
+                self.updater.switch_channel(now);
+                self.ensure_ticking();
+                self.refresh_home();
+            }
+            updater::CHECK => {
+                self.updater.check(now);
+                self.ensure_ticking();
+                self.refresh_home();
+            }
+            updater::INSTALL => {
+                self.updater.install();
+                self.ensure_ticking();
+                self.set_status("Downloading the release and checking its signature…");
+                self.refresh_home();
+            }
+            updater::NOTES => {
+                if let updater::Stage::Found(release) = &self.updater.stage {
+                    let _ = crate::actions::open_url(&release.url);
+                }
+            }
+            quarantine::EMPTY_ALL_ACTION => self.confirm_empty(None),
             home::GRANT_USAGE_ACCESS => {
                 apps::request_access();
                 self.awaiting_usage_access = true;
@@ -1530,6 +1624,10 @@ impl Controller {
                 hub::Event::Done { text, deleted } => {
                     self.forget_deleted(&deleted);
                     self.set_status(&text);
+                    self.quarantine_changed();
+                }
+                hub::Event::Latest(latest) => {
+                    home |= self.updater.hub_said(Some(latest));
                 }
                 hub::Event::Removed => {
                     self.hub.disconnect();
@@ -2308,6 +2406,7 @@ impl Controller {
             self.hidden.as_ref(),
             &offer,
         );
+        self.quarantine = quarantine::list();
         self.show_cleanup();
         self.refresh_changes();
     }
@@ -2324,7 +2423,8 @@ impl Controller {
             },
             DupeSearch::Done(groups) => Duplicates::Found(groups),
         };
-        let mut rows = self.cleanup_found.clone();
+        let mut rows = quarantine::rows(&self.quarantine, apps::now() as i64);
+        rows.extend(self.cleanup_found.iter().cloned());
         rows.extend(filecleanup::duplicate_rows(tree, duplicates));
         let lookup;
         let photos = match &self.photos {
@@ -2348,8 +2448,85 @@ impl Controller {
             self.photo_action();
         } else if title == filecleanup::UNREADABLE {
             self.fuller_scan();
+        } else if title == quarantine::HEADING {
+            self.confirm_empty(None);
+        } else if let Some(id) = title.strip_prefix(quarantine::RESTORE_PREFIX) {
+            self.restore_batch(id.to_string());
+        } else if let Some(id) = title.strip_prefix(quarantine::EMPTY_PREFIX) {
+            self.confirm_empty(Some(vec![id.to_string()]));
         } else {
             self.duplicate_action();
+        }
+    }
+
+    /// The quarantine changed (a delete, Put back or Empty, here or at the
+    /// Hub's request): the lists, the home screen and the Hub hear of it.
+    fn quarantine_changed(&mut self) {
+        self.quarantine = quarantine::list();
+        if self.hub.state().is_some() {
+            self.hub.report(freesize_proto::Report {
+                quarantine: Some(self.quarantine.clone()),
+                ..freesize_proto::Report::default()
+            });
+        }
+        self.show_cleanup();
+        self.refresh_home();
+    }
+
+    /// Asks before emptying `ids` (all batches when none are named), listing
+    /// the items that would go for good.
+    fn confirm_empty(&mut self, ids: Option<Vec<String>>) {
+        let batches: Vec<_> = self
+            .quarantine
+            .iter()
+            .filter(|b| ids.as_ref().is_none_or(|ids| ids.contains(&b.id)))
+            .cloned()
+            .collect();
+        if batches.is_empty() || self.quarantine_job.is_some() {
+            return;
+        }
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        ui.set_confirm_text(quarantine::confirm_text(&batches).into());
+        ui.set_delete_label("Delete for good".into());
+        ui.set_confirm_open(true);
+        self.pending_empty = Some(batches.into_iter().map(|b| b.id).collect());
+    }
+
+    fn restore_batch(&mut self, id: String) {
+        self.run_quarantine_job("Putting back…", move || {
+            quarantine::restore(&id).map(|text| format!("Put back: {text}"))
+        });
+    }
+
+    fn empty_batches(&mut self, ids: Vec<String>) {
+        self.run_quarantine_job("Emptying the quarantine…", move || {
+            quarantine::empty(&ids)
+                .map(|bytes| format!("Emptied the quarantine, freeing {}.", format_size(bytes)))
+        });
+    }
+
+    fn run_quarantine_job(
+        &mut self,
+        status: &str,
+        job: impl FnOnce() -> Result<String, String> + Send + 'static,
+    ) {
+        if self.quarantine_job.is_some() {
+            return;
+        }
+        let result: Slot<Result<String, String>> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("freesize-quarantine".into())
+            .spawn(move || put(&worker_result, job()));
+        match spawned {
+            Ok(_) => {
+                self.quarantine_job = Some(result);
+                self.ensure_ticking();
+                self.set_status(status);
+            }
+            Err(err) => self.set_status(&format!("Couldn't start that: {err}")),
         }
     }
 
@@ -3073,13 +3250,10 @@ impl Controller {
             plural(self.basket.len() as u64, "item", "items"),
             format_size(bytes)
         );
-        let text = if cfg!(target_os = "android") {
-            format!("Permanently delete {what}? This cannot be undone.")
-        } else if cfg!(windows) {
-            format!("Move {what} to the Recycle Bin?")
-        } else {
-            format!("Move {what} to the Trash?")
-        };
+        let text = format!(
+            "Move {what} to the quarantine? Put back restores it; the space is freed when you \
+             empty the quarantine."
+        );
         self.pending_basket = true;
         ui.set_basket_open(false);
         ui.set_confirm_text(text.into());
@@ -3202,7 +3376,10 @@ impl Controller {
                 format_size(outcome.bytes),
                 manifest.folder.display()
             ),
-            None => format!("Deleted {count} and freed {}.", format_size(outcome.bytes)),
+            None => format!(
+                "Moved {count} ({}) to the quarantine; empty it to free the space.",
+                format_size(outcome.bytes)
+            ),
         };
         if let Some(err) = outcome.failed.first() {
             text.push_str(&format!(
@@ -3298,13 +3475,10 @@ impl Controller {
         } else {
             format!("“{name}” ({size})")
         };
-        let text = if cfg!(target_os = "android") {
-            format!("Permanently delete {what}? This cannot be undone.")
-        } else if cfg!(windows) {
-            format!("Move {what} to the Recycle Bin?")
-        } else {
-            format!("Move {what} to the Trash?")
-        };
+        let text = format!(
+            "Move {what} to the quarantine? Put back restores it; the space is freed when you \
+             empty the quarantine."
+        );
         ui.set_confirm_text(text.into());
         ui.set_confirm_open(true);
     }
@@ -3312,6 +3486,7 @@ impl Controller {
     fn cancel_delete(&mut self) {
         self.pending_cleanup = None;
         self.pending_basket = false;
+        self.pending_empty = None;
         if let Some(ui) = self.ui() {
             ui.set_confirm_open(false);
             ui.set_delete_label(actions::DELETE_LABEL.into());
@@ -3319,6 +3494,14 @@ impl Controller {
     }
 
     fn confirm_delete(&mut self) {
+        if let Some(ids) = self.pending_empty.take() {
+            if let Some(ui) = self.ui() {
+                ui.set_confirm_open(false);
+                ui.set_delete_label(actions::DELETE_LABEL.into());
+            }
+            self.empty_batches(ids);
+            return;
+        }
         if std::mem::take(&mut self.pending_basket) {
             if let Some(ui) = self.ui() {
                 ui.set_confirm_open(false);
@@ -3432,12 +3615,13 @@ impl Controller {
         self.refresh_cleanup();
         ui.set_status(
             format!(
-                "Deleted {} and freed {}",
+                "Moved {} ({}) to the quarantine; empty it to free the space.",
                 deletion.name,
                 format_size(deletion.size)
             )
             .into(),
         );
+        self.quarantine_changed();
     }
 
     fn grant_permission(&mut self) {

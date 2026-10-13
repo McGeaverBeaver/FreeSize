@@ -682,7 +682,7 @@ struct Message {
     url: Option<String>,
 }
 
-fn message(notice: &Notice, hub: &str, hub_url: Option<&str>) -> Message {
+fn message(notice: &Notice, hub: &str, hub_url: Option<&str>, anchor: &str) -> Message {
     let alert = &notice.alert;
     let title = if notice.resolved {
         format!("Over: {}", alert.title)
@@ -701,9 +701,9 @@ fn message(notice: &Notice, hub: &str, hub_url: Option<&str>) -> Message {
         },
         title,
         text: if notice.resolved {
-            format!("Back to normal. ({hub})")
+            format!("Back to normal. ({hub}{anchor})")
         } else {
-            format!("{} ({hub})", alert.message)
+            format!("{} ({hub}{anchor})", alert.message)
         },
         severity: if notice.resolved {
             "info".into()
@@ -844,13 +844,24 @@ async fn deliver(state: &AppState, notices: Vec<Notice>) {
     }
     let hub = state.config.name.clone();
     let hub_url = state.config.public_url();
+    // The audit log's head rides along, so the chain has an anchor outside
+    // the database: a record that ends before it was cut.
+    let anchor = state
+        .db
+        .call(|c| audit::head(c))
+        .await
+        .ok()
+        .flatten()
+        .map_or(String::new(), |(id, hash)| {
+            format!(" · audit #{id} {}", &hash[..hash.len().min(12)])
+        });
     let results = tokio::task::spawn_blocking(move || {
         let agent = agent();
         let mut results = Vec::new();
         for channel in &list {
             let mut outcome = Ok(());
             for notice in &notices {
-                let message = message(notice, &hub, hub_url.as_deref());
+                let message = message(notice, &hub, hub_url.as_deref(), &anchor);
                 if let Err(err) = send(&agent, &channel.target, &message) {
                     outcome = Err(err);
                 }
@@ -1144,7 +1155,7 @@ pub async fn test_channel(
     };
     let target = channel.target.clone();
     let result = tokio::task::spawn_blocking(move || {
-        let mut message = message(&notice, &hub, hub_url.as_deref());
+        let mut message = message(&notice, &hub, hub_url.as_deref(), "");
         message.event = "test";
         send(&agent(), &target, &message)
     })

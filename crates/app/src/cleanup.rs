@@ -209,30 +209,6 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Deletes files and folders. Returns the bytes freed and a message for
-/// each item that couldn't be deleted.
-pub fn delete(paths: &[PathBuf]) -> (u64, Vec<String>) {
-    let mut freed = 0;
-    let mut errors = Vec::new();
-    for path in paths {
-        let Ok(meta) = fs::symlink_metadata(path) else {
-            // Already gone.
-            continue;
-        };
-        let bytes = dir_size(path);
-        let result = if meta.is_dir() {
-            fs::remove_dir_all(path)
-        } else {
-            fs::remove_file(path)
-        };
-        match result {
-            Ok(()) => freed += bytes,
-            Err(err) => errors.push(format!("{}: {err}", path.display())),
-        }
-    }
-    (freed, errors)
-}
-
 /// The name Android gave a trashed file back: `.trashed-1712345678-IMG.jpg`
 /// becomes `IMG.jpg`.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -539,19 +515,6 @@ mod tests {
         root.file("Android/media/com.gone/x.jpg", 40);
         let junk = find(&root.0, &HashSet::new(), &HashMap::new());
         assert!(junk.iter().all(|j| j.kind != JunkKind::Leftovers));
-    }
-
-    #[test]
-    fn deletes_files_and_folders() {
-        let root = TempRoot::new("delete");
-        let file = root.file("Download/old.apk", 100);
-        root.file("Android/media/com.gone/a/b.jpg", 40);
-        let folder = root.0.join("Android/media/com.gone");
-        let missing = root.0.join("missing.apk");
-        let (freed, errors) = delete(&[file.clone(), folder.clone(), missing]);
-        assert_eq!(freed, 140);
-        assert!(errors.is_empty());
-        assert!(!file.exists() && !folder.exists());
     }
 
     #[test]

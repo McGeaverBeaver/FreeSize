@@ -81,14 +81,16 @@ export struct FileRow {
 
 /// One row of the scan view's Clean up tab.
 export struct CleanRow {
-    /// 0 section heading, 1 file or folder, 2 duplicate group label.
+    /// 0 section heading, 1 file or folder, 2 duplicate group label,
+    /// 3 a quarantine batch (Put back and Empty).
     kind: int,
     /// Node to select, for files and folders.
     id: int,
     title: string,
     subtitle: string,
     detail: string,
-    /// Button text for headings; empty for none.
+    /// Button text for headings; empty for none. The batch id for a
+    /// quarantine batch.
     action: string,
     /// A preview, for photos.
     has-image: bool,
@@ -806,6 +808,53 @@ component CleanupPane inherits Rectangle {
                     color: Theme.dim;
                     height: 26px;
                     vertical-alignment: bottom;
+                }
+
+                if row.kind == 3: Rectangle {
+                    height: batch.preferred-height + 12px;
+                    border-radius: 6px;
+                    background: Palette.alternate-background;
+                    batch := HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        y: 6px;
+                        spacing: 8px;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            spacing: 2px;
+                            Text {
+                                text: row.title;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: row.subtitle;
+                                wrap: word-wrap;
+                                font-size: 11px;
+                                color: Theme.dim;
+                            }
+                        }
+
+                        Text {
+                            text: row.detail;
+                            vertical-alignment: center;
+                        }
+
+                        Button {
+                            text: "Put back";
+                            clicked => {
+                                root.action("restore " + row.action);
+                            }
+                        }
+
+                        Button {
+                            text: "Empty";
+                            clicked => {
+                                root.action("empty " + row.action);
+                            }
+                        }
+                    }
                 }
             }
 

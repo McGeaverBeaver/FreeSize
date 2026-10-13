@@ -1,0 +1,5 @@
+# The release key's public half (Ed25519, base64), made once on the build
+# machine with `freesize release key ~/.freesize/release-key`. The apps are
+# built with this file and trust only releases whose SHA256SUMS.txt it
+# signed; while it's empty, builds carry no key and never update themselves.
+# The private half stays in ~/.freesize/release-key and is never committed.

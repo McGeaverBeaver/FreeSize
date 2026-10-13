@@ -13,9 +13,12 @@ pub mod db;
 pub mod devices;
 pub mod error;
 pub mod history;
+pub mod limits;
+pub mod maintenance;
 pub mod metrics;
 pub mod reports;
 pub mod tls;
+pub mod updates;
 pub mod web;
 
 use std::net::SocketAddr;
@@ -53,9 +56,13 @@ pub struct Shared {
     pub oidc: auth::Oidc,
     /// Wakes devices' waiting polls.
     pub wakers: devices::Wakers,
-    pub pair_limiter: devices::PairLimiter,
+    /// Wrong pairing codes and sign-in attempts, per address and in all.
+    pub pair_limiter: limits::Limiter,
+    pub login_limiter: limits::Limiter,
     /// HTTPS, unless `--tls off`.
     pub tls: Option<Arc<tls::Tls>>,
+    /// The newest release, when the update check is on and found one.
+    pub latest: updates::Latest,
 }
 
 impl Deref for AppState {
@@ -75,7 +82,9 @@ impl AppState {
             key,
             oidc,
             wakers: devices::Wakers::default(),
-            pair_limiter: devices::PairLimiter::default(),
+            pair_limiter: limits::Limiter::pairing(),
+            login_limiter: limits::Limiter::sign_in(),
+            latest: updates::Latest::default(),
             tls: tls.map(Arc::new),
         }))
     }
@@ -277,6 +286,8 @@ pub struct Via {
 pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
     let checking = tokio::spawn(alerts::run(state.clone()));
     let refreshing = tokio::spawn(tls::refresh_loop(state.clone()));
+    let housekeeping = tokio::spawn(maintenance::run(state.clone()));
+    let updates = tokio::spawn(updates::run(state.clone()));
     let app = router(state.clone());
     let builder = auto::Builder::new(TokioExecutor::new());
     let graceful = GracefulShutdown::new();
@@ -307,6 +318,8 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
     }
     checking.abort();
     refreshing.abort();
+    housekeeping.abort();
+    updates.abort();
     Ok(())
 }
 

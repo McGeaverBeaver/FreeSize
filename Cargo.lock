@@ -1911,20 +1911,23 @@ dependencies = [
 
 [[package]]
 name = "freesize-agent"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "base64 0.23.1",
+ "flate2",
  "freesize-core",
  "freesize-proto",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "ureq",
+ "zip",
 ]
 
 [[package]]
 name = "freesize-app"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "freesize-agent",
  "freesize-core",
@@ -1938,14 +1941,14 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
- "trash",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "freesize-cli"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
+ "base64 0.23.1",
  "clap",
  "freesize-agent",
  "freesize-core",
@@ -1957,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-core"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -1970,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-hub"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2001,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-proto"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
@@ -2014,7 +2017,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-unraid"
-version = "0.8.8"
+version = "0.9.0"
 dependencies = [
  "freesize-agent",
  "freesize-core",
@@ -6406,24 +6409,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trash"
-version = "5.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be89b3fe156965d29ac4f8522f3a640c655affdd9f21cb4f36857f0c92c00317"
-dependencies = [
- "chrono",
- "libc",
- "log",
- "objc2 0.6.5",
- "objc2-foundation 0.3.2",
- "once_cell",
- "percent-encoding",
- "scopeguard",
- "urlencoding",
- "windows",
-]
-
-[[package]]
 name = "tree_magic_mini"
 version = "3.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6449,6 +6434,12 @@ dependencies = [
  "bincode",
  "serde",
 ]
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "typenum"
@@ -6591,12 +6582,6 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
-
-[[package]]
-name = "urlencoding"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usvg"
@@ -7985,6 +7970,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "9.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e2fc56a6707efb066c40aead2409ebb1224e6dde24a074e9fbc78ced500507b"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "nix",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
 name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7995,6 +7995,18 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zopfli"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf7fc5d30c28483d93805c4a5e12b05bbb52407fa67c5f8bd552374cd01fb11"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zune-core"

@@ -68,6 +68,22 @@ pub struct Config {
     #[arg(long, env = "FREESIZE_METRICS_TOKEN", hide_env_values = true)]
     pub metrics_token: Option<String>,
 
+    /// Days to keep scans and disk history; 0 keeps them for good (scans
+    /// are still thinned to one a day, a week, a month as they age).
+    #[arg(long, env = "FREESIZE_RETENTION_DAYS", default_value_t = 0)]
+    pub retention_days: u32,
+
+    /// Ask GitHub once a day whether a newer FreeSize is out, show it in
+    /// Settings, and tell devices running an older version. Off unless set
+    /// to `on`; the Hub never downloads or installs anything itself.
+    #[arg(long, env = "FREESIZE_UPDATE_CHECK", default_value = "off", value_parser = ["on", "off"])]
+    pub update_check_setting: String,
+
+    /// Which releases that check follows: `stable`, or `beta` for
+    /// pre-releases too.
+    #[arg(long, env = "FREESIZE_UPDATE_CHANNEL", default_value = "stable", value_parser = ["stable", "beta"])]
+    pub update_channel: String,
+
     /// HTTPS: `auto` serves it with the Hub's own certificate (or the files
     /// below) and still answers plain http on the same port; `off` is plain
     /// http only, for a reverse proxy that does TLS in front.
@@ -162,6 +178,11 @@ impl Config {
             "freesize-viewers",
             "disktree-viewers",
         )
+    }
+
+    /// Whether the Hub checks for newer releases.
+    pub fn update_check(&self) -> bool {
+        self.update_check_setting == "on"
     }
 
     /// Whether the Hub serves HTTPS itself.

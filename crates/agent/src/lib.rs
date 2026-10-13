@@ -5,10 +5,13 @@ pub mod client;
 pub mod commands;
 pub mod estimate;
 pub mod guard;
+#[cfg(feature = "install")]
+pub mod install;
 pub mod quarantine;
 pub mod report;
 pub mod state;
 pub mod transport;
+pub mod update;
 
 pub use client::{AgentError, AgentResult, Client, hello, move_to, pair};
 pub use state::{AgentState, Approver};

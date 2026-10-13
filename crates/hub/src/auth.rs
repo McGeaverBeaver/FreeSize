@@ -15,6 +15,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::Extension;
 use axum::extract::{FromRequestParts, Query, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
@@ -250,11 +251,20 @@ pub struct LoginQuery {
 }
 
 /// `GET /auth/login`: off to the provider.
-pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery>) -> Response {
+pub async fn login(
+    State(state): State<AppState>,
+    via: Option<Extension<crate::Via>>,
+    Query(query): Query<LoginQuery>,
+) -> Response {
     let settings = match state.oidc.settings() {
         Ok(settings) => settings.clone(),
         Err(missing) => return setup_page(missing),
     };
+    let peer = via.map(|v| v.peer.ip());
+    if state.login_limiter.blocked(peer) {
+        return too_many();
+    }
+    state.login_limiter.record(peer);
     let provider = match state.oidc.provider(false).await {
         Ok(provider) => provider,
         Err(err) => {
@@ -311,6 +321,15 @@ pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery
     Redirect::to(&url).into_response()
 }
 
+/// Too many sign-in attempts from this address, or from everywhere.
+fn too_many() -> Response {
+    page(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Too many sign-in attempts",
+        "Wait a minute, then try again.",
+    )
+}
+
 fn setup_page(missing: &str) -> Response {
     page(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -339,9 +358,18 @@ struct TokenResponse {
 /// `GET /auth/callback`: back from the provider.
 pub async fn callback(
     State(state): State<AppState>,
+    via: Option<Extension<crate::Via>>,
     Query(query): Query<CallbackQuery>,
 ) -> Response {
-    let refused = |message: &str| page(StatusCode::FORBIDDEN, "Couldn't sign you in", message);
+    let peer = via.map(|v| v.peer.ip());
+    if state.login_limiter.blocked(peer) {
+        return too_many();
+    }
+    let refused = |message: &str| {
+        // A failed callback counts like a sign-in start.
+        state.login_limiter.record(peer);
+        page(StatusCode::FORBIDDEN, "Couldn't sign you in", message)
+    };
     if let Some(error) = query.error {
         let detail = query.error_description.unwrap_or_default();
         return refused(&format!("The sign-in provider said: {error} {detail}"));

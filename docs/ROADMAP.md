@@ -261,14 +261,48 @@ Parked, each with its reason:
   place: one wrong write makes the client resync or forget a folder, and the
   client has no supported way. Dropped from phase 5.
 
+- 0.9: trust and updates (phase 7). The license is GPL-3.0-or-later
+  (`LICENSE`, every crate); `SECURITY.md` says what leaves a device, the
+  threat model and how to report; `TESTING.md` is the by-hand checklist
+  per release; issue templates for bugs and ideas; a CI workflow runs fmt,
+  clippy and the tests on Linux, Windows and macOS on every push (the APK
+  and the Unraid plugin only when started by hand). Signed releases:
+  `release.sh` signs `SHA256SUMS.txt` with the release key (`freesize
+  release key|sign|verify`), the apps carry the public half from
+  `release/public-key.txt`, and `freesize_proto::release` checks it. The
+  update check (`freesize_agent::update`): opt-in on each device (the home
+  screen's Updates section, with a beta channel), or the Hub checks once a
+  day with `FREESIZE_UPDATE_CHECK=on` and tells older devices in their poll
+  answers; Update downloads the sums and signature, refuses anything the
+  release key didn't sign, downloads the platform's file and checks it
+  against the sums. Windows and Linux swap `freesize-gui` and `freesize`
+  beside the running program and restart; Android saves the verified APK
+  in `Download/FreeSize` and opens it in the package installer, which asks
+  (and refuses another signing key); `freesize update --install` does the
+  same for the command line. The quarantine on desktops and phones: every
+  delete in the app goes to it (in the data folder for the disk it's on,
+  `.disktree-quarantine` at the top of other disks and of the phone's
+  storage), the Clean up tab lists batches with Put back and Empty, Hub
+  requests land there as a batch under the request, and the dashboard's
+  Put back and Empty work on every device now. The Hub marks devices
+  running an older version, writes the audit log's head to its log once a
+  day and into every alert, prunes scans and disk samples past
+  `FREESIZE_RETENTION_DAYS`, and limits wrong pairing codes (10 a minute
+  per address, 20 in all) and sign-ins (30 and 300). Still to do by hand:
+  the owner makes the release key on the build machine and commits
+  `release/public-key.txt` (until then releases are unsigned and apps
+  won't install them themselves); registers the package and the signing
+  key with Google under a limited distribution account; and tries a 0.9.0
+  phone, Windows PC and Linux box updating to 0.9.1, an edited sums file
+  being refused, and Put back on the phone restoring byte for byte.
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what
-"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS) and 0.8.8 (the whole disk) are under Done. Trust and the quarantine come before any new way to delete;
+"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk) and 0.9 (trust and updates) are under Done. Trust and the quarantine come before any new way to delete;
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
-- **0.9, trust and updates.** The license (GPL-3.0-or-later) and a
+- **0.9, trust and updates.** Under Done. The license (GPL-3.0-or-later) and a
   SECURITY.md with the threat model and what leaves a device. CI on every
   push for clippy and tests on Windows, macOS and Linux. The quarantine on
   desktops and phones. Signed release sums: `release.sh` signs

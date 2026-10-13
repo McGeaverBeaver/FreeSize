@@ -254,14 +254,15 @@ pub fn collect() -> Result<AppReport, String> {
     Ok(report)
 }
 
-/// Deletes one kind of junk. Returns the bytes freed and the items that
-/// couldn't be deleted. Slow for big folders, so call it off the UI thread.
+/// Moves one kind of junk into the quarantine. Returns the bytes set aside
+/// and the items that couldn't be moved. Slow for big folders, so call it
+/// off the UI thread.
 pub fn delete_junk(junk: &Junk) -> (u64, Vec<String>) {
     if demo::enabled() {
         demo::clean(junk.kind);
         return (junk.bytes, Vec::new());
     }
-    cleanup::delete(&junk.paths)
+    crate::quarantine::delete_all(&junk.paths, junk.kind.id())
 }
 
 /// Removes an app from the history of removed apps.

@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lib]
 name = "freesize_app"
@@ -26,9 +27,8 @@ slint = "1.18.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 # The Hub is reached with ureq on desktops; Android uses Java's HTTP client.
-freesize-agent = { workspace = true, features = ["ureq"] }
+freesize-agent = { workspace = true, features = ["ureq", "install"] }
 rfd = "0.17.2"
-trash = "5.2.9"
 
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { version = "1.18.1", features = ["backend-android-activity-06"] }
@@ -113,3 +113,8 @@ name = "android.permission.INTERNET"
 # Android silently ignores the request.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.REQUEST_DELETE_PACKAGES"
+
+# Lets Update hand a verified release to Android's installer, which asks
+# (and, the first time, sends the person to allow it for FreeSize).
+[[package.metadata.android.uses_permission]]
+name = "android.permission.REQUEST_INSTALL_PACKAGES"

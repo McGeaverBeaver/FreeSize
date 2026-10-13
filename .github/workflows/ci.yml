@@ -1,8 +1,12 @@
 name: CI
 
-# Builds run locally (see "Building" in the README). This workflow only runs
-# when started by hand: Actions → CI → Run workflow.
+# Formatting, clippy and the tests run on every push and pull request, on
+# Windows, macOS and Linux. The APK and the Unraid plugin are built when
+# started by hand (Actions → CI → Run workflow); releases are built locally
+# by scripts/release.sh (see "Releases" in the README).
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -35,6 +39,7 @@ jobs:
 
   unraid:
     name: Unraid plugin
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -62,6 +67,7 @@ jobs:
 
   android:
     name: Android APK
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

@@ -93,8 +93,10 @@ Each part takes over what DiskTree kept, the first time it starts:
   days.
 - **Size on disk vs. file size**, switchable. Compressed, sparse and cloud-only
   files differ a lot between the two.
-- **Delete**: moves to the Recycle Bin or Trash on desktop, and permanently
-  deletes (after confirming) on Android. Totals update without rescanning.
+- **Delete**: moves the item to FreeSize's quarantine (after confirming),
+  on every platform. **Put back** restores it byte for byte; the space is
+  freed when you empty the quarantine, never on its own. Totals update
+  without rescanning.
 - **Open** shows the selected file in the app that normally opens it (photo
   viewer, PDF reader, video player), so you can check it before deleting.
   **Show in folder** opens Explorer, Finder or the Linux file manager.
@@ -243,7 +245,16 @@ After a scan, the **Clean up** tab (**Clean** on phones) lists:
   identical, so open them before choosing.
 
 Tap an entry to select it in the tree, then use Open to look at it and
-Delete or Collect. On desktops Delete moves it to the Recycle Bin or Trash.
+Delete or Collect. Delete moves it to the quarantine.
+
+- **Quarantine**, at the top whenever it holds something: each batch of
+  deleted items with when, where from and how much, with **Put back** and
+  **Empty** per batch and **Empty all** on the heading. Emptying asks first
+  and lists the paths. On a desktop the quarantine for the disk FreeSize's
+  data is on lives in that data folder; other disks, and a phone's shared
+  storage, get a `.disktree-quarantine` folder at their top, as servers
+  do. Deletes a Hub asks for land in the same quarantine, as a batch under
+  the request, so the dashboard's Put back and Empty work on them too.
 
 ### Changes
 
@@ -266,8 +277,8 @@ files list is filtered (a type, an age, a size, old screenshots), **Collect
 all** adds every listed file. **Review** lists everything collected, each
 item removable, with two ways to act on all of it:
 
-- **Delete all**: asks first, then moves everything to the Recycle Bin or
-  Trash (deletes permanently on Android).
+- **Delete all**: asks first, then moves everything to the quarantine as one
+  batch, to put back together.
 - **Move all**: pick a folder, for example on another drive or a NAS share.
   Each item keeps its folders below the scanned one (`Videos/2023/trip.mp4`
   goes to `<destination>/Videos/2023/trip.mp4`). Within a drive that's a
@@ -374,6 +385,42 @@ F-Droid don't have that step.
    FreeSize (or go to Settings → Apps → FreeSize), tap **⋮** in the top
    corner, choose **Allow restricted settings** and confirm with your PIN or
    fingerprint. Then repeat step 5. You only need to do this once per install.
+
+Later releases install from the app: see [Updates](#updates).
+
+## Updates
+
+The home screen's **Updates** section is off until you turn it on; then
+FreeSize asks GitHub once a day whether a newer release is out (that's the
+only thing it ever asks anyone, and only the version is sent, in the
+request's user agent). **Pre-releases too** follows the beta channel. A
+FreeSize Hub with `FREESIZE_UPDATE_CHECK=on` checks once for all its
+devices and tells those running an older version, so the devices needn't
+ask GitHub themselves.
+
+**Update** downloads the release's `SHA256SUMS.txt` and its signature,
+checks the signature with the release key built into FreeSize (the public
+half is `release/public-key.txt` in the repository), downloads the file for
+this platform and checks it against the sums. Anything that doesn't verify
+is refused and nothing is installed; a build made without the key in that
+file can't update itself at all.
+
+- **Windows and Linux**: the archive's `freesize-gui` and `freesize` are
+  swapped in beside the running ones (the old files stay as `.old` until the
+  next start) and FreeSize starts again. On Windows, SmartScreen may warn
+  about the new executable, as it does for any download: *More info → Run
+  anyway*.
+- **Android**: the verified APK is saved in `Download/FreeSize` and handed to
+  Android's installer, which asks (the first time, Android sends you to
+  allow FreeSize to install apps). Android also refuses an APK signed with
+  another key, so a release not built with the project's Android key never
+  installs over FreeSize.
+- **The command line**: `freesize update` says whether a newer release is
+  out; `freesize update --install` installs it over itself the same way.
+- **The Hub** doesn't update itself: Settings says when a newer release is
+  out, and the device cards mark devices older than the Hub. Pull the new
+  image (or package) yourself.
+- **The Unraid plugin** updates through Unraid's Plugins page.
 
 ### Why a file scan finds less than the phone uses
 
@@ -554,16 +601,21 @@ on the device itself:
   approve its own requests. The server checks the approver's signature on
   every answer.
 - Every device refuses what's outside the folders it scans, paths with
-  `..` or through links, system folders, and FreeSize's own files. On a
-  desktop, deleted files go to the Trash; on a server they go to a
-  quarantine on the same disk, to put back or empty later (each another
-  request, approved the same way); on Android they're deleted.
+  `..` or through links, system folders, and FreeSize's own files. Deleted
+  files go to a quarantine on the same disk everywhere, to put back or
+  empty later (each another request, approved the same way).
 - Commands are signed by the Hub's key, which each device checked when it
   paired, and every device request is signed by the device's key, so
   neither a fake Hub nor someone on the network can make up a request.
 - Everything (sign-ins, pairings, requests, answers, results, setting
   changes) goes into an audit log whose entries are chained by hash;
-  **Audit log → Check the chain** shows if one was changed or removed.
+  **Audit log → Check the chain** shows if one was changed or removed. The
+  chain's head (the newest entry's number and hash) goes to the Hub's log
+  once a day and rides along with every alert, so a log cut short at the
+  end shows against a record kept elsewhere.
+- Wrong pairing codes and sign-in attempts are limited per address (10 and
+  30 a minute) and in all, since the Hub may be reachable from the
+  internet.
 
 ![An approval on the desktop app](docs/screenshots/hub-approval.png)
 
@@ -681,6 +733,9 @@ a flag; `freesize-hub --help` lists them):
 | `FREESIZE_TLS` | `auto` (HTTPS with the Hub's own certificate, the default) or `off` (plain http, for a reverse proxy) |
 | `FREESIZE_TLS_CERT_FILE`, `FREESIZE_TLS_KEY_FILE` | Your own certificate (PEM with the chain) and key instead of the Hub's own |
 | `FREESIZE_METRICS_TOKEN` | Turns on `/metrics` and `/metrics/json` |
+| `FREESIZE_RETENTION_DAYS` | Days to keep scans and disk history; `0` (the default) keeps them, thinned as they age |
+| `FREESIZE_UPDATE_CHECK` | `on` asks GitHub once a day for the newest release, shows it in Settings and tells devices running an older version; `off` (the default) asks nothing |
+| `FREESIZE_UPDATE_CHANNEL` | `stable` (the default) or `beta`, for pre-releases too |
 | `FREESIZE_HUB_LOG` | `info`, or `debug` |
 
 `freesize-hub health` checks that the Hub on this machine answers; the
@@ -1058,6 +1113,26 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+### Release key
+
+Releases are signed, so the apps can tell a release that came from the
+build machine from one that didn't. Once, on the build machine:
+
+```sh
+freesize release key          # makes ~/.freesize/release-key, prints the public half
+```
+
+Paste the printed public half into `release/public-key.txt` and commit it;
+from then on `release.sh` signs every release's `SHA256SUMS.txt`
+(`SHA256SUMS.txt.sig` beside it) with `freesize release sign` and checks
+it with `freesize release verify`. Without the key file, the release is
+built unsigned and the script says so: it still works, but apps won't
+install it themselves. `freesize release verify SHA256SUMS.txt` checks a
+download by hand. The private key never leaves the build machine (mode
+0600, outside the repository); if it's lost or leaks, make a new one and
+commit the new public half, and the next release is installed by hand once.
+See [release/README.md](release/README.md).
+
 ### Android signing key
 
 Android only installs an update if it's signed with the same key as the
@@ -1096,12 +1171,22 @@ unraid/       the Hub's Unraid template, and plugin/: the .plg and the
 packaging/    the Hub's Docker entrypoint, systemd units
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work, and
-[docs/ROADMAP.md](docs/ROADMAP.md) for what's planned.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work,
+[docs/ROADMAP.md](docs/ROADMAP.md) for what's planned, [TESTING.md](TESTING.md)
+for what to try by hand before a release, and [SECURITY.md](SECURITY.md)
+for what leaves a device and how to report a problem. Bug reports and ideas
+go in GitHub issues, which have templates for both.
 
 ## Licensing
 
-FreeSize will be released under the GNU General Public License, version 3 or
-later (decided 2026-10-12; the LICENSE file arrives with 0.9, together with
-the "Made with Slint" attribution Slint's royalty-free license asks for).
-Until the file is in the repository, no license is granted.
+FreeSize is free software: you can redistribute it and modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See [LICENSE](LICENSE). It comes without any warranty.
+
+The user interface is made with [Slint](https://slint.dev), used under its
+royalty-free license: *Made with Slint*. The signatures, the pairing codes
+and the Hub's certificates use Ed25519, SHA-256 and rcgen; the full list of
+dependencies and their licenses is in `Cargo.lock` and on crates.io.
+
+Found a security problem? See [SECURITY.md](SECURITY.md).

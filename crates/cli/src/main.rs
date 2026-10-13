@@ -11,8 +11,10 @@ use freesize_core::{
 };
 
 mod agent;
+mod release;
 #[cfg(unix)]
 mod unraid;
+mod update;
 
 /// Shows what is using space on a drive or in a folder.
 #[derive(Parser, Debug)]

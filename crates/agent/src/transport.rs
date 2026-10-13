@@ -27,6 +27,18 @@ pub trait Transport {
         timeout_secs: u64,
         trust: &Trust,
     ) -> Result<(u16, Vec<u8>), String>;
+
+    /// Fetches a file from the internet (a release and its sums), following
+    /// redirects, with the system's certificates. By default a plain GET,
+    /// which can't follow one.
+    fn download(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        timeout_secs: u64,
+    ) -> Result<(u16, Vec<u8>), String> {
+        self.request("GET", url, headers, None, timeout_secs, &Trust::System)
+    }
 }
 
 #[cfg(feature = "ureq")]
@@ -47,6 +59,8 @@ mod ureq_transport {
     /// installed on the machine; or with exactly the Hub's own authority.
     pub struct UreqTransport {
         system: ureq::Agent,
+        /// The system agent again, following redirects, for downloads.
+        following: ureq::Agent,
         /// The agent for the last authority asked for, so polling doesn't
         /// build one per request.
         pinned: Mutex<Option<(String, ureq::Agent)>>,
@@ -59,6 +73,10 @@ mod ureq_transport {
     }
 
     fn agent(roots: RootCerts) -> ureq::Agent {
+        agent_following(roots, 0)
+    }
+
+    fn agent_following(roots: RootCerts, redirects: u32) -> ureq::Agent {
         let provider = if cfg!(any(windows, target_os = "macos")) {
             TlsProvider::NativeTls
         } else {
@@ -71,15 +89,19 @@ mod ureq_transport {
         ureq::Agent::config_builder()
             .tls_config(tls)
             .http_status_as_error(false)
-            .max_redirects(0)
+            .max_redirects(redirects)
             .build()
             .into()
     }
+
+    /// A release's biggest file is well under this.
+    const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 
     impl UreqTransport {
         pub fn new() -> UreqTransport {
             UreqTransport {
                 system: agent(RootCerts::PlatformVerifier),
+                following: agent_following(RootCerts::PlatformVerifier, 10),
                 pinned: Mutex::new(None),
             }
         }
@@ -122,6 +144,45 @@ mod ureq_transport {
             trust: &Trust,
         ) -> Result<(u16, Vec<u8>), String> {
             let agent = self.for_trust(trust)?;
+            send(
+                &agent,
+                method,
+                url,
+                headers,
+                body,
+                timeout_secs,
+                64 * 1024 * 1024,
+            )
+        }
+
+        fn download(
+            &self,
+            url: &str,
+            headers: &[(&str, String)],
+            timeout_secs: u64,
+        ) -> Result<(u16, Vec<u8>), String> {
+            send(
+                &self.following,
+                "GET",
+                url,
+                headers,
+                None,
+                timeout_secs,
+                MAX_DOWNLOAD,
+            )
+        }
+    }
+
+    fn send(
+        agent: &ureq::Agent,
+        method: &str,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Option<&[u8]>,
+        timeout_secs: u64,
+        limit: u64,
+    ) -> Result<(u16, Vec<u8>), String> {
+        {
             let timeout = Some(Duration::from_secs(timeout_secs));
             let mut response = match method {
                 "GET" => {
@@ -145,7 +206,7 @@ mod ureq_transport {
             response
                 .body_mut()
                 .with_config()
-                .limit(64 * 1024 * 1024)
+                .limit(limit)
                 .reader()
                 .read_to_end(&mut bytes)
                 .map_err(|e| e.to_string())?;

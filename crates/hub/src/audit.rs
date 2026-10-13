@@ -71,6 +71,17 @@ pub fn append(
     Ok(())
 }
 
+/// The newest entry's id and hash: the chain's head, logged daily and sent
+/// with alerts as an anchor outside the database.
+pub fn head(conn: &Connection) -> rusqlite::Result<Option<(i64, String)>> {
+    conn.query_row(
+        "SELECT id, hash FROM audit ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+}
+
 /// Entries newest first, before `before` if given.
 pub fn list(
     conn: &Connection,

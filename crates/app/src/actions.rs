@@ -9,14 +9,9 @@ pub const CAN_BROWSE: bool = cfg!(not(target_os = "android"));
 /// Whether "Show in folder" makes sense on this platform.
 pub const CAN_REVEAL: bool = cfg!(not(target_os = "android"));
 
-/// Label of the confirm button for deleting.
-pub const DELETE_LABEL: &str = if cfg!(target_os = "android") {
-    "Delete permanently"
-} else if cfg!(windows) {
-    "Move to Recycle Bin"
-} else {
-    "Move to Trash"
-};
+/// Label of the confirm button for deleting: everything goes to the
+/// quarantine first, on every platform.
+pub const DELETE_LABEL: &str = "Move to quarantine";
 
 #[cfg(not(target_os = "android"))]
 pub fn browse(start: &Path) -> Option<PathBuf> {
@@ -143,20 +138,31 @@ pub fn open(path: &Path) -> Result<Open, String> {
     }
 }
 
-/// Moves `path` to the trash, or on Android deletes it permanently.
-pub fn delete(path: &Path) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        trash::delete(path).map_err(|e| e.to_string())
-    }
+/// Opens a web page (a release's notes) in the browser.
+pub fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        let meta = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        let result = if meta.is_dir() {
-            std::fs::remove_dir_all(path)
-        } else {
-            std::fs::remove_file(path)
-        };
-        result.map_err(|e| e.to_string())
+        crate::android::open_url(url)
     }
+    #[cfg(not(target_os = "android"))]
+    {
+        #[cfg(windows)]
+        let spawned = {
+            use std::os::windows::process::CommandExt;
+            std::process::Command::new("rundll32")
+                .raw_arg(format!("url.dll,FileProtocolHandler {url}"))
+                .spawn()
+        };
+        #[cfg(target_os = "macos")]
+        let spawned = std::process::Command::new("open").arg(url).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let spawned = std::process::Command::new("xdg-open").arg(url).spawn();
+        spawned.map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+/// Moves `path` into the quarantine, where Put back restores it; the space
+/// is freed when the quarantine is emptied.
+pub fn delete(path: &Path) -> Result<(), String> {
+    crate::quarantine::delete(path)
 }

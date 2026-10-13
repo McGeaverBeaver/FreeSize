@@ -314,6 +314,17 @@ win="$target/x86_64-pc-windows-gnu/release"
 package freesize-windows-x86_64.zip "$win" "$win/freesize-gui.exe" "$win/freesize.exe"
 
 (cd "$dist" && sha256sum -- * >SHA256SUMS.txt)
+# The release key signs the sums, so apps can check an update came from
+# here (see release/README.md). Without the key the release is unsigned and
+# apps won't install it themselves.
+release_key="${FREESIZE_RELEASE_KEY:-$HOME/.freesize/release-key}"
+if [ -f "$release_key" ]; then
+    "$target/release/freesize" release sign "$dist/SHA256SUMS.txt" --key "$release_key"
+    "$target/release/freesize" release verify "$dist/SHA256SUMS.txt" --public-key release/public-key.txt
+else
+    echo "warning: no release key at $release_key; the release is unsigned, so apps" >&2
+    echo "         won't update to it themselves (see release/README.md)" >&2
+fi
 echo "==> Built:"
 ls -lh "$dist"
 

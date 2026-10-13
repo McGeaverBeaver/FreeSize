@@ -2,10 +2,10 @@
 //! every request must be signed by a paired device's key, within a few
 //! minutes of the Hub's clock and with a nonce never seen before.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Path, Request, State};
@@ -48,33 +48,6 @@ impl Wakers {
     }
 }
 
-/// Slows down guessing pairing codes: at most this many wrong codes a
-/// minute, from anywhere.
-const WRONG_CODES_PER_MINUTE: usize = 20;
-
-#[derive(Default)]
-pub struct PairLimiter(Mutex<VecDeque<Instant>>);
-
-impl PairLimiter {
-    fn blocked(&self) -> bool {
-        let mut wrong = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        while wrong
-            .front()
-            .is_some_and(|t| t.elapsed() > Duration::from_secs(60))
-        {
-            wrong.pop_front();
-        }
-        wrong.len() >= WRONG_CODES_PER_MINUTE
-    }
-
-    fn record_wrong(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push_back(Instant::now());
-    }
-}
-
 /// `GET /api/v1/hello`.
 pub async fn hello(State(state): State<AppState>) -> Json<Hello> {
     Json(hello_of(&state))
@@ -113,9 +86,11 @@ fn move_for(state: &AppState, via: Option<&Via>) -> Option<Signed<HubAddress>> {
 /// `POST /api/v1/pair`: a new device with a one-time code.
 pub async fn pair(
     State(state): State<AppState>,
+    via: Option<Extension<Via>>,
     Json(request): Json<Signed<PairRequest>>,
 ) -> ApiResult<Json<Signed<PairResponse>>> {
-    if state.pair_limiter.blocked() {
+    let peer = via.map(|v| v.peer.ip());
+    if state.pair_limiter.blocked(peer) {
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "too many wrong pairing codes; wait a minute",
@@ -198,7 +173,7 @@ pub async fn pair(
     let id = match result {
         Ok(id) => id,
         Err(why) => {
-            state.pair_limiter.record_wrong();
+            state.pair_limiter.record(peer);
             return Err(ApiError::forbidden(why));
         }
     };
@@ -554,10 +529,14 @@ pub async fn poll(
             && pending.cancelled.is_empty();
         if !empty || tokio::time::Instant::now() >= deadline || move_to.is_some() {
             pending.move_to = move_to;
+            pending.latest = state.latest.for_version(&device.info.app);
             return Ok(Json(pending));
         }
         if tokio::time::timeout_at(deadline, notified).await.is_err() {
-            return Ok(Json(PollResponse::default()));
+            return Ok(Json(PollResponse {
+                latest: state.latest.for_version(&device.info.app),
+                ..PollResponse::default()
+            }));
         }
     }
 }

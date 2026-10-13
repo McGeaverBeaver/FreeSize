@@ -39,6 +39,10 @@ pub struct HubInfo {
     pub fingerprint: String,
     /// The certificate; none with TLS off.
     pub tls: Option<crate::tls::TlsInfo>,
+    /// Whether the Hub checks GitHub for newer releases.
+    pub update_check: bool,
+    /// A newer release than this Hub, when the check found one.
+    pub latest: Option<freesize_proto::LatestRelease>,
 }
 
 /// `GET /api/me`: who is signed in, and about the Hub.
@@ -55,6 +59,8 @@ pub async fn me(State(state): State<AppState>, user: User) -> Json<Me> {
             url: state.config.public_url(),
             fingerprint: state.key.public().fingerprint(),
             tls: state.tls.as_ref().map(|t| t.info()),
+            update_check: state.config.update_check(),
+            latest: state.latest.get(),
         },
     })
 }

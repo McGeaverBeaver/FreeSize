@@ -337,7 +337,7 @@ fn grown(app: &AppUsage) -> u64 {
     app.growth.map_or(0, |g| g.bytes.max(0) as u64)
 }
 
-fn heading(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
+pub(crate) fn heading(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
     let (action, key) = action.unwrap_or_default();
     HomeRow {
         kind: HEADING,
@@ -349,7 +349,7 @@ fn heading(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
     }
 }
 
-fn notice(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
+pub(crate) fn notice(title: &str, text: &str, action: Option<(&str, &str)>) -> HomeRow {
     let (action, key) = action.unwrap_or_default();
     HomeRow {
         kind: NOTICE,
@@ -734,19 +734,23 @@ pub fn junk_confirm(junk: &Junk) -> String {
     let n = junk.paths.len();
     match junk.kind {
         JunkKind::Trash => format!(
-            "Permanently delete {} from the trash ({size})? They can't be restored afterwards.",
+            "Move {} from the trash to the quarantine ({size})? Put back restores them; the \
+             space is freed when you empty the quarantine.",
             count(n, "item", "items")
         ),
         JunkKind::Installers => format!(
-            "Permanently delete {} from Download ({size})?",
+            "Move {} from Download to the quarantine ({size})?",
             count(n, "APK file", "APK files")
         ),
         JunkKind::Thumbnails => {
-            format!("Delete the thumbnail cache ({size})? Gallery apps rebuild it as needed.")
+            format!(
+                "Move the thumbnail cache ({size}) to the quarantine? Gallery apps rebuild it as \
+                 needed."
+            )
         }
         JunkKind::Leftovers => format!(
-            "Permanently delete {} left by removed apps ({size})? Their files can't be \
-             restored.",
+            "Move {} left by removed apps ({size}) to the quarantine? Put back restores them if \
+             an app turns out to need them.",
             count(n, "folder", "folders")
         ),
     }
@@ -1601,8 +1605,8 @@ mod tests {
         assert!(trash.subtitle.contains("a.jpg, b.jpg, c.jpg and 1 more"));
         assert_eq!(
             junk_confirm(&report.junk[2]),
-            "Permanently delete 1 folder left by removed apps (2.00 MB)? Their files can't \
-             be restored."
+            "Move 1 folder left by removed apps (2.00 MB) to the quarantine? Put back restores \
+             them if an app turns out to need them."
         );
         let mut no_access = options();
         no_access.storage_access = false;

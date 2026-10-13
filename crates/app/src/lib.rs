@@ -21,10 +21,12 @@ mod insights;
 mod locations;
 mod moves;
 mod owners;
+mod quarantine;
 mod report;
 mod rows;
 mod scans;
 mod similar;
+mod updater;
 #[cfg(windows)]
 mod winicon;
 
@@ -72,6 +74,8 @@ pub fn run(initial: Option<PathBuf>, elevated: bool) -> Result<(), slint::Platfo
     if elevated {
         freesize_core::access::enable_backup_privilege();
     }
+    // The file an update left behind, now that the new program runs.
+    updater::tidy();
     let ui = AppWindow::new()?;
     let _controller = controller::install(&ui, initial, elevated);
     ui.run()

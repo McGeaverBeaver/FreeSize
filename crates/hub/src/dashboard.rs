@@ -114,6 +114,43 @@ pub struct DeviceSummary {
     pub agentless: bool,
     /// Alerts on now, not counting waiting requests.
     pub alerts: i64,
+    /// The app's version, from its name ("FreeSize app 0.9.0").
+    pub version: String,
+    /// Runs an older version than the Hub.
+    pub behind: bool,
+}
+
+/// The version at the end of an app's name, as devices report it.
+pub(crate) fn version_of(app: &str) -> &str {
+    app.rsplit(' ')
+        .next()
+        .filter(|v| v.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .unwrap_or("")
+}
+
+/// Whether `version` is older than `than`, comparing numbers part by part
+/// ("0.9.10" is newer than "0.9.9"). Unknown versions aren't behind.
+pub fn older(version: &str, than: &str) -> bool {
+    let parts = |v: &str| -> Vec<u64> {
+        v.split(['.', '-'])
+            .map(|p| p.parse().unwrap_or(0))
+            .collect()
+    };
+    if version.is_empty() {
+        return false;
+    }
+    let (a, b) = (parts(version), parts(than));
+    let len = a.len().max(b.len());
+    for i in 0..len {
+        let (x, y) = (
+            a.get(i).copied().unwrap_or(0),
+            b.get(i).copied().unwrap_or(0),
+        );
+        if x != y {
+            return x < y;
+        }
+    }
+    false
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -207,6 +244,8 @@ pub(crate) fn device_summaries(
                 approver_name: None,
                 agentless,
                 alerts: r.get(11)?,
+                version: String::new(),
+                behind: false,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -215,6 +254,8 @@ pub(crate) fn device_summaries(
         if !groups.contains(&device.group.id) {
             continue;
         }
+        device.version = version_of(&device.info.app).to_string();
+        device.behind = !device.agentless && older(&device.version, env!("CARGO_PKG_VERSION"));
         device.disks = disks(c, &device.id)?;
         device.scans = latest_scans(c, &device.id)?;
         if let Some(approver) = &device.info.approver {
@@ -929,6 +970,17 @@ pub async fn pairing_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versions_compare_by_number() {
+        assert_eq!(version_of("FreeSize app 0.9.0"), "0.9.0");
+        assert_eq!(version_of("No agent: scans are uploaded as files"), "");
+        assert!(older("0.8.8", "0.9.0"));
+        assert!(older("0.9.9", "0.9.10"));
+        assert!(!older("0.9.0", "0.9.0"));
+        assert!(!older("1.0.0", "0.9.0"));
+        assert!(!older("", "0.9.0"));
+    }
 
     #[test]
     fn paths() {

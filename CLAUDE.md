@@ -60,7 +60,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.8.8)
+## Where things stand (0.9.0)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -92,6 +92,14 @@ compiling inside Docker.
   through UAC, macOS and Linux scan as root in the background
   (`freesize-gui --export`, through an administrator prompt or `pkexec`)
   and open the result read-only; the dashboard flags incomplete scans.
+  0.9: GPL-3.0-or-later, SECURITY.md, TESTING.md, issue templates, CI;
+  signed release sums (`freesize release key|sign|verify`, the public half
+  in `release/public-key.txt`, empty until the owner makes the key); the
+  update check and updater (opt-in in the app's Updates section, or the
+  Hub checks with `FREESIZE_UPDATE_CHECK=on` and tells older devices);
+  the quarantine in the desktop and Android apps; Hub limits on pairing
+  and sign-in, `FREESIZE_RETENTION_DAYS`, the audit head in the log and in
+  alerts, "older version" on device cards.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
@@ -104,13 +112,16 @@ compiling inside Docker.
      works since the repository went public. Unraid's own CSS is in
      github.com/unraid/webgui (`emhttp/plugins/dynamix/styles`); render
      the page against it before changing its layout.
-  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.9 trust and
-     updates, 0.9.1 Community Applications, 0.10 the junk cleaner, 0.11
-     where the space goes, 0.12 and 0.13 Nextcloud, 0.14 the phone in the
-     background.
-  4. 0.8.6 to 0.8.8 haven't been tried on real devices yet: the Unraid
+  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.9.1
+     Community Applications, 0.10 the junk cleaner, 0.11 where the space
+     goes, 0.12 and 0.13 Nextcloud, 0.14 the phone in the background. 0.9
+     leaves the owner three things: `freesize release key` on the build
+     machine and commit `release/public-key.txt`; register the package
+     and the Android key with Google; try the updater and the phone's
+     quarantine on real devices (TESTING.md).
+  4. 0.8.6 to 0.9.0 haven't been tried on real devices yet: the Unraid
      update through `disktree.plg`, the phone pairing again under the new
      package id, HTTPS pairing from the QR code, a 0.8.6 device moving
      over to https, and the administrator and root scans (UAC on Windows,
-     the password prompts on macOS and Linux).
-  5. No license chosen yet.
+     the password prompts on macOS and Linux), the in-app update and the
+     phone's quarantine.

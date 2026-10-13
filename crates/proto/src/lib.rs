@@ -10,6 +10,7 @@
 pub mod keys;
 pub mod messages;
 pub mod pairing;
+pub mod release;
 pub mod signing;
 pub mod unraid;
 

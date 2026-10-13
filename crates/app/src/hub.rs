@@ -38,6 +38,8 @@ pub enum Event {
     Confirm(Hello),
     /// Pairing finished: the Hub's name, or why not.
     Paired(Result<String, String>),
+    /// The Hub says a newer FreeSize is out (its update check is on).
+    Latest(freesize_proto::LatestRelease),
 }
 
 /// A request shown for approval.
@@ -269,9 +271,15 @@ pub fn device_info(name: &str, os: &str, state: Option<&AgentState>) -> DeviceIn
         hostname: freesize_agent::hostname(),
         app: format!("FreeSize app {}", env!("CARGO_PKG_VERSION")),
         actions: if platform == Platform::Android {
-            vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]
+            vec![
+                ActionKind::Delete,
+                ActionKind::Uninstall,
+                ActionKind::Clean,
+                ActionKind::Restore,
+                ActionKind::Empty,
+            ]
         } else {
-            vec![ActionKind::Delete]
+            vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty]
         },
         attended: true,
         approver: None,
@@ -446,6 +454,9 @@ impl Worker {
         if let Some(signed) = &response.move_to {
             self.follow(signed);
         }
+        if let Some(latest) = response.latest.clone() {
+            self.tell(Event::Latest(latest));
+        }
         let Some(state) = self.snapshot() else { return };
         for id in response.cancelled {
             self.asked.remove(&id);
@@ -474,13 +485,11 @@ impl Worker {
                     }
                     self.update(&id, &plain(CommandState::Shown, ""));
                     let mut lines = commands::describe(&request.command, None);
-                    if cfg!(target_os = "android") {
-                        // describe() says permanently, which is right here.
-                    } else if matches!(
+                    if matches!(
                         request.command.action,
                         freesize_proto::Action::Delete { .. }
                     ) {
-                        lines[0] = lines[0].replace("permanently delete", "move to the Trash");
+                        lines[0] = lines[0].replace("permanently delete", "move to the quarantine");
                     }
                     self.tell(Event::Ask(Prompt {
                         id,
@@ -604,16 +613,53 @@ pub struct AppExecutor {
 
 impl Executor for AppExecutor {
     fn delete(&self, path: &Path) -> Result<u64, String> {
-        let bytes = crate::cleanup::dir_size(path);
-        if cfg!(target_os = "android") {
-            // As everywhere in the app on Android: there's no Trash.
-            let (freed, errors) = crate::cleanup::delete(&[path.to_path_buf()]);
-            match errors.into_iter().next() {
-                Some(err) => Err(err),
-                None => Ok(freed),
-            }
+        let (bytes, errors) =
+            crate::quarantine::delete_all(std::slice::from_ref(&path.to_path_buf()), "");
+        match errors.into_iter().next() {
+            Some(err) => Err(err),
+            None => Ok(bytes),
+        }
+    }
+
+    /// A request's items go into the quarantine as one batch, under the
+    /// request's id, so Put back restores them together.
+    fn delete_all(
+        &self,
+        targets: &[PathBuf],
+        command: &freesize_proto::Command,
+    ) -> commands::Deleted {
+        let moved =
+            crate::quarantine::move_in(&command.id, &command.by.name, &command.reason, targets);
+        let bytes: u64 = moved.results.iter().flatten().sum();
+        let done = moved.results.iter().filter(|r| r.is_ok()).count();
+        commands::Deleted {
+            detail: format!(
+                "moved {done} of {} to the quarantine ({}); the space is freed when it's emptied",
+                targets.len(),
+                freesize_core::format_size(bytes)
+            ),
+            results: moved.results,
+            freed: 0,
+        }
+    }
+
+    fn restore(&self, batch: &str) -> Result<String, String> {
+        crate::quarantine::restore(batch)
+    }
+
+    fn empty_quarantine(&self, batches: &[String]) -> Result<u64, String> {
+        crate::quarantine::empty(batches)
+    }
+
+    fn note(&self, request: &Request) -> String {
+        if matches!(
+            request.command.action,
+            freesize_proto::Action::Delete { .. }
+        ) {
+            "Deletes go to this device's quarantine first; the space is freed when it's emptied."
+                .into()
         } else {
-            crate::actions::delete(path).map(|()| bytes)
+            String::new()
         }
     }
 

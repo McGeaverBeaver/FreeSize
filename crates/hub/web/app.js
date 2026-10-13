@@ -258,6 +258,7 @@ function deviceCard(device) {
       h("h2", { class: "grow", style: "margin:0" }, device.name),
       device.alerts ? h("span", { class: "badge danger" }, count(device.alerts, "alert", "alerts")) : null,
       device.waiting ? h("span", { class: "badge warn" }, count(device.waiting, "request", "requests")) : null,
+      device.behind ? h("span", { class: "badge warn", title: `Runs ${device.version}, older than the Hub` }, "older version") : null,
       h("span", { class: "badge" }, PLATFORMS[device.platform] || device.platform)),
     h("div", { class: "platform" },
       h("span", { class: device.online ? "dot online" : "dot" }), seenText(device),
@@ -473,7 +474,8 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
         h("span", { class: device.online ? "dot online" : "dot" }),
         device.agentless ? `updated ${ago(device.last_seen)}` : seenText(device),
         ` · ${info.os || PLATFORMS[device.platform] || device.platform}`,
-        info.app && !device.agentless ? ` · ${info.app}` : "", ` · group ${device.group.name}`),
+        info.app && !device.agentless ? ` · ${info.app}` : "", ` · group ${device.group.name}`,
+        device.behind ? h("span", { class: "badge warn", style: "margin-left:8px" }, "older than the Hub") : null),
       h("p", { class: "dim small" },
         device.agentless ? "No agent runs here: its scans are uploaded as files, and the Hub can't ask it to do anything."
           : info.attended ? "Requests are approved on the device itself."
@@ -1446,10 +1448,15 @@ PAGES.settings = async () => {
         h("h2", {}, "This Hub"),
         h("table", {}, h("tbody", {},
           h("tr", {}, h("td", { class: "dim" }, "Name"), h("td", {}, hub.name)),
-          h("tr", {}, h("td", { class: "dim" }, "Version"), h("td", {}, hub.version)),
+          h("tr", {}, h("td", { class: "dim" }, "Version"), h("td", {}, hub.version,
+            hub.latest ? [" · ", h("a", { href: hub.latest.url, target: "_blank", rel: "noopener" }, `FreeSize ${hub.latest.version} is out`)]
+              : hub.update_check ? h("span", { class: "dim" }, " · the newest release") : null)),
           h("tr", {}, h("td", { class: "dim" }, "Address"), h("td", {}, hub.url || "not set (FREESIZE_HUB_URL)")),
           h("tr", {}, h("td", { class: "dim" }, "Key fingerprint"), h("td", { class: "fingerprint" }, hub.fingerprint)))),
-        h("p", { class: "hint" }, "Devices check this fingerprint when they pair, so they know they reached this Hub.")),
+        h("p", { class: "hint" }, "Devices check this fingerprint when they pair, so they know they reached this Hub."),
+        h("p", { class: "hint" }, hub.update_check
+          ? "The Hub asks GitHub once a day for the newest release and tells devices running an older version. Updates are installed on each device, never from here."
+          : "The Hub doesn't check for newer releases (FREESIZE_UPDATE_CHECK=on turns that on). Devices can check on their own.")),
       certificateCard(hub),
       groupCard,
       h("div", { class: "card" },
