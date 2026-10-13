@@ -95,7 +95,7 @@ Each part takes over what DiskTree kept, the first time it starts:
   [Changes](#changes).
 - **Selection**: select files and folders from any view, look them over in
   one list, then delete them all or move them all to another drive, keeping
-  their folders. The last move can be put back. See [The basket](#the-basket).
+  their folders. The last move can be put back. See [The selection](#the-selection).
 - **Export** a report (HTML), a spreadsheet (CSV) or the whole scan (ncdu's
   JSON format), and open saved scans again, including ones made with
   `ncdu -o` on a machine without FreeSize. See
@@ -240,7 +240,7 @@ tick many at once:
 
 When every copy of a duplicate (or every photo of a set) is ticked, the set
 says so in orange, and so does the confirmation. Ticked items go into the
-selection (see [The basket](#the-basket)): its bar shows what's ticked
+selection (see [The selection](#the-selection)): its bar shows what's ticked
 everywhere, and **Review…** lists each item once more, with **Keep** to
 take one off, before anything is moved to the quarantine. Double-click a
 row, or select it and use Open, to look at a file first. A scan opened
@@ -386,7 +386,7 @@ changes (a thousandth of the folder, between 1 MB and 50 MB) aren't listed.
 In the bubble view, folders that grew or shrank noticeably show by how much,
 for example *12.4 GB · +2.1 GB*.
 
-### The basket
+### The selection
 
 Select a file or folder anywhere and press **Select** (or tick it on the
 Clean up tab) to add it to the selection; a bar shows how many items and
@@ -419,7 +419,7 @@ two ways to act on all of it:
 On desktops a save dialog asks where; on Android files go to
 `Download/FreeSize`. To open a scan file, type its path (ending in `.json`)
 and press Scan. Saved scans open read-only: nothing in them can be opened,
-deleted or collected, since the files may be on another machine. Scans made
+deleted or selected, since the files may be on another machine. Scans made
 with `ncdu -o` (1.x or 2.x JSON) open the same way, so a server or router
 without FreeSize can be scanned with ncdu and looked at here.
 

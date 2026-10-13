@@ -76,10 +76,11 @@ cleaning it means and whether it refills.
 _Avoid_: junk kind, junk category (a category groups rules)
 
 **Safety**:
-How a junk rule may be cleaned: **Safe** (deleted, refills by itself),
-**Check first** (never ticked by default, goes to the quarantine) or **Use the
-tool** (never ticked; the system's own tool removes it).
-_Avoid_: risk level
+How a find may be removed, one scale everywhere (junk rules, Docker and VM
+finds): **Safe** (deleted, comes back by itself), **Check first** (never
+ticked by default, goes to the quarantine), **Use the tool** (never ticked;
+the system's own tool removes it) or **Protected** (never offered).
+_Avoid_: risk level, Check (say Check first)
 
 **Leftovers**:
 Settings and caches a program or app left behind after it was uninstalled,
@@ -93,12 +94,17 @@ _Avoid_: app category, app filter
 
 ### Removing safely
 
+**Highlight**:
+Click or tap a row to show it in the tree and the bar below, without adding
+it to the selection.
+_Avoid_: select (that adds to the selection)
+
 **Tick**:
 Mark a find to be acted on. Ticking adds it to the selection.
 _Avoid_: check, mark
 
 **Selection**:
-Everything ticked or selected anywhere, reviewed in one list before it is
+Everything ticked, or added with Select, anywhere, reviewed in one list before it is
 deleted or moved together.
 _Avoid_: basket, collection, cart
 
