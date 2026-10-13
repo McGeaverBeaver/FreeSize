@@ -49,6 +49,8 @@ const MAX_BODY: u64 = 64 * 1024 * 1024;
 pub struct Account {
     pub id: i64,
     pub server: String,
+    /// The account's id once a listing has asked for it, else the name
+    /// the person signed in with. Devices report the id.
     pub user: String,
     pub added: i64,
     pub added_by: String,
@@ -70,7 +72,7 @@ pub struct Account {
 
 pub fn accounts(c: &Connection) -> rusqlite::Result<Vec<Account>> {
     let mut stmt = c.prepare(
-        "SELECT id, server, user, added, added_by, synced, error, files, folders, bytes, trash,
+        "SELECT id, server, COALESCE(dav_user, user), added, added_by, synced, error, files, folders, bytes, trash,
                 quota_used, quota_free
          FROM nextcloud ORDER BY server, user",
     )?;
@@ -99,19 +101,23 @@ pub fn accounts(c: &Connection) -> rusqlite::Result<Vec<Account>> {
 #[derive(Clone)]
 pub struct Credentials {
     pub server: String,
+    /// The name the person signed in with: the app password's.
     pub user: String,
     pub password: String,
+    /// The account's id, once known.
+    pub dav_user: Option<String>,
 }
 
 pub fn credentials(c: &Connection, id: i64) -> ApiResult<Credentials> {
     c.query_row(
-        "SELECT server, user, password FROM nextcloud WHERE id = ?1",
+        "SELECT server, user, password, dav_user FROM nextcloud WHERE id = ?1",
         [id],
         |r| {
             Ok(Credentials {
                 server: r.get(0)?,
                 user: r.get(1)?,
                 password: r.get(2)?,
+                dav_user: r.get(3)?,
             })
         },
     )
@@ -351,6 +357,7 @@ async fn finish_flow(state: AppState, id: String, poll: FlowPoll, admin: String)
                 server: result.server.trim_end_matches('/').to_string(),
                 user: result.login_name,
                 password: result.app_password,
+                dav_user: None,
             };
             let stored_creds = creds.clone();
             let stored_admin = admin.clone();
@@ -413,6 +420,8 @@ pub struct Listing {
     pub quota_free: i64,
     pub trash: u64,
     pub requests: usize,
+    /// The account's id, when the server said it.
+    pub dav_user: Option<String>,
 }
 
 const PROPFIND: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -469,7 +478,8 @@ fn propfind(
 /// already there is fine. Blocking.
 pub fn mkcol(creds: &Credentials, path: &str) -> Result<(), String> {
     let http = agent();
-    let user = percent_encode(&user_id(&http, creds));
+    let (id, _) = account_id(&http, creds);
+    let user = percent_encode(&id);
     let base = format!("{}/remote.php/dav/files/{user}", creds.server);
     let mut so_far = String::new();
     for part in path.split('/').filter(|p| !p.is_empty()) {
@@ -503,14 +513,16 @@ pub fn mkcol(creds: &Credentials, path: &str) -> Result<(), String> {
 /// a few thousand requests on a big account.
 pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
     let http = agent();
-    let id = user_id(&http, creds);
+    let (id, lookup_error) = account_id(&http, creds);
     let user = percent_encode(&id);
     let base = format!("{}/remote.php/dav/files/{user}", creds.server);
-    let prefix = files_prefix(&id);
+    let prefix = files_prefix(&creds.server, &id);
     let mut listing = Listing {
         quota_free: -1,
+        dav_user: lookup_error.is_none().then(|| id.clone()),
         ..Listing::default()
     };
+    let mut unmatched: Option<String> = None;
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut queue: Vec<(String, usize)> = vec![("/".to_string(), 0)];
     while let Some((folder, depth)) = queue.pop() {
@@ -522,6 +534,7 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
         let body = propfind(&http, creds, &url, "1")?;
         for response in parse_multistatus(&body) {
             let Some(path) = dav_path(&response.href, &prefix) else {
+                unmatched.get_or_insert_with(|| response.href.clone());
                 continue;
             };
             if depth == 0 && path == "/" {
@@ -562,16 +575,26 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
     // the answer was understood, and an empty listing would make every
     // device's copy look like the only one.
     if !seen.contains_key("/") {
-        return Err(format!(
+        let mut error = format!(
             "{} answered, but the Hub couldn't read the listing of {id}'s files",
             creds.server
-        ));
+        );
+        if let Some(href) = unmatched {
+            error.push_str(&format!(" (it named {href}, not {prefix}/…)"));
+        }
+        if let Some(lookup) = lookup_error {
+            error.push_str(&format!("; asking for the account's id failed: {lookup}"));
+        }
+        return Err(error);
     }
     // Deeper folders were pushed last and so listed first; put the
     // listing in path order.
     listing.entries.sort_by(|a, b| a.path.cmp(&b.path));
     let trash_url = format!("{}/remote.php/dav/trashbin/{user}/trash", creds.server);
-    let trash_prefix = format!("/remote.php/dav/trashbin/{id}/trash");
+    let trash_prefix = format!(
+        "{}/remote.php/dav/trashbin/{id}/trash",
+        base_path(&creds.server)
+    );
     match propfind(&http, creds, &trash_url, "1") {
         Ok(body) => {
             listing.requests += 1;
@@ -586,32 +609,48 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
     Ok(listing)
 }
 
-/// Where an account's files are in WebDAV, not percent-encoded.
-fn files_prefix(user: &str) -> String {
-    format!("/remote.php/dav/files/{user}")
+/// The path part of a server address: `/nextcloud` for
+/// `https://nas/nextcloud`, empty for a server at the top.
+fn base_path(server: &str) -> &str {
+    let rest = server.split_once("://").map_or(server, |(_, r)| r);
+    rest.find('/')
+        .map_or("", |at| rest[at..].trim_end_matches('/'))
 }
 
-/// The account's own id, which names its folder in WebDAV. Login Flow
-/// hands over the name the person signed in with, which can be their
-/// email address instead; the sign-in name is the fallback when the
-/// server won't say.
-fn user_id(http: &ureq::Agent, creds: &Credentials) -> String {
+/// Where an account's files are in WebDAV hrefs, not percent-encoded.
+fn files_prefix(server: &str, user: &str) -> String {
+    format!("{}/remote.php/dav/files/{user}", base_path(server))
+}
+
+/// The account's id, which names its folder in WebDAV, and why asking for
+/// it failed. Login Flow hands over the name the person signed in with,
+/// which can be their email address instead; that name stands in when the
+/// server won't say, and the reason goes into a failed listing's error.
+fn account_id(http: &ureq::Agent, creds: &Credentials) -> (String, Option<String>) {
+    if let Some(id) = &creds.dav_user {
+        return (id.clone(), None);
+    }
     let url = format!("{}/ocs/v2.php/cloud/user?format=json", creds.server);
     let answer = http
         .get(&url)
         .header("Authorization", basic(creds))
         .header("OCS-APIRequest", "true")
         .call()
-        .ok()
-        .filter(|r| r.status().as_u16() == 200)
-        .and_then(|mut r| r.body_mut().read_to_string().ok());
-    match answer.as_deref().and_then(parse_user_id) {
-        Some(id) => id,
-        None => {
-            tracing::debug!("Nextcloud: no user id from {url}; using the sign-in name");
-            creds.user.clone()
-        }
-    }
+        .map_err(|e| format!("{url}: {e}"))
+        .and_then(|mut r| match r.status().as_u16() {
+            200 => r
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| format!("{url}: {e}")),
+            status => Err(format!("{url}: HTTP {status}")),
+        });
+    let error = match answer.map(|a| parse_user_id(&a)) {
+        Ok(Some(id)) => return (id, None),
+        Ok(None) => format!("{url} didn't name the account"),
+        Err(error) => error,
+    };
+    tracing::warn!("Nextcloud: {error}; using the sign-in name");
+    (creds.user.clone(), Some(error))
 }
 
 /// `ocs.data.id` of a `cloud/user` answer.
@@ -622,12 +661,14 @@ fn parse_user_id(json: &str) -> Option<String> {
 }
 
 /// The path under the account's files an href names: `/` for the root.
-/// `prefix` is not percent-encoded; a server under a folder puts that
-/// folder in front of it.
+/// `prefix` is from [`files_prefix`]; an href may also be a whole URL.
 fn dav_path(href: &str, prefix: &str) -> Option<String> {
     let decoded = percent_decode(href);
-    let at = decoded.find(prefix)?;
-    let rest = &decoded[at + prefix.len()..];
+    let path = match decoded.split_once("://") {
+        Some((_, rest)) => rest.find('/').map_or("", |at| &rest[at..]),
+        None => decoded.as_str(),
+    };
+    let rest = path.strip_prefix(prefix)?;
     let rest = rest.trim_end_matches('/');
     Some(if rest.is_empty() {
         "/".to_string()
@@ -905,7 +946,8 @@ fn store_listing(c: &mut Connection, id: i64, listing: &Listing) -> rusqlite::Re
         .count() as i64;
     tx.execute(
         "UPDATE nextcloud SET synced = ?1, error = NULL, files = ?2, folders = ?3, bytes = ?4,
-                trash = ?5, quota_used = ?6, quota_free = ?7
+                trash = ?5, quota_used = ?6, quota_free = ?7,
+                dav_user = COALESCE(?9, dav_user)
          WHERE id = ?8",
         params![
             now(),
@@ -915,7 +957,8 @@ fn store_listing(c: &mut Connection, id: i64, listing: &Listing) -> rusqlite::Re
             listing.trash as i64,
             listing.quota_used as i64,
             listing.quota_free.max(-1),
-            id
+            id,
+            listing.dav_user
         ],
     )?;
     tx.commit()
@@ -1226,24 +1269,75 @@ mod tests {
     }
 
     #[test]
+    fn an_account_signed_in_by_email_matches_devices_by_its_id() {
+        // Devices report the account's id (the client's dav_user), so
+        // once a listing has learned it, the account goes by it.
+        let db = crate::db::Db::memory().unwrap();
+        db.now(|c| {
+            let creds = Credentials {
+                server: "https://cloud.example.com".into(),
+                user: "bob@example.com".into(),
+                password: "app".into(),
+                dav_user: None,
+            };
+            let id = store_account(c, &creds, "admin").unwrap();
+            assert_eq!(accounts(c).unwrap()[0].user, "bob@example.com");
+            let listing = Listing {
+                entries: vec![Entry {
+                    path: "/".into(),
+                    is_dir: true,
+                    ..Entry::default()
+                }],
+                quota_free: -1,
+                dav_user: Some("rob".into()),
+                ..Listing::default()
+            };
+            store_listing(c, id, &listing).unwrap();
+            assert_eq!(accounts(c).unwrap()[0].user, "rob");
+            let stored = credentials(c, id).unwrap();
+            assert_eq!(stored.user, "bob@example.com");
+            assert_eq!(stored.dav_user.as_deref(), Some("rob"));
+            // A later listing that couldn't ask keeps what was learned.
+            let listing = Listing {
+                dav_user: None,
+                ..listing
+            };
+            store_listing(c, id, &listing).unwrap();
+            assert_eq!(accounts(c).unwrap()[0].user, "rob");
+        });
+    }
+
+    #[test]
     fn listing_paths_for_a_user_signed_in_by_email() {
         // Signed in with an email address: the hrefs carry it
         // percent-encoded, or the account's own id instead, and a server
         // under a folder puts its path in front.
-        let prefix = files_prefix("bob@example.com");
+        let prefix = files_prefix("https://cloud.example.com", "bob@example.com");
         assert_eq!(
             dav_path("/remote.php/dav/files/bob%40example.com/Photos/", &prefix),
             Some("/Photos".into())
         );
+        let under = files_prefix("http://nas:8080/nextcloud/", "bob");
+        assert_eq!(under, "/nextcloud/remote.php/dav/files/bob");
         assert_eq!(
-            dav_path(
-                "/nextcloud/remote.php/dav/files/bob/a.jpg",
-                &files_prefix("bob")
-            ),
+            dav_path("/nextcloud/remote.php/dav/files/bob/a.jpg", &under),
             Some("/a.jpg".into())
         );
         assert_eq!(
-            dav_path("/remote.php/dav/files/bobby/a.jpg", &files_prefix("bob")),
+            dav_path(
+                "http://nas:8080/nextcloud/remote.php/dav/files/bob/",
+                &under
+            ),
+            Some("/".into())
+        );
+        // Only right after the server's own folder, and only this account.
+        assert_eq!(dav_path("/remote.php/dav/files/bob/a.jpg", &under), None);
+        assert_eq!(
+            dav_path("/other/nextcloud/remote.php/dav/files/bob/a.jpg", &under),
+            None
+        );
+        assert_eq!(
+            dav_path("/nextcloud/remote.php/dav/files/bobby/a.jpg", &under),
             None
         );
         assert_eq!(

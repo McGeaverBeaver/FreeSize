@@ -78,7 +78,8 @@ _Avoid_: junk kind, junk category (a category groups rules)
 **Safety**:
 How a find may be removed, one scale everywhere (junk rules, Docker and VM
 finds): **Safe** (deleted, comes back by itself), **Check first** (never
-ticked by default, goes to the quarantine), **Use the tool** (never ticked;
+ticked by default; files go to the quarantine, Docker images are removed
+through Docker), **Use the tool** (never ticked;
 the system's own tool removes it) or **Protected** (never offered).
 _Avoid_: risk level, Check (say Check first)
 
@@ -104,7 +105,7 @@ Mark a find to be acted on. Ticking adds it to the selection.
 _Avoid_: check, mark
 
 **Selection**:
-Everything ticked, or added with Select, anywhere, reviewed in one list before it is
+Everything added to it, by ticking or with the Select button, anywhere, reviewed in one list before it is
 deleted or moved together.
 _Avoid_: basket, collection, cart
 

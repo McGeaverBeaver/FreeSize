@@ -301,7 +301,7 @@ updating the UI), the job is retried on the next event loop turn instead of
 panicking.
 
 Long-running work (scanning, deleting, measuring apps, the duplicate and
-similar photo searches, basket jobs) runs on a plain thread and writes its
+similar photo searches, selection jobs) runs on a plain thread and writes its
 result into an `Arc<Mutex<Option<T>>>`. A 100 ms Slint timer polls those
 results and the scan progress, and stops itself when nothing is pending. That
 keeps all UI updates on the UI thread with no `Send` requirements on UI state.
@@ -327,9 +327,9 @@ the overview (`CleanSection`), a page of rows, what its "select all" ticks
 similar photos all but the largest), the same per group (`groups`, the
 group rows carry their index) and, for duplicates, the types to list one
 of. The controller keeps the sections, shows the open page's rows and
-`mark_cleanup` ticks rows from the basket (an item is ticked when it or a
-folder above it is in the basket), counts them on the cards and warns on
-a set whose every copy is ticked; it runs on every change to the basket,
+`mark_cleanup` ticks rows from the selection (the code calls it the
+basket; an item is ticked when it or a folder above it is in it), counts them on the cards and warns on
+a set whose every copy is ticked; it runs on every change to the selection,
 so ticking from the tab, the selection bar or the review dialog stays in
 step. Similar photos are handed to Slint as `PhotoSet`s and laid out as
 tiles that wrap to the width. The report flattens the sections back into
@@ -366,7 +366,7 @@ data is measured through Usage access instead.
   Machine, `diskutil apfs listSnapshots` for other APFS snapshots and
   `diskutil info` for purgeable space. `filecleanup.rs` shows the gap only
   when it's at least 1 GB and 2% of the used space.
-- `moves.rs` moves basket items: the target keeps the path below the
+- `moves.rs` moves the selection's items: the target keeps the path below the
   scanned folder, `rename` within a drive, else copy, compare sizes and
   only then remove the original. An existing target stops that item. The
   `(from, to)` pairs go to `last-move.json` so Put back can reverse them.
@@ -557,7 +557,7 @@ quarantine like every delete in the app.
 
 ### Quarantine and updates (`quarantine.rs`, `updater.rs`)
 
-Every delete in the app (the selection, the basket, junk, a Hub request)
+Every delete in the app (the selection, junk, a Hub request)
 goes through `quarantine.rs`, a thin wrapper over the agent's `Quarantine`
 with the app's own `Places`: the quarantine for the disk FreeSize's data
 folder is on is `<data>/quarantine`, which the person owns, and other

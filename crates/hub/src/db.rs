@@ -288,6 +288,13 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE nextcloud ADD COLUMN quota_free INTEGER NOT NULL DEFAULT -1;
     ",
+    // 9: the account's own id, which names it in WebDAV and in the
+    // devices' reports (0.16.3); NULL until the next listing asks for it.
+    // `user` stays the name the person signed in with, which the app
+    // password belongs to.
+    "
+    ALTER TABLE nextcloud ADD COLUMN dav_user TEXT;
+    ",
 ];
 
 impl Db {

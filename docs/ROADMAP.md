@@ -54,7 +54,7 @@ else that can delete:
     update caches, browser and shader caches, …), and space no file
     accounts for (ZFS snapshots, Windows shadow copies, Time Machine
     snapshots);
-  - the basket: collect from any view, review once, delete all or move all
+  - the basket (now the selection): collect from any view, review once, delete all or move all
     (keeping folders, checked copies across drives, never overwriting) with
     Put back;
   - export as an HTML report, CSV or an ncdu-compatible scan file, opening

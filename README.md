@@ -243,7 +243,7 @@ says so in orange, and so does the confirmation. Ticked items go into the
 selection (see [The selection](#the-selection)): its bar shows what's ticked
 everywhere, and **Review…** lists each item once more, with **Keep** to
 take one off, before anything is moved to the quarantine. Double-click a
-row, or select it and use Open, to look at a file first. A scan opened
+row, or highlight it and use Open, to look at a file first. A scan opened
 from a file is read-only, so it has no tick boxes.
 
 The cards are:
@@ -294,7 +294,7 @@ The cards are:
   shows the photos with a preview, the largest first. Similar isn't
   identical, so open them before choosing.
 
-Tap a row to select it in the tree, then use Open to look at it, or Delete
+Tap a row to highlight it in the tree, then use Open to look at it, or Delete
 or Select from the bar at the bottom. Delete moves it to the quarantine.
 
 - **Quarantine**, at the top whenever it holds something: each batch of
@@ -388,7 +388,7 @@ for example *12.4 GB · +2.1 GB*.
 
 ### The selection
 
-Select a file or folder anywhere and press **Select** (or tick it on the
+Highlight a file or folder anywhere and press **Select** (or tick it on the
 Clean up tab) to add it to the selection; a bar shows how many items and
 how much space it holds. When a files list is filtered (a type, an age, a
 size, old screenshots), **Select all** adds every listed file. **Review…**
@@ -419,7 +419,7 @@ two ways to act on all of it:
 On desktops a save dialog asks where; on Android files go to
 `Download/FreeSize`. To open a scan file, type its path (ending in `.json`)
 and press Scan. Saved scans open read-only: nothing in them can be opened,
-deleted or selected, since the files may be on another machine. Scans made
+deleted or added to the selection, since the files may be on another machine. Scans made
 with `ncdu -o` (1.x or 2.x JSON) open the same way, so a server or router
 without FreeSize can be scanned with ncdu and looked at here.
 
