@@ -252,3 +252,8 @@ unraid/       the Hub's Unraid template, ca/ (the Community Applications
               the package (page, start script)
 packaging/    the Hub's Docker entrypoint, systemd units
 ```
+
+`docs/agents/` tells coding agents using Matt Pocock's engineering skills
+where issues live (GitHub Issues), which triage labels to use, and where the
+domain docs go (`CONTEXT.md` and `docs/adr/`, written as terms and decisions
+get settled).

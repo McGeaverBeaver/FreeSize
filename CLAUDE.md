@@ -41,6 +41,20 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
 - `cargo run -p freesize-hub --example demo` starts a Hub with made-up
   devices on http://127.0.0.1:9090 for trying dashboard changes.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in the repository's GitHub Issues (McGeaverBeaver/freesize). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` and `docs/adr/` at the repository root, created when terms or decisions get settled. See `docs/agents/domain.md`.
+
 ## This machine
 
 This Ubuntu VM is the build machine, with the repository in
