@@ -206,6 +206,34 @@ half ships even if an action stalls on a device nobody has.
   inside the protocol stay as they are. Done when a 0.8.5 plugin, Hub,
   Windows app and phone each upgrade with pairing, settings, history and
   quarantine intact.
+- **0.8.7, HTTPS by default.** Over plain http anyone on the network can
+  read what devices report and the dashboard's sign-in cookie. The Hub makes
+  its own small certificate authority on first start (kept in the data
+  folder next to its key) and a certificate for the host or IP in its
+  address, signed by it: SHA-256, the address in the subject alternative
+  names, server authentication, 825 days at most (Apple's limit), renewed
+  a month before it ends or when the address changes. Devices learn that
+  authority when they pair: the Hub's signed hello names it, and the pairing
+  link already vouches for the Hub's key, so there's no new question to
+  answer. Each device trusts it for its Hub only, never system-wide: ureq
+  with exactly that root on desktops and servers, and on Android a
+  `TrustManagerFactory` loaded with it through JNI. An admin's own
+  certificate replaces the generated one with `DISKTREE_TLS_CERT_FILE` and
+  `DISKTREE_TLS_KEY_FILE` (PEM, with the chain), reloaded when the files
+  change; devices then check it against the system's certificates as
+  today. `DISKTREE_TLS=off` keeps plain http for a reverse proxy that does
+  TLS in front. Browsers warn on the first visit to a generated
+  certificate; the dashboard offers the authority to install on your own
+  computers, and the Authentik redirect URI becomes `https://`. Devices
+  paired over http move to https when the Hub tells them in a signed
+  answer; the Hub keeps answering them over http for one release. Done
+  when a new Hub serves HTTPS with no setup; Windows, the phone and the
+  Unraid plugin pair over it from the link or the QR code; a 0.8.6 device
+  moves over on its own; an admin's certificate and a proxy setup both
+  work. Tests: the generated certificate meets Apple's rules, a device
+  refuses another certificate for its Hub's address, the Hub's authority
+  isn't trusted for any other address, and a move to a new address must
+  carry the Hub's signature.
 - **0.9, trust and updates.** The license (GPL-3.0-or-later) and a
   SECURITY.md with the threat model and what leaves a device. CI on every
   push for clippy and tests on Windows, macOS and Linux. The quarantine on
@@ -289,8 +317,9 @@ Built in 0.7, apart from what's listed under Done → "From 3".
   Linux build machine.
 - Plain Linux: a systemd service.
 - Listens on one address and port (e.g. `192.168.10.200:9090`); binding it
-  to the WireGuard address keeps it off the internet. HTTPS through a reverse
-  proxy with a real certificate is recommended even inside the VPN.
+  to the WireGuard address keeps it off the internet. HTTPS by default with
+  the Hub's own certificate (0.8.7), the admin's own, or a reverse proxy in
+  front.
 - Whether the Hub is reachable from the internet is the admin's choice, so
   the Hub is built as if it were: limits per address on pairing and
   sign-in, secure cookies, a proper sign-out at the provider, and a warning
@@ -674,6 +703,18 @@ that no file in the scan accounts for, on every platform.
 - **Android 17's local network permission**: an app targeting API 37 needs
   `ACCESS_LOCAL_NETWORK`, asked at run time, to reach a Hub on the LAN. Apps
   targeting 36 or lower get LAN access through `INTERNET`.
+- **Apple refuses TLS server certificates valid for more than 825 days**,
+  without the name in the subject alternative names, or without server
+  authentication in the extended key usage, on macOS and iOS alike. The
+  Hub's own certificate has to renew itself.
+- **Installing the Hub's authority in a browser** makes it trusted for
+  every site unless the browser honors its name constraints, and Chrome on
+  Linux didn't for imported roots as of 2023. The authority is named for
+  the Hub's address only, and whether each browser enforces that needs
+  testing before the dashboard suggests installing it.
+- **The first visit in a browser** to a generated certificate is trust on
+  first use: an attacker on the network at that moment could stand in.
+  Devices don't have that gap, since the pairing link carries the Hub's key.
 - **Windows Storage Sense** already makes OneDrive files online-only after
   30 unopened days on C:. The Nextcloud work is worth it for verified copies
   and other drives, not for that toggle.
@@ -700,7 +741,8 @@ that no file in the scan accounts for, on every platform.
   2e (0.6). The Hub (phase 3) is in 0.7, the Unraid plugin (phase 4), with
   the quarantine and the approver in its settings page, in 0.8.
 - After 0.8.3 (decided 2026-10-12): 0.8.4 fixes, 0.8.5 the fixes found
-  testing 0.8.4 on a real server and phone, 0.8.6 the rename to FreeSize, 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
+  testing 0.8.4 on a real server and phone, 0.8.6 the rename to FreeSize,
+  0.8.7 HTTPS by default (added 2026-10-13), 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
   0.10 the junk cleaner (phase 6), 0.11 where the space goes (phase 8) and
   balancing, 0.12 Nextcloud read-only, 0.13 Nextcloud actions, 0.14 the
   phone in the background. See Next releases.
@@ -713,6 +755,10 @@ that no file in the scan accounts for, on every platform.
   read-only through WebDAV.
 - The Hub is built as if reachable from the internet; whether it is stays
   the admin's choice.
+- The Hub serves HTTPS by default with a certificate it makes itself;
+  devices trust it because the pairing link vouches for the Hub. An admin's
+  own certificate (environment variables) or a reverse proxy replace it
+  (decided 2026-10-13).
 - The Android app gets one small Java Worker class for background work; the
   logic stays in Rust.
 - Screenless devices use a designated approver who can only be changed on
