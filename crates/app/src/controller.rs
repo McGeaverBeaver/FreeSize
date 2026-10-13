@@ -31,7 +31,7 @@ use crate::elevate;
 use crate::filecleanup::{self, Duplicates, Hidden, Similar};
 use crate::growth::{self, DriveLog};
 use crate::hidden;
-use crate::home::{self, AppsState, sheet};
+use crate::home::{self, AppsState, Section, sheet};
 use crate::hub::{self, Hub};
 use crate::insights::{self, View};
 use crate::junk;
@@ -45,7 +45,7 @@ use crate::similar;
 use crate::updater::{self, Updater};
 use crate::{
     AppWindow, BasketRow, BubbleItem, CleanRow, CleanSection, Crumb, FileRow, HomeRow, JunkRow,
-    MapRect, PhotoSet, SheetAction, TypeRow, actions, locations,
+    MapRect, NavItem, PhotoSet, SheetAction, TypeRow, actions, locations,
 };
 
 /// The Export sheet's buttons.
@@ -231,6 +231,8 @@ pub struct Controller {
     rebuildable: HashSet<NodeId>,
     /// Which app or game a folder belongs to, for its icon.
     owners: Owners,
+    /// The place shown: Home, Clean, Settings, …
+    section: Section,
     /// The app group shown as bubbles, zoomed into an app if set.
     app_bubbles: bool,
     app_zoom: Option<String>,
@@ -352,6 +354,24 @@ macro_rules! on {
     }};
 }
 
+/// The text of the button beside Scan, for a scan with more rights; empty
+/// where there's none (phones, or this window already has them).
+fn admin_label(elevated: bool) -> String {
+    if elevated || cfg!(target_os = "android") {
+        return String::new();
+    }
+    let offer = elevate::offer(
+        freesize_core::access::rights(),
+        &locations::default_path(),
+        false,
+    );
+    if offer.action == elevate::SCAN_AS_ADMIN && cfg!(windows) {
+        "Run as administrator".into()
+    } else {
+        offer.action
+    }
+}
+
 /// The phone's model or the computer's name, for the Hub.
 fn device_name() -> String {
     #[cfg(target_os = "android")]
@@ -389,6 +409,9 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>, transport: SharedTransport) ->
 
 /// Creates the controller and connects it to `ui`. Keep the returned value
 /// alive for as long as the window runs.
+/// The status line while nothing is scanned.
+const IDLE_HINT: &str = "Pick a drive or folder, or type a path and press Scan.";
+
 pub fn install(
     ui: &AppWindow,
     initial: Option<PathBuf>,
@@ -417,6 +440,7 @@ pub fn install(
             kinds: Vec::new(),
             rebuildable: HashSet::new(),
             owners: Owners::default(),
+            section: Section::Home,
             app_bubbles: false,
             app_zoom: None,
             app_bubble_size: (0.0, 0.0),
@@ -494,7 +518,8 @@ pub fn install(
     ui.set_can_browse(actions::CAN_BROWSE);
     ui.set_can_reveal(actions::CAN_REVEAL);
     ui.set_delete_label(actions::DELETE_LABEL.into());
-    ui.set_status("Pick a drive or folder, or type a path and press Scan.".into());
+    ui.set_status(IDLE_HINT.into());
+    ui.set_admin_label(admin_label(elevated).into());
     if elevated {
         ui.set_window_title("FreeSize (administrator)".into());
         ui.set_status(
@@ -545,6 +570,11 @@ pub fn install(
     on!(ui, on_open_app, weak, |c, package| c
         .open_app(package.as_str()));
     on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
+    on!(ui, on_home_choice, weak, |c, key, index| c
+        .home_choice(key.as_str(), index));
+    on!(ui, on_section_picked, weak, |c, key| c
+        .show_section(Section::from_key(key.as_str())));
+    on!(ui, on_scan_as_admin, weak, |c| c.scan_as_admin());
     on!(ui, on_hub_connect, weak, |c| c.hub_connect());
     on!(ui, on_hub_confirm, weak, |c| c.hub_confirm());
     on!(ui, on_hub_connect_cancel, weak, |c| c.hub_connect_cancel());
@@ -1123,6 +1153,12 @@ impl Controller {
         ui.set_scan_current(SharedString::new());
         ui.set_status("Scanning…".into());
         ui.set_scanning(true);
+        // A scan started from anywhere (an app's files, old screenshots)
+        // shows on Home.
+        if self.section != Section::Home {
+            self.section = Section::Home;
+            self.refresh_home();
+        }
         self.ensure_ticking();
     }
 
@@ -1199,6 +1235,8 @@ impl Controller {
         self.rows.rebuild(tree, self.mode, &[tree.root()]);
         ui.set_tree_scroll(0.0);
         ui.set_has_tree(true);
+        self.section = Section::Home;
+        ui.set_section(self.section.key().into());
         self.refresh_focus_views();
         self.refresh_selection();
         self.refresh_status();
@@ -1228,7 +1266,7 @@ impl Controller {
         self.earlier.clear();
         self.compare = None;
         ui.set_has_tree(false);
-        ui.set_status("Pick a drive or folder, or type a path and press Scan.".into());
+        ui.set_status(IDLE_HINT.into());
         // Free space and app sizes may have changed since the last visit.
         if matches!(self.apps, AppsState::Ready(_) | AppsState::Failed(_)) {
             self.start_apps_job();
@@ -1241,10 +1279,15 @@ impl Controller {
     /// the list keeps its scroll position and the measured heights of rows
     /// that stay the same.
     fn refresh_home(&self) {
-        // A page lists measured apps; until they are, the home screen shows.
-        let page = self.page.filter(|_| self.report().is_some());
+        // A page lists measured apps; until they are, the group list shows.
+        let page = self
+            .page
+            .filter(|_| self.report().is_some() && self.section == Section::Apps);
+        let now = apps::now() as i64;
         if let Some(ui) = self.ui() {
             ui.set_home_page_open(page.is_some());
+            ui.set_section(self.section.key().into());
+            ui.set_nav_items(ModelRc::new(VecModel::from(self.nav_items())));
         }
         let card = home::HubCard {
             hub: self.hub.state().map(|s| s.hub_name),
@@ -1252,6 +1295,7 @@ impl Controller {
             waiting: self.prompts.len(),
         };
         let options = home::Options {
+            section: self.section,
             page,
             refreshing: self.apps_job.is_some() && matches!(self.apps, AppsState::Ready(_)),
             storage_access: storage_access(),
@@ -1264,14 +1308,158 @@ impl Controller {
         };
         let mut rows = home::rows(&self.apps, options);
         if page.is_none() {
-            if !cfg!(target_os = "android") {
-                rows.extend(self.junk.home_rows(apps::now() as i64));
+            if self.section == Section::Clean && !cfg!(target_os = "android") {
+                rows.extend(self.junk.home_rows(now));
             }
-            rows.extend(quarantine::home_rows(&self.quarantine));
-            rows.extend(self.updater.rows(apps::now() as i64));
+            if self.section.has_quarantine() {
+                rows.extend(quarantine::section_rows(
+                    &self.quarantine,
+                    now,
+                    self.section == Section::Quarantine,
+                ));
+            }
+            if self.section == Section::Settings {
+                if !cfg!(target_os = "android") {
+                    rows.insert(0, home::heading("Clean junk", "", None));
+                    rows.insert(1, self.junk.settings_row());
+                }
+                rows.extend(self.updater.rows(now));
+            }
         }
         sync_model(&self.home_rows, rows);
         self.update_app_bubbles(false);
+    }
+
+    /// The sidebar's or tab bar's places, with counts worth seeing.
+    fn nav_items(&self) -> Vec<NavItem> {
+        let waiting = if self.prompts.is_empty() {
+            String::new()
+        } else {
+            self.prompts.len().to_string()
+        };
+        let quarantined: usize = self.quarantine.iter().map(|b| b.items.len()).sum();
+        Section::all()
+            .iter()
+            .map(|&section| NavItem {
+                key: section.key().into(),
+                label: section.label().into(),
+                badge: if section.has_hub() {
+                    waiting.clone()
+                } else if section == Section::Quarantine && quarantined > 0 {
+                    quarantined.to_string()
+                } else {
+                    String::new()
+                }
+                .into(),
+            })
+            .collect()
+    }
+
+    /// Shows one of the app's places, from its top.
+    fn show_section(&mut self, section: Section) {
+        if section == self.section {
+            // Tapping the current place again closes a group's page.
+            if self.page.is_some() {
+                self.page = None;
+                self.app_bubbles = false;
+                self.app_zoom = None;
+            } else if let Some(ui) = self.ui() {
+                ui.set_home_scroll(0.0);
+            }
+            self.refresh_home();
+            return;
+        }
+        self.section = section;
+        if let Some(ui) = self.ui() {
+            ui.set_home_scroll(0.0);
+            // The hint about scanning belongs on Home only.
+            if section != Section::Home && ui.get_status() == IDLE_HINT {
+                ui.set_status("".into());
+            } else if section == Section::Home && ui.get_status().is_empty() {
+                ui.set_status(IDLE_HINT.into());
+            }
+        }
+        self.refresh_home();
+    }
+
+    /// A setting's drop-down in Settings.
+    fn home_choice(&mut self, key: &str, index: i32) {
+        let index = usize::try_from(index).unwrap_or(0);
+        match key {
+            junk::REMIND => {
+                let Some(remind) = junk::REMIND_CHOICES.get(index) else {
+                    return;
+                };
+                if self.junk.settings.remind != *remind {
+                    self.junk.settings.remind = (*remind).into();
+                    self.junk.save();
+                    self.junk_remind();
+                }
+            }
+            updater::MODE => {
+                self.updater.set_mode(index, apps::now() as i64);
+                self.ensure_ticking();
+            }
+            _ => return,
+        }
+        self.refresh_home();
+    }
+
+    /// The button beside Scan: the path in the box scanned with more
+    /// rights. On Windows that's a new window as administrator, and this
+    /// one closes; elsewhere a scan in the background that opens here.
+    fn scan_as_admin(&mut self) {
+        if self.exporting.is_some() || self.scan.is_some() {
+            return;
+        }
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        let typed = ui.get_path().trim().to_string();
+        let root = if typed.is_empty() {
+            locations::default_path()
+        } else {
+            PathBuf::from(typed)
+        };
+        let offer = elevate::offer(freesize_core::access::rights(), &root, false);
+        if offer.action.is_empty() {
+            return;
+        }
+        match elevate::start(&offer.action, &root) {
+            Ok(elevate::Started::NewWindow) => self.leave_for_admin_window(),
+            Ok(elevate::Started::Exporting(exporting)) => {
+                self.set_status(&format!(
+                    "Scanning {} with more rights in the background; it opens here when done.",
+                    root.display()
+                ));
+                self.exporting = Some(exporting);
+                self.ensure_ticking();
+            }
+            Ok(elevate::Started::Opened) => {
+                self.set_status("Turn on Full Disk Access for FreeSize there, then scan again.");
+            }
+            Err(reason) => self.set_status(&format!("Couldn't scan with more rights: {reason}.")),
+        }
+    }
+
+    /// The window as administrator scans in this one's place; two windows
+    /// of the same scan would only confuse. This one stays open while it's
+    /// still moving or deleting something, and closes once that's done.
+    fn leave_for_admin_window(&mut self) {
+        let busy = self.basket_job.is_some()
+            || self.put_back_job.is_some()
+            || self.quarantine_job.is_some()
+            || self.cleanup_job.is_some()
+            || self.junk_clean_job.is_some()
+            || self.apk_job.is_some();
+        if busy {
+            self.set_status(
+                "A FreeSize window as administrator is opening. Close this one once it's \
+                 done with what it's doing.",
+            );
+        } else {
+            let _ = slint::quit_event_loop();
+        }
     }
 
     fn app_bubbles_resized(&mut self, width: f32, height: f32) {
@@ -1412,16 +1600,6 @@ impl Controller {
     fn home_action(&mut self, id: &str) {
         let now = apps::now() as i64;
         match id {
-            updater::TOGGLE => {
-                self.updater.toggle(now);
-                self.ensure_ticking();
-                self.refresh_home();
-            }
-            updater::CHANNEL => {
-                self.updater.switch_channel(now);
-                self.ensure_ticking();
-                self.refresh_home();
-            }
             updater::CHECK => {
                 self.updater.check(now);
                 self.ensure_ticking();
@@ -1439,6 +1617,12 @@ impl Controller {
                 }
             }
             quarantine::EMPTY_ALL_ACTION => self.confirm_empty(None),
+            id if id.starts_with(quarantine::RESTORE_PREFIX) => {
+                self.restore_batch(id[quarantine::RESTORE_PREFIX.len()..].to_string());
+            }
+            id if id.starts_with(quarantine::EMPTY_PREFIX) => {
+                self.confirm_empty(Some(vec![id[quarantine::EMPTY_PREFIX.len()..].to_string()]));
+            }
             junk::FIND => {
                 self.junk_open(true);
                 self.junk_find(false);
@@ -1448,12 +1632,6 @@ impl Controller {
                 if !self.junk.looked {
                     self.junk_find(false);
                 }
-            }
-            junk::REMIND => {
-                self.junk.settings.remind = self.junk.settings.next_remind().into();
-                self.junk.save();
-                self.refresh_home();
-                self.junk_remind();
             }
             home::GRANT_USAGE_ACCESS => {
                 apps::request_access();
@@ -3198,9 +3376,7 @@ impl Controller {
             return;
         }
         match elevate::start(&offer.action, &root) {
-            Ok(elevate::Started::NewWindow) => {
-                self.set_status("A FreeSize window as administrator is opening for this scan.");
-            }
+            Ok(elevate::Started::NewWindow) => self.leave_for_admin_window(),
             Ok(elevate::Started::Exporting(exporting)) => {
                 self.set_status(&format!(
                     "Scanning {} with more rights in the background; it opens here when done.",

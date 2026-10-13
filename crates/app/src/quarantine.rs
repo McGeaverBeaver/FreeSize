@@ -216,29 +216,94 @@ pub fn confirm_text(batches: &[QuarantineBatch]) -> String {
     text
 }
 
-/// The home screen's Quarantine section: nothing when it's empty.
-pub fn home_rows(batches: &[QuarantineBatch]) -> Vec<crate::HomeRow> {
+/// The Quarantine place: what deleting set aside, newest first, each with
+/// Put back and Empty. On phones it's part of Clean, and only while it
+/// holds something.
+pub fn section_rows(batches: &[QuarantineBatch], now: i64, always: bool) -> Vec<crate::HomeRow> {
+    use crate::home::{heading, notice, notice2};
     if batches.is_empty() {
-        return Vec::new();
+        if !always {
+            return Vec::new();
+        }
+        return vec![
+            heading(HEADING, "", None),
+            notice(
+                "Nothing in the quarantine",
+                "What you delete in FreeSize waits here first, so you can put it back. Its \
+                 space is freed only when you empty it, and never on its own.",
+                None,
+            ),
+        ];
     }
     let items: usize = batches.iter().map(|b| b.items.len()).sum();
-    vec![
-        crate::home::heading(HEADING, "", None),
-        crate::home::notice(
-            &format!(
-                "{} set aside by deleting ({})",
-                if items == 1 {
-                    "One item".to_string()
-                } else {
-                    format!("{items} items")
-                },
-                format_size(total(batches))
-            ),
-            "Deleted files wait here until you empty the quarantine, which frees their space. \
-             A scan's Clean up tab lists each batch, to put back or empty on its own.",
-            Some((EMPTY_ALL, EMPTY_ALL_ACTION)),
+    let mut rows = vec![heading(
+        HEADING,
+        &format!(
+            "{} waiting, {}. Put back returns things where they were; Empty frees their \
+                 space for good.",
+            if items == 1 {
+                "One item".to_string()
+            } else {
+                format!("{items} items")
+            },
+            format_size(total(batches))
         ),
-    ]
+        Some((EMPTY_ALL, EMPTY_ALL_ACTION)),
+    )];
+    let mut newest: Vec<&QuarantineBatch> = batches.iter().collect();
+    newest.sort_by_key(|b| std::cmp::Reverse(b.when));
+    rows.extend(newest.into_iter().map(|batch| {
+        let mut names: Vec<String> = batch
+            .items
+            .iter()
+            .take(3)
+            .map(|i| file_name(&i.original))
+            .collect();
+        if batch.items.len() > 3 {
+            names.push(format!("{} more", batch.items.len() - 3));
+        }
+        let when = if now - batch.when < 60 {
+            "Just now".to_string()
+        } else {
+            capitalize(&ago(now.max(0) as u64, batch.when.max(0) as u64))
+        };
+        let who = if batch.by.is_empty() {
+            String::new()
+        } else {
+            format!(" · asked for by {} from the Hub", batch.by)
+        };
+        let reason = if batch.reason.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", batch.reason)
+        };
+        let from = batch
+            .items
+            .first()
+            .and_then(|i| Path::new(&i.original).parent())
+            .map(|p| format!("\nFrom {}", p.display()))
+            .unwrap_or_default();
+        notice2(
+            &names.join(", "),
+            &format!("{} · {when}{who}{reason}{from}", format_size(batch.bytes)),
+            ("Put back", &format!("{RESTORE_PREFIX}{}", batch.id)),
+            ("Empty…", &format!("{EMPTY_PREFIX}{}", batch.id)),
+        )
+    }));
+    rows
+}
+
+fn file_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }
 
 /// The Clean up tab's Quarantine section: nothing when it's empty.

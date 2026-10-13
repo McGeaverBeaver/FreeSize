@@ -172,7 +172,7 @@ export struct TypeRow {
 export struct HomeRow {
     /// 0 drive or folder, 1 section heading, 2 storage breakdown, 3 app,
     /// 4 notice, 5 app group, 6 storage chart, 7 app bubbles, 8 the header
-    /// of a group's page.
+    /// of a group's page, 9 a setting with a few choices.
     kind: int,
     title: string,
     subtitle: string,
@@ -183,6 +183,12 @@ export struct HomeRow {
     key: string,
     /// Button text for headings and notices; empty for none.
     action: string,
+    /// A notice's second, plain button and its action id.
+    action2: string,
+    key2: string,
+    /// Choice rows (9): the options, and which one is on.
+    choices: [string],
+    chosen: int,
     /// Apps: where it came from and when it was last used. Drives: how
     /// fast they fill up.
     tags: string,
@@ -204,6 +210,14 @@ export struct HomeRow {
     chart-apps: string,
     chart-start: string,
     chart-end: string,
+}
+
+/// One place in the sidebar (wide windows) or the tab bar (phones).
+export struct NavItem {
+    key: string,
+    label: string,
+    /// A count to show beside it, or empty.
+    badge: string,
 }
 
 global Theme {
@@ -2000,6 +2014,7 @@ component HomePane inherits Rectangle {
     callback action(string);
     callback bubble(string);
     callback bubbles-resized(length, length);
+    callback choose-option(string, int);
 
     // A plain scrolling layout rather than a ListView: the list view keeps
     // a reused row's old height when its wrapped text changes, so rows would
@@ -2457,11 +2472,55 @@ component HomePane inherits Rectangle {
                             }
                             if row.action != "": HorizontalLayout {
                                 alignment: start;
+                                spacing: 8px;
                                 Button {
                                     text: row.action;
                                     primary: true;
                                     clicked => {
                                         root.action(row.key);
+                                    }
+                                }
+
+                                if row.action2 != "": Button {
+                                    text: row.action2;
+                                    clicked => {
+                                        root.action(row.key2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if row.kind == 9: Card {
+                        HorizontalLayout {
+                            padding: 12px;
+                            spacing: 12px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 4px;
+                                Text {
+                                    text: row.title;
+                                    font-weight: 600;
+                                    wrap: word-wrap;
+                                }
+
+                                if row.subtitle != "": Text {
+                                    text: row.subtitle;
+                                    font-size: 12px;
+                                    color: Theme.dim;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                ComboBox {
+                                    min-width: 150px;
+                                    model: row.choices;
+                                    current-index: row.chosen;
+                                    selected => {
+                                        root.choose-option(row.key, self.current-index);
                                     }
                                 }
                             }
@@ -2523,6 +2582,122 @@ component ScanningPane inherits Rectangle {
                 text: "Cancel";
                 clicked => {
                     root.cancel();
+                }
+            }
+        }
+    }
+}
+
+/// The places of the app, down the left of a wide window.
+component Sidebar inherits Rectangle {
+    in property <[NavItem]> items;
+    in property <string> current;
+    in property <length> top-inset;
+    callback picked(string);
+
+    width: 188px;
+    background: Palette.alternate-background;
+    VerticalLayout {
+        padding: 10px;
+        padding-top: 14px + root.top-inset;
+        spacing: 2px;
+        alignment: start;
+        Text {
+            text: "FreeSize";
+            font-size: 18px;
+            font-weight: 700;
+            height: 40px;
+            vertical-alignment: center;
+            x: 10px;
+        }
+
+        for item in root.items: Rectangle {
+            height: 40px;
+            border-radius: 8px;
+            background: item.key == root.current ? Palette.accent-background.transparentize(80%) : touch.pressed ? Theme.pressed : touch.has-hover ? Theme.pressed.transparentize(50%) : transparent;
+            touch := TouchArea {
+                clicked => {
+                    root.picked(item.key);
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 10px;
+                spacing: 8px;
+                Text {
+                    text: item.label;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    font-weight: item.key == root.current ? 600 : 400;
+                    color: item.key == root.current ? Palette.accent-background : Palette.foreground;
+                    overflow: elide;
+                }
+
+                if item.badge != "": VerticalLayout {
+                    alignment: center;
+                    Badge {
+                        text: item.badge;
+                        accent: true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The places of the app, along the bottom of a phone's screen.
+component BottomBar inherits Rectangle {
+    in property <[NavItem]> items;
+    in property <string> current;
+    in property <length> bottom-inset;
+    callback picked(string);
+
+    height: 56px + root.bottom-inset;
+    background: Palette.alternate-background;
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Palette.border;
+    }
+
+    HorizontalLayout {
+        padding-bottom: root.bottom-inset;
+        for item in root.items: Rectangle {
+            horizontal-stretch: 1;
+            background: touch.pressed ? Theme.pressed : transparent;
+            touch := TouchArea {
+                clicked => {
+                    root.picked(item.key);
+                }
+            }
+
+            Rectangle {
+                y: 6px;
+                width: min(parent.width - 8px, 72px);
+                height: 4px;
+                border-radius: 2px;
+                background: item.key == root.current ? Palette.accent-background : transparent;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: item.label;
+                    horizontal-alignment: center;
+                    font-size: 13px;
+                    font-weight: item.key == root.current ? 600 : 400;
+                    color: item.key == root.current ? Palette.accent-background : Palette.foreground;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: item.badge;
+                    horizontal-alignment: center;
+                    font-size: 10px;
+                    color: Theme.dim;
+                    height: item.badge != "" ? self.preferred-height : 0px;
                 }
             }
         }
@@ -2630,6 +2805,14 @@ export component AppWindow inherits Window {
     in-out property <length> tree-scroll;
     /// A group of apps is open as its own page on the home screen.
     in property <bool> home-page-open;
+    /// The places in the sidebar or tab bar, and the one shown.
+    in property <[NavItem]> nav-items;
+    in property <string> section: "home";
+    /// The button beside Scan for a scan with more rights; empty for none.
+    in property <string> admin-label;
+    /// A scan, or its results, fill the window (the drive list doesn't).
+    out property <bool> in-scan: root.section == "home" && (root.scanning || root.has-tree);
+    out property <bool> bottom-bar: root.compact && !root.in-scan;
     in-out property <length> home-scroll;
 
     // Set from `changed width` rather than bound to it: a binding would make
@@ -2698,6 +2881,9 @@ export component AppWindow inherits Window {
     callback hub-connect();
     callback hub-confirm();
     callback hub-connect-cancel();
+    callback section-picked(string);
+    callback home-choice(string, int);
+    callback scan-as-admin();
     /// -1 to deny, 0 to approve once, else minutes of the grant.
     callback approval-answer(int);
     callback approval-later();
@@ -2737,33 +2923,56 @@ export component AppWindow inherits Window {
                 root.junk-close();
                 return accept;
             }
-            if (root.scanning) {
+            if (root.scanning && root.section == "home") {
                 root.cancel-scan();
                 return accept;
             }
-            if (root.has-tree && root.can-go-up) {
+            if (root.in-scan && root.can-go-up) {
                 root.go-up();
                 return accept;
             }
-            if (root.has-tree && event.text == Key.Back) {
+            if (root.in-scan && event.text == Key.Back) {
                 root.show-locations();
                 return accept;
             }
-            if (!root.has-tree && root.home-page-open) {
+            if (root.home-page-open) {
                 // `home::BACK`
                 root.home-action("back");
+                return accept;
+            }
+            if (root.section != "home" && event.text == Key.Back) {
+                root.section-picked("home");
                 return accept;
             }
             reject
         }
 
-        VerticalLayout {
+        HorizontalLayout {
             width: parent.width;
             height: parent.height;
             padding-left: root.safe-area-insets.left;
             padding-right: root.safe-area-insets.right;
-            // Toolbar
-            Rectangle {
+            if !root.compact: Sidebar {
+                items: root.nav-items;
+                current: root.section;
+                top-inset: root.safe-area-insets.top;
+                picked(key) => {
+                    root.section-picked(key);
+                }
+            }
+            if !root.compact: Rectangle {
+                width: 1px;
+                background: Palette.border;
+            }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            // Room for the status bar where the toolbar isn't shown.
+            if root.section != "home": Rectangle {
+                height: root.safe-area-insets.top;
+            }
+            // Toolbar, where drives are scanned.
+            if root.section == "home": Rectangle {
                 background: Palette.alternate-background;
                 HorizontalLayout {
                     padding: 8px;
@@ -2803,6 +3012,26 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                    if root.admin-label != "" && !root.scanning && !root.compact: Button {
+                        text: root.admin-label;
+                        clicked => {
+                            root.scan-as-admin();
+                        }
+                    }
+                }
+            }
+            if root.section == "home" && root.admin-label != "" && !root.scanning && root.compact: Rectangle {
+                background: Palette.alternate-background;
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-top: 0;
+                    alignment: end;
+                    Button {
+                        text: root.admin-label;
+                        clicked => {
+                            root.scan-as-admin();
+                        }
+                    }
                 }
             }
 
@@ -2830,7 +3059,7 @@ export component AppWindow inherits Window {
             }
 
             // Status line
-            HorizontalLayout {
+            if root.in-scan || root.section == "home" || root.status != "": HorizontalLayout {
                 padding-left: 10px;
                 padding-right: 8px;
                 padding-top: 4px;
@@ -2845,13 +3074,13 @@ export component AppWindow inherits Window {
                     font-size: 12px;
                 }
 
-                if root.has-tree: Button {
+                if root.in-scan && root.has-tree: Button {
                     text: "Export";
                     clicked => {
                         root.export();
                     }
                 }
-                if root.has-tree: ComboBox {
+                if root.in-scan && root.has-tree: ComboBox {
                     width: 150px;
                     model: ["Size on disk", "File size"];
                     current-index: 0;
@@ -2868,7 +3097,7 @@ export component AppWindow inherits Window {
             }
 
             // Content
-            if root.scanning: ScanningPane {
+            if root.scanning && root.section == "home": ScanningPane {
                 vertical-stretch: 1;
                 title: root.scan-title;
                 counts: root.scan-counts;
@@ -2877,7 +3106,7 @@ export component AppWindow inherits Window {
                     root.cancel-scan();
                 }
             }
-            if !root.scanning && !root.has-tree: HomePane {
+            if !root.in-scan: HomePane {
                 vertical-stretch: 1;
                 rows: root.home-rows;
                 scroll-y <=> root.home-scroll;
@@ -2888,6 +3117,9 @@ export component AppWindow inherits Window {
                 }
                 bubbles-resized(w, h) => {
                     root.app-bubbles-resized(w, h);
+                }
+                choose-option(key, index) => {
+                    root.home-choice(key, index);
                 }
                 choose(path) => {
                     root.path = path;
@@ -2900,7 +3132,7 @@ export component AppWindow inherits Window {
                     root.home-action(id);
                 }
             }
-            if !root.scanning && root.has-tree && !root.compact: HorizontalLayout {
+            if root.in-scan && !root.scanning && !root.compact: HorizontalLayout {
                 vertical-stretch: 1;
                 TreePane {
                     horizontal-stretch: 45;
@@ -3059,7 +3291,7 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            if !root.scanning && root.has-tree && root.compact: TabWidget {
+            if root.in-scan && !root.scanning && root.compact: TabWidget {
                 vertical-stretch: 1;
                 current-index <=> root.compact-tab;
                 Tab {
@@ -3214,7 +3446,7 @@ export component AppWindow inherits Window {
             }
 
             // Basket bar: what's collected, and the last move to put back.
-            if !root.scanning && root.has-tree && (root.basket-count > 0 || root.put-back-label != ""): Rectangle {
+            if root.in-scan && !root.scanning && (root.basket-count > 0 || root.put-back-label != ""): Rectangle {
                 background: Palette.accent-background.transparentize(85%);
                 HorizontalLayout {
                     padding: 6px;
@@ -3245,7 +3477,7 @@ export component AppWindow inherits Window {
             }
 
             // Selection bar
-            if !root.scanning && root.has-tree: Rectangle {
+            if root.in-scan && !root.scanning: Rectangle {
                 background: Palette.alternate-background;
                 HorizontalLayout {
                     padding: 8px;
@@ -3308,10 +3540,21 @@ export component AppWindow inherits Window {
                 }
             }
 
-            // Keep content above the gesture bar when there is no selection bar.
-            if root.scanning || !root.has-tree: Rectangle {
+            if root.bottom-bar: BottomBar {
+                items: root.nav-items;
+                current: root.section;
+                bottom-inset: root.safe-area-insets.bottom;
+                picked(key) => {
+                    root.section-picked(key);
+                }
+            }
+
+            // Keep content above the gesture bar when there is no selection
+            // bar or tab bar.
+            if !root.bottom-bar && (root.scanning || !root.in-scan): Rectangle {
                 height: root.safe-area-insets.bottom;
             }
+        }
         }
     }
 

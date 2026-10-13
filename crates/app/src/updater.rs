@@ -17,8 +17,8 @@ use crate::HomeRow;
 use crate::home::{heading, notice};
 
 /// Action ids of the Updates section's buttons.
-pub const TOGGLE: &str = "update-toggle";
-pub const CHANNEL: &str = "update-channel";
+/// Settings' choice: off, releases, or pre-releases too.
+pub const MODE: &str = "update-mode";
 pub const CHECK: &str = "update-check";
 pub const INSTALL: &str = "update-install";
 pub const NOTES: &str = "update-notes";
@@ -121,28 +121,27 @@ impl Updater {
         self.checking.is_some() || self.installing.is_some()
     }
 
-    /// Turns the check on or off; on starts one.
-    pub fn toggle(&mut self, now: i64) {
-        self.settings.check = !self.settings.check;
+    /// Settings' choice: 0 off, 1 releases, 2 pre-releases too. Turning the
+    /// check on, or changing what it follows, checks at once.
+    pub fn set_mode(&mut self, mode: usize, now: i64) {
+        let check = mode > 0;
+        let channel = if mode == 2 {
+            Channel::Beta
+        } else {
+            Channel::Stable
+        };
+        if check == self.settings.check && (!check || channel == self.settings.channel()) {
+            return;
+        }
+        self.settings.check = check;
+        if check {
+            self.settings.channel = channel.id().to_string();
+        }
         self.save();
-        if self.settings.check {
+        if check {
             self.check(now);
         } else if matches!(self.stage, Stage::Failed(_)) {
             self.stage = Stage::Idle;
-        }
-    }
-
-    /// Switches between stable releases and pre-releases too, and checks.
-    pub fn switch_channel(&mut self, now: i64) {
-        self.settings.channel = match self.settings.channel() {
-            Channel::Stable => Channel::Beta,
-            Channel::Beta => Channel::Stable,
-        }
-        .id()
-        .to_string();
-        self.save();
-        if self.settings.check {
-            self.check(now);
         }
     }
 
@@ -266,18 +265,21 @@ impl Updater {
     /// The home screen's Updates section.
     pub fn rows(&self, now: i64) -> Vec<HomeRow> {
         let settings = &self.settings;
-        let mut rows = vec![heading(
-            "Updates",
-            &format!("FreeSize {}", update::CURRENT),
-            Some((
-                if settings.check {
-                    "Turn off"
-                } else {
-                    "Turn on"
+        let mut rows = vec![
+            heading("Updates", &format!("FreeSize {}", update::CURRENT), None),
+            crate::home::choice(
+                "Check for updates",
+                "FreeSize asks GitHub once a day. Pre-releases are for the people who help \
+                 test; they're signed like any release.",
+                MODE,
+                &["Off", "Releases", "Pre-releases too"],
+                match (settings.check, settings.channel()) {
+                    (false, _) => 0,
+                    (true, Channel::Beta) => 2,
+                    (true, _) => 1,
                 },
-                TOGGLE,
-            )),
-        )];
+            ),
+        ];
         let install_label = if cfg!(target_os = "android") {
             "Install"
         } else {
@@ -349,35 +351,8 @@ impl Updater {
                         },
                         Some(("Check now", CHECK)),
                     ));
-                } else {
-                    rows.push(notice(
-                        "FreeSize doesn't check for updates",
-                        "Turn it on and FreeSize asks GitHub once a day whether a newer release is \
-                         out. Nothing is installed without your say-so. A FreeSize Hub with its \
-                         own check on tells this device too.",
-                        None,
-                    ));
                 }
             }
-        }
-        if settings.check {
-            let beta = settings.channel() == Channel::Beta;
-            rows.push(notice(
-                if beta {
-                    "Following pre-releases too"
-                } else {
-                    "Following stable releases"
-                },
-                "Pre-releases are for the people who help test; they're signed like any release.",
-                Some((
-                    if beta {
-                        "Stable only"
-                    } else {
-                        "Pre-releases too"
-                    },
-                    CHANNEL,
-                )),
-            ));
         }
         rows
     }
@@ -488,9 +463,9 @@ mod tests {
         assert!(!u.settings.check);
         assert!(!u.due(1_000_000));
         let rows = u.rows(1_000_000);
-        assert_eq!(rows[0].action.as_str(), "Turn on");
-        assert!(rows[1].title.contains("doesn't check"));
-        u.toggle(1_000_000);
+        assert_eq!(rows[1].chosen, 0);
+        assert_eq!(rows.len(), 2);
+        u.set_mode(1, 1_000_000);
         assert!(u.settings.check && u.settings.checked == 1_000_000);
         // Reloaded from disk.
         let again = updater(&dir);
@@ -506,9 +481,13 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(matches!(u.stage, Stage::Failed(_)), "{:?}", u.stage);
-        assert_eq!(u.rows(1_000_000)[1].action.as_str(), "Try again");
-        u.switch_channel(1_000_001);
+        assert_eq!(u.rows(1_000_000)[1].chosen, 1);
+        assert_eq!(u.rows(1_000_000)[2].action.as_str(), "Try again");
+        u.set_mode(2, 1_000_001);
         assert_eq!(u.settings.channel(), Channel::Beta);
+        assert_eq!(u.rows(1_000_001)[1].chosen, 2);
+        u.set_mode(0, 1_000_002);
+        assert!(!u.settings.check);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -523,8 +502,8 @@ mod tests {
             url: "u".into(),
         })));
         let rows = u.rows(10);
-        assert!(rows[1].title.contains("Your Hub says FreeSize 0.9.1"));
-        assert_eq!(rows[1].key.as_str(), INSTALL);
+        assert!(rows[2].title.contains("Your Hub says FreeSize 0.9.1"));
+        assert_eq!(rows[2].key.as_str(), INSTALL);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

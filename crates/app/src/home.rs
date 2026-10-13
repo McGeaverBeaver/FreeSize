@@ -1,6 +1,8 @@
-//! Rows of the home screen: drives and folders to scan and, where the
-//! platform reports it, how the device's storage divides up between apps,
-//! the user's files and the system.
+//! Rows of the app's places other than a scan: Home (drives and folders to
+//! scan and, where the platform reports it, how the device's storage
+//! divides up between apps, the user's files and the system), Clean, Apps,
+//! Quarantine, Hub and Settings. The controller adds the rows other modules
+//! make (junk, the quarantine, updates).
 
 use freesize_core::{DiskSpace, disk_space, format_count, format_size};
 
@@ -61,6 +63,92 @@ pub mod sheet {
     pub const HUB_DISCONNECT: &str = "hub-disconnect";
 }
 
+/// The places of the app, in the sidebar on wide windows and the tab bar on
+/// phones.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Section {
+    #[default]
+    Home,
+    Clean,
+    /// Android's app groups.
+    Apps,
+    /// Its own place on desktops; on phones it's part of Clean.
+    Quarantine,
+    /// Its own place on desktops; on phones it's part of Settings.
+    Hub,
+    Settings,
+}
+
+impl Section {
+    /// The places this platform has, in order.
+    pub fn all() -> &'static [Section] {
+        if cfg!(target_os = "android") {
+            &[
+                Section::Home,
+                Section::Clean,
+                Section::Apps,
+                Section::Settings,
+            ]
+        } else {
+            &[
+                Section::Home,
+                Section::Clean,
+                Section::Quarantine,
+                Section::Hub,
+                Section::Settings,
+            ]
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Section::Home => "home",
+            Section::Clean => "clean",
+            Section::Apps => "apps",
+            Section::Quarantine => "quarantine",
+            Section::Hub => "hub",
+            Section::Settings => "settings",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Section::Home => "Home",
+            Section::Clean => "Clean",
+            Section::Apps => "Apps",
+            Section::Quarantine => "Quarantine",
+            Section::Hub => "Hub",
+            Section::Settings => "Settings",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Section {
+        Section::all()
+            .iter()
+            .copied()
+            .find(|s| s.key() == key)
+            .unwrap_or_default()
+    }
+
+    /// Where the Hub's rows go: their own place, or Settings on phones.
+    pub fn has_hub(self) -> bool {
+        match self {
+            Section::Hub => true,
+            Section::Settings => !Section::all().contains(&Section::Hub),
+            _ => false,
+        }
+    }
+
+    /// Where the quarantine's rows go: their own place, or Clean on phones.
+    pub fn has_quarantine(self) -> bool {
+        match self {
+            Section::Quarantine => true,
+            Section::Clean => !Section::all().contains(&Section::Quarantine),
+            _ => false,
+        }
+    }
+}
+
 const DRIVE: i32 = 0;
 const HEADING: i32 = 1;
 const BREAKDOWN: i32 = 2;
@@ -70,6 +158,7 @@ const GROUP: i32 = 5;
 const CHART: i32 = 6;
 const BUBBLES: i32 = 7;
 const PAGE: i32 = 8;
+const CHOICE: i32 = 9;
 
 /// Android keeps roughly this much usage history.
 const USAGE_HISTORY: u64 = 2 * 365 * 24 * 60 * 60;
@@ -93,6 +182,8 @@ pub enum AppsState {
 /// Everything besides the app data that changes the home screen.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Options<'a> {
+    /// The place shown.
+    pub section: Section,
     /// The group of apps opened as its own page; none shows the home screen.
     pub page: Option<View>,
     /// A new measurement is running; the previous one stays on screen.
@@ -124,20 +215,85 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
     if let (Some(view), AppsState::Ready(report)) = (options.page, apps) {
         return page_rows(report, view, options);
     }
-    let mut rows = vec![heading("Choose a drive or folder to analyze", "", None)];
-    rows.extend(
-        locations::list()
-            .iter()
-            .map(|location| drive_row(location, options.drives)),
-    );
-    if let Some(card) = options.hub {
+    let mut rows = Vec::new();
+    match options.section {
+        Section::Home => {
+            rows.push(heading("Choose a drive or folder to analyze", "", None));
+            rows.extend(
+                locations::list()
+                    .iter()
+                    .map(|location| drive_row(location, options.drives)),
+            );
+            // Requests waiting are worth seeing first thing.
+            if let Some(card) = options.hub.filter(|c| c.hub.is_some() && c.waiting > 0) {
+                rows.push(waiting_row(card));
+            }
+            let title = "Apps & system";
+            if let Some(state) = apps_state_rows(apps, title) {
+                rows.extend(state);
+            } else if let AppsState::Ready(report) = apps {
+                if options.refreshing {
+                    rows.push(heading(title, "Updating…", None));
+                } else {
+                    rows.push(heading(title, "", Some(("Refresh", REFRESH_APPS))));
+                }
+                if let Some(space) = disk_space(&locations::default_path()) {
+                    rows.push(breakdown_row(report, space));
+                }
+                rows.extend(chart_row(report));
+            }
+        }
+        Section::Clean => {
+            if let AppsState::Ready(report) = apps {
+                let cards = free_up_rows(report, options);
+                if cards.is_empty() {
+                    rows.push(heading("Free up space", "", None));
+                    rows.push(notice(
+                        "Nothing worth freeing right now",
+                        "No big caches, old installers, trash or leftovers turned up. Scan \
+                         your storage on Home to see what takes the space.",
+                        None,
+                    ));
+                }
+                rows.extend(cards);
+            } else if let Some(state) = apps_state_rows(apps, "Free up space") {
+                rows.extend(state);
+            }
+        }
+        Section::Apps => {
+            if let Some(state) = apps_state_rows(apps, "Your apps") {
+                rows.extend(state);
+            } else if let AppsState::Ready(report) = apps {
+                if options.refreshing {
+                    rows.push(heading("Your apps", "Updating…", None));
+                } else {
+                    rows.push(heading("Your apps", "", Some(("Refresh", REFRESH_APPS))));
+                }
+                rows.extend(
+                    View::ALL
+                        .into_iter()
+                        .filter_map(|view| group_row(report, view)),
+                );
+            }
+        }
+        Section::Quarantine | Section::Hub | Section::Settings => {}
+    }
+    if options.section.has_hub()
+        && let Some(card) = options.hub
+    {
         rows.extend(hub_rows(card));
     }
-    let title = "Apps & system";
+    rows
+}
+
+/// What stands in for the apps while they can't be shown: the way to
+/// Usage access, a measurement running, or what went wrong. None once
+/// they're measured, or where the platform can't.
+fn apps_state_rows(apps: &AppsState, title: &str) -> Option<Vec<HomeRow>> {
+    let mut rows = vec![heading(title, "", None)];
     match apps {
-        AppsState::Unsupported => {}
+        AppsState::Unsupported | AppsState::Ready(_) => return None,
         AppsState::NeedsAccess { asked } => {
-            rows.push(heading(title, "", None));
             rows.push(notice(
                 "See what apps and Android are using",
                 "Most of a phone's storage is app data and the system, which Android hides \
@@ -156,38 +312,48 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
                 ));
             }
         }
-        AppsState::Loading => {
-            rows.push(heading(title, "", None));
-            rows.push(notice("Measuring apps…", "", None));
-        }
-        AppsState::Failed(err) => {
-            rows.push(heading(title, "", None));
-            rows.push(notice(
-                "Couldn't measure apps",
-                err,
-                Some(("Try again", REFRESH_APPS)),
-            ));
-        }
-        AppsState::Ready(report) => {
-            if options.refreshing {
-                rows.push(heading(title, "Updating…", None));
-            } else {
-                rows.push(heading(title, "", Some(("Refresh", REFRESH_APPS))));
-            }
-            if let Some(space) = disk_space(&locations::default_path()) {
-                rows.push(breakdown_row(report, space));
-            }
-            rows.extend(chart_row(report));
-            rows.extend(free_up_rows(report, options));
-            rows.push(heading("Your apps", "", None));
-            rows.extend(
-                View::ALL
-                    .into_iter()
-                    .filter_map(|view| group_row(report, view)),
-            );
-        }
+        AppsState::Loading => rows.push(notice("Measuring apps…", "", None)),
+        AppsState::Failed(err) => rows.push(notice(
+            "Couldn't measure apps",
+            err,
+            Some(("Try again", REFRESH_APPS)),
+        )),
     }
-    rows
+    Some(rows)
+}
+
+/// A setting with a few choices, shown as a drop-down.
+pub(crate) fn choice(
+    title: &str,
+    text: &str,
+    key: &str,
+    choices: &[&str],
+    chosen: usize,
+) -> HomeRow {
+    let choices: Vec<slint::SharedString> = choices.iter().map(|c| (*c).into()).collect();
+    HomeRow {
+        kind: CHOICE,
+        title: title.into(),
+        subtitle: text.into(),
+        key: key.into(),
+        choices: slint::ModelRc::new(slint::VecModel::from(choices)),
+        chosen: chosen as i32,
+        ..Default::default()
+    }
+}
+
+/// A notice with a second, plain button beside its first.
+pub(crate) fn notice2(
+    title: &str,
+    text: &str,
+    action: (&str, &str),
+    second: (&str, &str),
+) -> HomeRow {
+    HomeRow {
+        action2: second.0.into(),
+        key2: second.1.into(),
+        ..notice(title, text, Some(action))
+    }
 }
 
 /// A group of apps on its own page: a header with the way back, then the
@@ -495,15 +661,7 @@ fn hub_rows(card: &HubCard) -> Vec<HomeRow> {
         )),
         Some(name) => {
             if card.waiting > 0 {
-                rows.push(notice(
-                    &count(
-                        card.waiting,
-                        "request waiting for you",
-                        "requests waiting for you",
-                    ),
-                    "Set aside with Not now. The Hub withdraws requests after a day.",
-                    Some(("Review", HUB_REVIEW)),
-                ));
+                rows.push(waiting_row(card));
             }
             let status = if card.status.is_empty() {
                 format!("Connected to {name}")
@@ -519,6 +677,19 @@ fn hub_rows(card: &HubCard) -> Vec<HomeRow> {
         }
     }
     rows
+}
+
+/// Requests set aside with Not now.
+fn waiting_row(card: &HubCard) -> HomeRow {
+    notice(
+        &count(
+            card.waiting,
+            "request waiting for you",
+            "requests waiting for you",
+        ),
+        "Set aside with Not now. The Hub withdraws requests after a day.",
+        Some(("Review", HUB_REVIEW)),
+    )
 }
 
 /// The Hub settings sheet.
@@ -1368,6 +1539,14 @@ mod tests {
         }
     }
 
+    /// The Clean section.
+    fn clean() -> Options<'static> {
+        Options {
+            section: Section::Clean,
+            ..options()
+        }
+    }
+
     /// The page of a group of apps.
     fn page(view: View) -> Options<'static> {
         Options {
@@ -1421,7 +1600,13 @@ mod tests {
 
     #[test]
     fn groups_show_counts_and_open_as_pages() {
-        let home = rows(&AppsState::Ready(report()), options());
+        let home = rows(
+            &AppsState::Ready(report()),
+            Options {
+                section: Section::Apps,
+                ..options()
+            },
+        );
         let groups: Vec<_> = of_kind(&home, GROUP)
             .iter()
             .map(|r| (r.title.to_string(), r.detail.to_string(), r.key.to_string()))
@@ -1484,13 +1669,13 @@ mod tests {
     fn clear_cache_only_offers_what_android_can_clear() {
         const MB: u64 = 1024 * 1024;
         let mut report = report();
-        let rows_now = rows(&AppsState::Ready(report.clone()), options());
+        let rows_now = rows(&AppsState::Ready(report.clone()), clean());
         assert!(!rows_now.iter().any(|r| r.title.starts_with("App caches")));
         report.apps[0].cache_bytes = 100 * MB;
         report.apps[0].data_bytes = 200 * MB;
         // All of it private: Android's cleaner can't reach it, so the card
         // points to clearing app by app.
-        let rows_now = rows(&AppsState::Ready(report.clone()), options());
+        let rows_now = rows(&AppsState::Ready(report.clone()), clean());
         let card = rows_now
             .iter()
             .find(|r| r.title == "App caches: 100 MB")
@@ -1499,18 +1684,18 @@ mod tests {
         assert!(card.subtitle.contains("Only 0 B is in shared storage"));
         // Enough in shared storage: the cleaner, for that much.
         report.apps[0].external_cache_bytes = 60 * MB;
-        let rows_now = rows(&AppsState::Ready(report.clone()), options());
+        let rows_now = rows(&AppsState::Ready(report.clone()), clean());
         let card = rows_now.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
         assert_eq!(card.action, "Clear 60.0 MB");
         assert_eq!(clearable_cache(&report, options().abilities), 60 * MB);
         // Before Android 12 the split is unknown: offered, with the caveat.
-        let mut old = options();
+        let mut old = clean();
         old.abilities.shared_cache_known = false;
         let rows_now = rows(&AppsState::Ready(report.clone()), old);
         let card = rows_now.iter().find(|r| r.key == CLEAR_CACHE).unwrap();
         assert_eq!(card.action, "Clear shared cache");
         assert!(card.subtitle.contains("usually small"));
-        let mut no_access = options();
+        let mut no_access = clean();
         no_access.storage_access = false;
         let rows_now = rows(&AppsState::Ready(report), no_access);
         assert!(rows_now.iter().any(|r| r.key == GRANT_STORAGE));
@@ -1594,7 +1779,7 @@ mod tests {
                 ],
             },
         ];
-        let home = rows(&AppsState::Ready(report.clone()), options());
+        let home = rows(&AppsState::Ready(report.clone()), clean());
         // Too few old screenshots to suggest.
         assert!(home.iter().all(|r| r.key != "review:screenshots"));
         let chat = home.iter().find(|r| r.key == "review:chat-media").unwrap();
@@ -1638,7 +1823,7 @@ mod tests {
             junk(JunkKind::Thumbnails, 1000, &["t"]),
             junk(JunkKind::Leftovers, 2 * MB, &["Gone"]),
         ];
-        let home = rows(&AppsState::Ready(report.clone()), options());
+        let home = rows(&AppsState::Ready(report.clone()), clean());
         let keys: Vec<_> = of_kind(&home, NOTICE)
             .iter()
             .map(|r| r.key.to_string())
@@ -1652,7 +1837,7 @@ mod tests {
             "Move 1 folder left by removed apps (2.00 MB) to the quarantine? Put back restores \
              them if an app turns out to need them."
         );
-        let mut no_access = options();
+        let mut no_access = clean();
         no_access.storage_access = false;
         let limited = rows(&AppsState::Ready(report), no_access);
         let keys: Vec<_> = of_kind(&limited, NOTICE)
@@ -1716,7 +1901,7 @@ mod tests {
         assert_eq!(apps[0].detail, "300 MB");
         assert_eq!(apps[1].detail, "40.0 MB");
 
-        let mut cleared = options();
+        let mut cleared = clean();
         cleared.cache_freed = Some(2 * MB);
         let home = rows(&AppsState::Ready(report), cleared);
         let card = home

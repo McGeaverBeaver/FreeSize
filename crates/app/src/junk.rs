@@ -19,6 +19,8 @@ use crate::{HomeRow, JunkRow};
 pub const FIND: &str = "junk-find";
 pub const OPEN: &str = "junk-open";
 pub const REMIND: &str = "junk-remind";
+/// The reminder's settings, in the order Settings offers them.
+pub const REMIND_CHOICES: [&str; 3] = ["off", "weekly", "daily"];
 
 /// Row kinds of the Clean junk screen.
 const CATEGORY: i32 = 0;
@@ -52,15 +54,6 @@ impl Settings {
             "daily" => Some(24 * 60 * 60),
             "weekly" => Some(7 * 24 * 60 * 60),
             _ => None,
-        }
-    }
-
-    /// The next setting round the button: off, weekly, daily.
-    pub fn next_remind(&self) -> &'static str {
-        match self.remind.as_str() {
-            "weekly" => "daily",
-            "daily" => "off",
-            _ => "weekly",
         }
     }
 
@@ -395,23 +388,9 @@ impl State {
             .and_then(|i| i.paths().into_iter().next())
     }
 
-    /// The home screen's Clean junk cards.
+    /// Clean's junk cards.
     pub fn home_rows(&self, now: i64) -> Vec<HomeRow> {
-        let remind = match self.settings.remind.as_str() {
-            "daily" => "Checks once a day and says here when junk piles up.",
-            "weekly" => "Checks once a week and says here when junk piles up.",
-            _ => {
-                "Doesn't check on its own. Turn the reminder on and FreeSize looks once a \
-                  week or once a day and says here when junk piles up; nothing is cleaned \
-                  without you."
-            }
-        };
-        let remind_button = match self.settings.next_remind() {
-            "daily" => "Daily",
-            "weekly" => "Weekly",
-            _ => "Turn off",
-        };
-        let mut rows = vec![heading("Clean junk", "", Some((remind_button, REMIND)))];
+        let mut rows = vec![heading("Clean junk", "", None)];
         if self.settings.checked > 0 && self.settings.found > 0 {
             rows.push(notice(
                 &format!(
@@ -435,8 +414,22 @@ impl State {
                 Some(("Find junk", FIND)),
             ));
         }
-        rows.push(notice("Reminder", remind, None));
         rows
+    }
+
+    /// The reminder, a line in Settings.
+    pub fn settings_row(&self) -> HomeRow {
+        crate::home::choice(
+            "Remind me about junk",
+            "FreeSize looks in the known places and says on Clean when junk piles up. It \
+             never cleans anything by itself.",
+            REMIND,
+            &["Off", "Once a week", "Once a day"],
+            REMIND_CHOICES
+                .iter()
+                .position(|c| *c == self.settings.remind)
+                .unwrap_or(0),
+        )
     }
 }
 
@@ -550,19 +543,16 @@ mod tests {
     }
 
     #[test]
-    fn reminders_cycle_and_come_due() {
+    fn reminders_come_due() {
         let mut settings = Settings::default();
         assert!(!settings.due(1_000_000));
-        settings.remind = settings.next_remind().into();
-        assert_eq!(settings.remind, "weekly");
+        settings.remind = "weekly".into();
         assert!(settings.due(1_000_000));
         settings.checked = 1_000_000;
         assert!(!settings.due(1_000_000 + 6 * 86_400));
         assert!(settings.due(1_000_000 + 8 * 86_400));
-        settings.remind = settings.next_remind().into();
-        assert_eq!(settings.remind, "daily");
+        settings.remind = "daily".into();
         assert!(settings.due(1_000_000 + 86_400));
-        assert_eq!(settings.next_remind(), "off");
         let state = State {
             settings: Settings {
                 remind: "weekly".into(),
@@ -573,7 +563,9 @@ mod tests {
             ..State::default()
         };
         let rows = state.home_rows(100);
-        assert_eq!(rows[0].action, "Daily");
+        assert_eq!(rows[0].action, "");
+        // Settings shows the reminder as it is now, not what a tap would make it.
+        assert_eq!(state.settings_row().chosen, 1);
         assert_eq!(
             rows[1].title,
             "2.34 GB of junk to review, 1000 MB safe to clean"

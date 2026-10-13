@@ -387,6 +387,22 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.16.3, the first of the polish (the owner's call, 2026-10-13: everyday
+  people on a phone or Windows PC first, no new features until it's
+  polished). The one long scrolling home screen became places: a list on
+  the left on desktops and tabs along the bottom on phones (Home, Clean,
+  Apps on phones, Quarantine and Hub on desktops, Settings). Settings
+  holds the junk reminder and update checks as drop-downs, where the
+  reminder used to take a whole card and its button named the next
+  setting rather than the current one. The quarantine lists batches newest
+  first with their names. On Windows, **Run as administrator** sits beside
+  Scan whenever FreeSize isn't, and the window that asked closes once the
+  new one opens (also from Clean up's fuller scan), unless it's still
+  moving or deleting something. The Hub's Copies page listed nothing on
+  the Nextcloud side for an account signed in by email, so every synced
+  folder looked like it had only one copy: the WebDAV path takes the
+  account's id, which the Hub now asks Nextcloud for and keeps
+  (`nextcloud.dav_user`).
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

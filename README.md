@@ -80,7 +80,7 @@ Each part takes over what DiskTree kept, the first time it starts:
   but the largest of each set of similar photos). Everything ticked is
   listed once more before it goes to the quarantine. See
   [Clean up tab](#clean-up-tab).
-- **Clean junk**, on the start screen: one button finds the junk in the
+- **Clean junk**, under Clean: one button finds the junk in the
   known places (temporary files, crash dumps, browser and app caches,
   shader caches, build caches, the trash, old installers and downloads)
   in seconds, without a scan. Everything is sorted by category with a
@@ -216,6 +216,29 @@ ssh server ncdu -o- -x /srv > srv.json && freesize --import srv.json
 
 ## Using the app
 
+FreeSize has a few places, picked from the list on the left of the window
+or, on a phone or a narrow window, from the tabs along the bottom:
+
+- **Home**: the drives and folders to scan, with how full each is. On a
+  phone it also shows how the storage divides up and how it changed.
+- **Clean**: junk FreeSize can find without a scan (see
+  [Clean junk](#clean-junk)); on a phone, the Free up space cards and the
+  quarantine.
+- **Apps** (phones): your apps in groups (see
+  [Cleaning up apps](#cleaning-up-apps)).
+- **Quarantine** (desktops): what you deleted, waiting to be put back or
+  emptied.
+- **Hub** (desktops; under Settings on a phone): connecting to a FreeSize
+  Hub and the requests it sent. A number on it counts requests waiting.
+- **Settings**: the junk reminder and update checks.
+
+A scan takes the whole window, with its own tabs; Close scan returns to
+Home. On Windows, when FreeSize isn't running as administrator, **Run as
+administrator** sits beside Scan: Windows asks, a new FreeSize window opens
+that can read every folder, and this one closes. On macOS and Linux the
+same button, where offered, scans as an administrator or root in the
+background and opens the result as a saved scan.
+
 ### Clean up tab
 
 After a scan, the **Clean up** tab (**Clean** on phones) opens on a card
@@ -297,8 +320,9 @@ The cards are:
 Tap a row to highlight it in the tree, then use Open to look at it, or Delete
 or Select from the bar at the bottom. Delete moves it to the quarantine.
 
-- **Quarantine**, at the top whenever it holds something: each batch of
-  deleted items with when, where from and how much, with **Put back** and
+- **Quarantine**, its own place on a desktop and at the bottom of Clean on
+  a phone: each batch of deleted items, newest first, with when, where
+  from and how much, with **Put back** and
   **Empty** per batch and **Empty all** on the heading. Emptying asks first
   and lists the paths. On a desktop the quarantine for the disk FreeSize's
   data is on lives in that data folder; other disks, and a phone's shared
@@ -308,7 +332,7 @@ or Select from the bar at the bottom. Delete moves it to the quarantine.
 
 ### Clean junk
 
-On the start screen, **Find junk** looks in the known places on this
+Under **Clean**, **Find junk** looks in the known places on this
 platform, which takes seconds and needs no scan: temporary files, crash
 dumps and error reports, update leftovers, the thumbnail cache, browser
 caches (Chrome, Edge, Brave, Firefox, Safari, Chromium), the caches of
@@ -357,8 +381,8 @@ exact paths, each with **Show** to look at the files first.
 
 **Clean** asks once, then frees what it can and reports what was freed,
 what went to the quarantine, what was skipped because a file was in use
-and how much of it will refill. **Reminder** on the card checks once a
-week or once a day and says on the start screen how much junk there is
+and how much of it will refill. **Remind me about junk**, in Settings, checks
+once a week or once a day and says under Clean how much junk there is
 to review ("2.4 GB of junk to review, 1.6 GB safe to clean"); it never
 cleans anything by itself. Registry cleaning, memory "boosters" and
 browser history, cookies and saved passwords are left out on purpose: they
@@ -538,9 +562,9 @@ to the drive list before leaving the app.
 
 ### Cleaning up apps
 
-Under *Your apps* on the home screen, the apps are grouped so the space you
-can win back is easy to find. Each group opens as its own page; the arrow at
-its top or the Back gesture returns to where you were on the home screen.
+Under **Apps**, the apps are grouped so the space you can win back is easy
+to find. Each group opens as its own page; the arrow at its top, the Back
+gesture or tapping Apps again returns to the list of groups.
 
 | Group | What's in it |
 |---|---|
@@ -575,7 +599,7 @@ Signal's storage deletes your messages). Its buttons:
 - **Open in Play Store** (or the store it came from).
 - **App info**: Android's page for clearing the app's cache or data.
 
-**Free up space** lists what can go without touching any app. It needs All
+**Free up space**, under Clean, lists what can go without touching any app. It needs All
 files access:
 
 - **App caches** shows how much cache apps keep and what can actually clear
@@ -642,10 +666,11 @@ than the day you removed it.
 
 ## Updates
 
-The home screen's **Updates** section is off until you turn it on; then
+**Check for updates**, in Settings, is off until you pick Releases or
+Pre-releases too; then
 FreeSize asks GitHub once a day whether a newer release is out (that's the
 only thing it ever asks anyone, and only the version is sent, in the
-request's user agent). **Pre-releases too** follows the beta channel. A
+request's user agent). **Pre-releases too** also offers the beta releases. A
 FreeSize Hub with `FREESIZE_UPDATE_CHECK=on` checks once for all its
 devices and tells those running an older version, so the devices needn't
 ask GitHub themselves.
@@ -921,9 +946,9 @@ signed answer carries its certificate authority, which the device keeps for
 this Hub's address.
 
 - **Phone**: scan the QR code with the camera; it opens FreeSize's connect
-  dialog with the link filled in, also when FreeSize was already open. Or open the FreeSize Hub card on the start screen → Connect, and
+  dialog with the link filled in, also when FreeSize was already open. Or open Settings → FreeSize Hub → Connect, and
   type the Hub's address and the code.
-- **Computer**: FreeSize app → FreeSize Hub → Connect, and paste the link.
+- **Computer**: FreeSize app → Hub → Connect, and paste the link.
 - **Server**: the command line (`freesize`) is also the agent:
 
   ```sh

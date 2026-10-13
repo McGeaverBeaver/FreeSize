@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.16.2)
+## Where things stand (0.16.3)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -164,7 +164,13 @@ compiling inside Docker.
   (the Hub since 0.8.7, update checks): ureq needs its `native-tls`
   feature, not `native-tls-no-default`. Releases no longer make
   `disktree.plg` or tag the `disktree-hub` image (the owner's call,
-  2026-10-13: his installs all run FreeSize).
+  2026-10-13: his installs all run FreeSize). 0.16.3 starts the polish
+  (the owner's order: phone, desktop, Hub, Unraid; no new features until
+  done; see CONTEXT.md for the words): places instead of one scrolling
+  home screen (`home::Section`, a sidebar on desktops, bottom tabs on
+  phones), Settings with drop-downs, Run as administrator beside Scan on
+  Windows (the old window closes), and the Copies fix for Nextcloud
+  accounts signed in by email (`nextcloud.dav_user`).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

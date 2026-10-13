@@ -276,6 +276,14 @@ and receives callbacks.
   layout.
 - The treemap is a list of absolutely positioned rectangles computed in Rust.
   Its size is reported back through `map-resized` whenever the pane changes.
+- Outside a scan the window shows one place at a time (`home::Section`:
+  Home, Clean, Apps on phones, Quarantine and Hub on desktops, Settings),
+  picked from the `Sidebar` (left, desktops) or the `BottomBar` (phones
+  and windows below 760 px). The controller rebuilds the same `HomeRow`
+  list for the current place and passes the places as `nav-items`, with
+  the counts shown on them (Hub requests waiting, items in the
+  quarantine). A scan takes the whole window with its own tabs. Settings
+  are `HomeRow`s of kind 9, a drop-down, answered through `home-choice`.
 - The home screen and the Clean up tab are scrolling layouts, not list
   views. Slint measures wrapped text as a single line when it computes a
   layout's preferred height, so their scroll height comes from the position
@@ -566,7 +574,8 @@ top as on servers. Batches made here are `a<time>-<n>`; a Hub request's
 batch is the request's id, so the dashboard can put it back. The Clean up
 tab lists the batches (`CleanRow` kind 3, with Put back and Empty, and
 Empty all on the heading, each through the shared confirmation dialog
-listing the paths) and the home screen says what the quarantine holds;
+listing the paths), and so does the Quarantine place on desktops, or Clean
+on phones (`quarantine::section_rows`, newest first);
 after every change the app reports the quarantine to the Hub. Nothing in
 it is emptied on a timer.
 
@@ -585,7 +594,8 @@ review. The Hub's `clean_junk` request on a desktop finds the rule afresh
 and cleans it the same way (`hub::AppExecutor::clean`).
 
 `updater.rs` keeps `update.json` (`check`, off until turned on; `channel`;
-`checked`) and the Updates section's state machine: `Checking`, `Found`,
+`checked`; one drop-down in Settings sets both) and the state machine shown
+under Updates there: `Checking`, `Found`,
 `Downloading`, `Failed`. The check and the install run on worker threads
 through the agent's `update` module with the app's transport; the Hub's
 hint from a poll (`Event::Latest`) shows as "Your Hub says…" without the
@@ -621,11 +631,12 @@ are ignored, so a replaced disk starts a new history.
 
 `appbubbles.rs` lays out an app group as bubbles sized by what the group
 ranks apps by (size, cache, growth, saved files), and an app's parts when
-zoomed in. `home.rs` turns all of this into the home screen's rows (drives, the breakdown
-bar, the Free up space cards, the groups), the rows of a group's page (a
+zoomed in. `home.rs` turns all of this into the rows of each place (drives and the
+breakdown bar on Home, the Free up space cards on Clean, the groups on
+Apps), the rows of a group's page (a
 header with the way back, then the group's apps) and the app sheet: the facts
 and buttons shown when an app is tapped. A group opens as a page in place of
-the home screen, so a tap visibly does something; the controller keeps the
+the list of groups, so a tap visibly does something; the controller keeps the
 home screen's scroll position meanwhile and puts it back on Back.
 
 Android's clear-cache dialog (MediaProvider's) only empties
