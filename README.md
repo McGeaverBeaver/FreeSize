@@ -886,7 +886,7 @@ signed answer carries its certificate authority, which the device keeps for
 this Hub's address.
 
 - **Phone**: scan the QR code with the camera; it opens FreeSize's connect
-  dialog. Or open the FreeSize Hub card on the start screen → Connect, and
+  dialog with the link filled in, also when FreeSize was already open. Or open the FreeSize Hub card on the start screen → Connect, and
   type the Hub's address and the code.
 - **Computer**: FreeSize app → FreeSize Hub → Connect, and paste the link.
 - **Server**: the command line (`freesize`) is also the agent:

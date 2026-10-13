@@ -61,6 +61,9 @@ what was tried in the release's draft notes, and say what wasn't.
       quarantine.
 - [ ] Pairs from the QR code; a delete from the Hub is approved on the
       phone.
+- [ ] The QR code fills in the connect dialog both ways (0.15.1): with
+      FreeSize closed (swiped away), and with FreeSize open in the
+      background; scanning it twice doesn't open the dialog twice.
 - [ ] In the background (0.14): with the app closed for a day, the Hub
       shows the phone seen within 15 minutes all day and its disks and
       quarantine up to date; a scan made while the Hub was unreachable

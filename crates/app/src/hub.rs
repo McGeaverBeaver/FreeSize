@@ -889,6 +889,21 @@ impl Executor for AppExecutor {
     }
 }
 
+/// Where the Android app's `PairLink` activity leaves a scanned pairing
+/// link, in the app's files folder.
+pub const PAIR_LINK_FILE: &str = "pair-link";
+
+/// The pairing link a scan left in `dir`, taken: the file is removed, so
+/// it's opened once. None when there's none or it isn't a pairing link.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn take_pair_link(dir: &Path) -> Option<String> {
+    let file = dir.join(PAIR_LINK_FILE);
+    let text = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::remove_file(&file);
+    let link = text.trim().to_string();
+    freesize_proto::pairing::is_link(&link).then_some(link)
+}
+
 /// The Hub address and code typed into the connect dialog, or a pasted
 /// link, as a pairing link.
 pub fn link_from(text: &str, code: &str) -> Result<PairingLink, String> {
@@ -983,5 +998,32 @@ mod tests {
         assert_eq!(pasted.key.as_deref(), Some("AAAA-BBBB-CCCC-DDDD"));
         assert!(link_from("hub.lan", "short").is_err());
         assert!(link_from("", "ABCDEFGHJKMN").is_err());
+    }
+
+    #[test]
+    fn a_scanned_link_is_taken_once() {
+        let path = std::env::temp_dir().join(format!("freesize-pair-link-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        struct Dir(PathBuf);
+        impl Dir {
+            fn path(&self) -> &Path {
+                &self.0
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Dir(path);
+        assert_eq!(take_pair_link(dir.path()), None);
+        let link = "freesize://pair?hub=https%3A%2F%2Fhub.lan&code=ABCD-EFGH-JKMN";
+        std::fs::write(dir.path().join(PAIR_LINK_FILE), format!("{link}\n")).unwrap();
+        assert_eq!(take_pair_link(dir.path()).as_deref(), Some(link));
+        assert!(!dir.path().join(PAIR_LINK_FILE).exists());
+        assert_eq!(take_pair_link(dir.path()), None);
+        std::fs::write(dir.path().join(PAIR_LINK_FILE), "https://example.org").unwrap();
+        assert_eq!(take_pair_link(dir.path()), None);
+        assert!(!dir.path().join(PAIR_LINK_FILE).exists());
     }
 }

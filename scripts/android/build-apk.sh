@@ -3,7 +3,8 @@
 # aligned for 16 KB memory pages, signed, and checked with check-apk.sh.
 #
 # cargo-apk builds the Rust side for both targets. Since 0.14 the APK also
-# holds a Java class (crates/app/android/java: HubJob, the background job),
+# holds Java classes (crates/app/android/java: HubJob, the background job,
+# and since 0.15.1 PairLink, which takes scanned pairing links),
 # which cargo-apk can't add or declare, so the APK it produces is taken apart
 # and put together again: its native libraries, plus classes.dex from javac
 # and d8, the resources and the manifest in crates/app/android, then zipalign

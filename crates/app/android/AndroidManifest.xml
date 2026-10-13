@@ -4,7 +4,8 @@ The app's manifest, used by scripts/android/build-apk.sh since 0.14, when
 the APK gained a Java class (HubJob, the background job) that cargo-apk's
 generated manifest can't declare. It says the same as the metadata in
 crates/app/Cargo.toml, which cargo-apk still reads to build the Rust side,
-plus the service and the permissions it needs. Keep the two in step.
+plus the service and the permissions it needs, and (0.15.1) the PairLink
+activity that takes scanned pairing links. Keep the two in step.
 
 The version code and name are passed in by the build script (aapt2 link's
 version-code and version-name options), from the release and the version in the
@@ -58,9 +59,20 @@ root Cargo.toml.
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Opens pairing links (freesize://pair?...) from a scanned QR
-                 code, and disktree://pair?... from a Hub not updated since
-                 the rename. -->
+        </activity>
+
+        <!-- Opens pairing links (freesize://pair?...) from a scanned QR
+             code, and disktree://pair?... from a Hub not updated since the
+             rename (0.15.1). It shows nothing: it hands the link to the app
+             through a file and opens it, which also works when the app is
+             already running, where NativeActivity would drop the link. -->
+        <activity
+            android:name=".PairLink"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

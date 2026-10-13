@@ -63,6 +63,7 @@ if grep -q "^application-debuggable" <<<"$badging"; then fail "release APK is de
 # service, with the permissions its notifications and reboots need.
 if unzip -l "$apk" | grep -q " classes.dex$"; then pass "has classes.dex"; else fail "no classes.dex: the background job is missing"; fi
 if grep -q "HubJob" <<<"$manifest"; then pass "declares the HubJob service"; else fail "the manifest doesn't declare HubJob"; fi
+if grep -q "PairLink" <<<"$manifest"; then pass "declares the PairLink activity (scanned pairing links)"; else fail "the manifest doesn't declare PairLink"; fi
 for permission in POST_NOTIFICATIONS RECEIVE_BOOT_COMPLETED; do
     if grep -q "^uses-permission: name='android.permission.$permission'" <<<"$badging"; then
         pass "declares $permission"

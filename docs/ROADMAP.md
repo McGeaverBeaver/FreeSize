@@ -344,6 +344,19 @@ Parked, each with its reason:
   the Clean junk screen, `freesize junk` (`--also program-leftovers`,
   with the programs in `--json`) and the Hub's Junk tab. Still to do by
   hand: the check in TESTING.md on a Windows machine and a Linux box.
+- 0.15.1: scanning the Hub's QR code with FreeSize already open brought
+  the app to the front without the link (found in testing, 2026-10-13):
+  the app's `NativeActivity` runs in `singleTask` mode and drops links
+  delivered to a running activity. The link filter is now on `PairLink`, a
+  Java activity that shows nothing, leaves the link in the app's files
+  folder and opens the app, which picks it up at start and while running.
+  Also: the desktop Clean junk screen wouldn't let "check first" rules
+  (installers and old downloads, screen recordings, the leftovers) be
+  ticked, although cleaning them was always meant to move them to the
+  quarantine; they start unticked and can now be ticked
+  (`Finding::can_tick`). Rules removed with the system's own tool, and
+  rules whose program is running, still can't. Still to do by hand: the
+  QR check in TESTING.md, and ticking a "check first" rule on Windows.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

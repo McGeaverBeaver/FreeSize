@@ -78,6 +78,9 @@ launch_mode = "singleTask"
 # Opens pairing links (freesize://pair?...) from a scanned QR code, and
 # disktree://pair?... from a Hub not updated since the rename. cargo-apk
 # still adds the launcher entry, since this filter has no MAIN action.
+# The APK that's shipped uses crates/app/android/AndroidManifest.xml, where
+# since 0.15.1 this filter is on the PairLink activity instead, so a link
+# reaches the app when it's already running too.
 [[package.metadata.android.application.activity.intent_filter]]
 actions = ["android.intent.action.VIEW"]
 categories = ["android.intent.category.DEFAULT", "android.intent.category.BROWSABLE"]

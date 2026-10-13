@@ -170,11 +170,13 @@ impl State {
         self.save();
     }
 
-    /// Ticks or unticks a rule; only what's safe and not in use can be.
+    /// Ticks or unticks a rule: safe and "check first" rules can be, when
+    /// their program isn't running; rules removed with the system's own
+    /// tool can't.
     pub fn toggle(&mut self, index: usize) {
         if let (Some(finding), Some(ticked)) =
             (self.findings.get(index), self.ticked.get_mut(index))
-            && finding.ticked()
+            && finding.can_tick()
         {
             *ticked = !*ticked;
         }
@@ -325,7 +327,7 @@ impl State {
                     )
                     .into(),
                     ticked: self.ticked.get(index).copied().unwrap_or(false),
-                    enabled: finding.ticked(),
+                    enabled: finding.can_tick(),
                     open: self.open.contains(&index),
                     action: action.into(),
                 });
@@ -519,10 +521,20 @@ mod tests {
                 .subtitle
                 .ends_with("Look first; goes to the quarantine.")
         );
-        // Unticking, and an unsafe rule can't be ticked.
+        // A "check first" rule starts unticked but can be ticked.
+        assert!(rows[4].enabled && !rows[4].ticked);
+        // Unticking, ticking a "check first" rule, and a rule removed with
+        // the system's own tool can't be ticked.
         state.toggle(1);
         state.toggle(2);
-        assert_eq!(state.ticked, [false, false, false]);
+        state.toggle(0);
+        assert_eq!(state.ticked, [false, false, true]);
+        assert!(
+            state
+                .confirm_text()
+                .starts_with("4 B goes to the quarantine")
+        );
+        state.toggle(2);
         state.toggle(1);
         state.toggle_open(2);
         let rows = state.rows(false);

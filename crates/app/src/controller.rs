@@ -608,11 +608,13 @@ pub fn install(
     {
         let mut c = ctl.borrow_mut();
         c.start_hub_timer();
-        // Opened from a scanned pairing QR code.
+        // Opened from a scanned pairing QR code: through the PairLink
+        // activity since 0.15.1, or straight from the intent by an older
+        // manifest.
         #[cfg(target_os = "android")]
-        if let Some(link) = crate::android::launch_link()
-            && freesize_proto::pairing::is_link(&link)
-        {
+        if let Some(link) = c.scanned_link().or_else(|| {
+            crate::android::launch_link().filter(|l| freesize_proto::pairing::is_link(l))
+        }) {
             c.open_hub_connect(&link);
         }
         c.record_drives();
@@ -1671,7 +1673,18 @@ impl Controller {
         crate::android::cancel_hub_job();
     }
 
+    /// A pairing link the PairLink activity left for the app, taken.
+    #[cfg(target_os = "android")]
+    fn scanned_link(&self) -> Option<String> {
+        hub::take_pair_link(&growth::data_dir()?)
+    }
+
     fn hub_tick(&mut self) {
+        // A QR code scanned while the app was already running.
+        #[cfg(target_os = "android")]
+        if let Some(link) = self.scanned_link() {
+            self.open_hub_connect(&link);
+        }
         let due = self
             .disks_reported
             .is_none_or(|at| at.elapsed() > Duration::from_secs(3600));

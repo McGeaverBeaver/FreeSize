@@ -61,7 +61,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.15.0)
+## Where things stand (0.15.1)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -132,7 +132,10 @@ compiling inside Docker.
   installed-programs list (registry, Spotlight, `.desktop` files and
   package databases) and a record of which folder belonged to which
   program (`programs.json`); id-named folders (Flatpak, snap, bundle ids)
-  without the record.
+  without the record. 0.15.1: a QR code scanned while the Android app
+  was open only brought it to the front; the link filter is now on the
+  Java `PairLink` activity, which hands the link over through a file;
+  and "check first" junk rules can be ticked on desktops (they couldn't).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

@@ -370,6 +370,13 @@ impl Finding {
         self.rule.ticked_by_default() && !self.running
     }
 
+    /// Whether the person may tick it: anything not in use that isn't
+    /// removed with the system's own tool. "Check first" findings start
+    /// unticked but can be ticked; they go to the quarantine.
+    pub fn can_tick(&self) -> bool {
+        !self.running && self.rule.safety != Safety::UseTool
+    }
+
     /// Why it isn't ticked, for the screen; empty when it is.
     pub fn why_not(&self) -> String {
         if self.running {

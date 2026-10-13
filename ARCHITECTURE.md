@@ -185,7 +185,9 @@ tests), and `find` expands the patterns, sizes what matches
 or its entries), skips what an earlier rule took so generic rules at the
 end of a list never double count, and marks a finding `running` when one
 of its processes is (`running_programs`: `/proc` on Linux, `ps` on macOS,
-`tasklist` on Windows). `Finding::ticked` is safe and not running;
+`tasklist` on Windows). `Finding::ticked` is safe and not running (ticked
+at first); `Finding::can_tick` is not running and not "use the tool" (the
+person may tick it, "check first" ones then go to the quarantine);
 `delete` removes an item and reports what stayed in use. Nothing here
 decides to run: callers list, the person ticks. `find_all` adds the
 leftovers of removed programs (below) to `find`'s findings, dropping any
@@ -390,6 +392,17 @@ JNI, using the same `jni` 0.22 crate as Slint's Android backend:
 - Android 10 and older: the classic `READ_EXTERNAL_STORAGE` runtime permission.
 - While access is missing, the controller re-checks every second. When access
   is granted, it hides the banner and starts any scan the user asked for.
+
+**Scanned pairing links** (0.15.1): the app's activity is a
+`NativeActivity` in `singleTask` mode, so a link scanned while it's
+running arrives through `onNewIntent`, which `NativeActivity` drops
+(`getIntent` still returns the launch intent). The `freesize://pair` and
+`disktree://pair` filter is therefore on `PairLink`, a Java activity that
+shows nothing (`Theme.NoDisplay`): it writes the link to `pair-link` in the
+files folder, opens the app through its launch intent and finishes. The
+controller takes the file (`hub::take_pair_link`, which removes it) at
+start and on every Hub tick (500 ms) and opens the connect sheet with the
+link; at start it still reads the launch intent's link too.
 
 **The background job** (`background.rs`, 0.14): `HubJob`, one Java class in
 `crates/app/android/java`, is a `JobService` Android runs about every 15
@@ -639,13 +652,13 @@ app data on the desktop, for working on the UI without a phone.
 `scripts/android/build-apk.sh` is the one way to build the APK, locally and
 in CI. `cargo-apk` builds the Rust side for both targets from
 `[package.metadata.android]` in `crates/app/Cargo.toml`; since 0.14 the APK
-also holds a Java class (`HubJob`), which `cargo-apk` can neither compile
-nor declare, so the script takes its APK apart and puts it together again:
+also holds Java classes (`HubJob`, and since 0.15.1 `PairLink`), which
+`cargo-apk` can neither compile nor declare, so the script takes its APK apart and puts it together again:
 the native libraries, `classes.dex` from `javac` and `d8`, the resources
 compiled by `aapt2`, and the hand-written manifest
 `crates/app/android/AndroidManifest.xml` (the same as the Cargo metadata,
-plus the service and the notification and boot permissions; keep the two
-in step) linked by `aapt2` with the version code `cargo-apk` gave the build,
+plus the service and the notification and boot permissions, and the
+pairing link filter moved to `PairLink`; keep the two in step) linked by `aapt2` with the version code `cargo-apk` gave the build,
 then `zipalign` and `apksigner` with the same key. The manifest sets
 `extractNativeLibs="false"` (the libraries are stored uncompressed and
 mapped from the APK) and `allowBackup="false"` (the phone's pairing key
@@ -690,7 +703,8 @@ these doesn't hold:
 - the launcher activity is exported and the APK isn't debuggable;
 - the storage permissions are declared (All files access, Usage access, the
   installed-apps list), and since 0.14 the notification and boot ones;
-- `classes.dex` is there and the manifest declares the `HubJob` service;
+- `classes.dex` is there and the manifest declares the `HubJob` service
+  and the `PairLink` activity;
 - there is a v2/v3 signature;
 - every LOAD segment of every `.so` is aligned to 16 KB, and the zip passes
   `zipalign -c -P 16`.
