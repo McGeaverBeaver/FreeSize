@@ -109,6 +109,12 @@ pub enum ApproverAction {
 }
 
 fn default_state_path() -> PathBuf {
+    // On Unraid, the plugin's pairing on the flash drive: root's home is in
+    // memory, and the plugin only reads its own file.
+    #[cfg(unix)]
+    if disktree_unraid::System::real().is_unraid() {
+        return crate::unraid::plugin_state();
+    }
     let base = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("DiskTree"))
     } else if cfg!(target_os = "macos") {
@@ -279,11 +285,39 @@ fn pair(
     println!("Paired with {} as \"{name}\".", state.hub_name);
     println!("This machine's key: {}", state.fingerprint());
     println!();
+    #[cfg(unix)]
+    if disktree_unraid::System::real().is_unraid() {
+        unraid_next(path);
+        return Ok(());
+    }
     println!("Next:");
     println!("  1. Choose who approves requests for it, with the key shown in the DiskTree");
     println!("     app on their phone:   disktree approver set XXXX-XXXX-XXXX-XXXX");
     println!("  2. Start reporting:      disktree agent run --scan /path/to/folder");
     Ok(())
+}
+
+/// What to do after pairing on Unraid, where the plugin reports on its own.
+#[cfg(unix)]
+fn unraid_next(path: &Path) {
+    let plugin = crate::unraid::plugin_state();
+    if path != plugin {
+        println!(
+            "The DiskTree plugin only uses {}, so it won't report with this pairing.",
+            plugin.display()
+        );
+        println!(
+            "Run `disktree agent unpair --state {}` and pair again without --state.",
+            path.display()
+        );
+        return;
+    }
+    if crate::unraid::tell_daemon_paired() {
+        println!("The plugin now reports this server to the Hub on its own.");
+    }
+    println!("Next, choose who approves the Hub's requests, by the key the DiskTree app");
+    println!("on their phone shows: on the plugin's Settings and Hub tab, or with");
+    println!("  disktree approver set XXXX-XXXX-XXXX-XXXX");
 }
 
 fn status(path: &Path) -> Result<(), String> {

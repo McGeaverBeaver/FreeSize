@@ -1856,8 +1856,32 @@ impl disktree_agent::Transport for JavaTransport {
         body: Option<&[u8]>,
         timeout_secs: u64,
     ) -> Result<(u16, Vec<u8>), String> {
-        with_activity(|env, _| http(env, method, url, headers, body, timeout_secs))
-            .map_err(|err| format!("{err}"))
+        with_activity(
+            |env, _| match http(env, method, url, headers, body, timeout_secs) {
+                Ok(answer) => Ok(Ok(answer)),
+                // Java's own reason, like "Cleartext HTTP traffic to … not
+                // permitted" or "failed to connect to …", instead of jni's
+                // "Java exception was thrown".
+                Err(jni::errors::Error::JavaException) => Ok(Err(java_reason(env))),
+                Err(err) => Err(err),
+            },
+        )
+        .map_err(|err| format!("{err}"))?
+    }
+}
+
+/// Takes the pending Java exception and says what it was.
+fn java_reason(env: &mut Env) -> String {
+    match env.exception_catch() {
+        Err(jni::errors::Error::CaughtJavaException { name, msg, .. }) => {
+            let name = name.rsplit('.').next().unwrap_or(&name).to_string();
+            if msg.is_empty() || msg == "null" {
+                name
+            } else {
+                format!("{msg} ({name})")
+            }
+        }
+        _ => "Java exception was thrown".into(),
     }
 }
 

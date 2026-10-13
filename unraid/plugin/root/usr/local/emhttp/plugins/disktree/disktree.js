@@ -943,6 +943,17 @@
     renderHub();
   }
 
+  // An http address other than this machine's own: what's sent can be read
+  // on the network. The same test as the disktree command's warning.
+  function plainHttp(url) {
+    try {
+      const u = new URL(url);
+      return u.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]", "0.0.0.0"].includes(u.hostname);
+    } catch {
+      return false;
+    }
+  }
+
   function renderHub() {
     const hub = (model.status && model.status.hub) || {};
     const key = JSON.stringify(hub);
@@ -952,20 +963,30 @@
     if (!hub.paired) {
       const link = h("textarea", { rows: 2, placeholder: "disktree://pair?hub=…&code=…&key=…" });
       const name = h("input", { type: "text", placeholder: "the server's host name" });
+      // Stays until the next try, unlike the toast.
+      const problem = h("p", { class: "dt-note dt-bad" });
+      problem.hidden = true;
       parts.push(
         h("p", { class: "dt-muted" }, "The Hub shows all your devices in one dashboard. In the Hub, choose Pair a device and paste the link here. Admins can then ask this server to do things, but nothing happens until its approver allows it on their phone."),
         h("div", { class: "dt-form" }, h("label", { class: "dt-grow" }, "Pairing link", link)),
         h("div", { class: "dt-form" }, h("label", { class: "dt-grow" }, "Name in the Hub", name),
           h("button", { type: "button", class: "dt-primary", onclick: async (e) => {
             const reply = await busy(e.target, () => post("pair", { link: link.value.trim(), name: name.value.trim() }));
-            if (!reply.ok) return toast(reply.output, "bad");
+            if (!reply.ok) {
+              const text = String(reply.output || "pairing failed");
+              problem.textContent = text.charAt(0).toUpperCase() + text.slice(1);
+              problem.hidden = false;
+              return toast(reply.output, "bad");
+            }
             toast("Paired. Now choose the approver below.", "good");
             built.hubKey = null;
             refreshSoon();
-          } }, "Pair")));
+          } }, "Pair")),
+        problem);
     } else {
       parts.push(
         h("p", {}, "Paired with ", h("b", {}, hub.name), ` (${hub.url})`, hub.connection ? ` · ${hub.connection}` : " · waiting to hear back"),
+        plainHttp(hub.url) ? h("p", { class: "dt-note" }, "The Hub's address is plain http, so what this server reports (folder and file names) can be read on your network. Put HTTPS in front of the Hub.") : null,
         h("p", { class: "dt-muted" }, "This server's key: ", h("code", {}, hub.device_key), ". The dashboard shows the same key for it."),
         h("h4", {}, "Approver"),
         h("p", { class: "dt-muted" }, "Nobody sits at a server, so the Hub's requests (put back, delete for good, Docker cleanup) go to one phone or computer to allow or refuse, for just that request or for some minutes. It can only be chosen here or with the disktree approver command on the server, never from the Hub."),

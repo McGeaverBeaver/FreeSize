@@ -564,7 +564,8 @@ whole array, rather than every file.
 - `transport.rs`: HTTP through a `Transport` trait. Desktops and servers use
   ureq (the system's TLS on Windows and macOS, rustls with the system's
   certificates elsewhere, no redirects); Android passes Java's
-  `HttpURLConnection` in through JNI.
+  `HttpURLConnection` in through JNI, and when Java throws, the error is
+  Java's own message (the manifest allows plain `http://` for LAN Hubs).
 - `client.rs`: `hello` (the Hub's name and key), `pair` (refuses a Hub whose
   key doesn't match the link's fingerprint, or asks the person to compare
   it when the link has none), and a signed `Client` for reports, polls,
@@ -739,8 +740,13 @@ and Docker cleanup work as on the page.
 The page (`unraid/plugin/root/usr/local/emhttp/plugins/disktree`):
 `DiskTree*.page` are Unraid's tabs, in a section of Tools of their own
 (`DiskSpace.page`). `disktree.js` draws them from `include/status.php` and
-posts to `include/action.php`, which checks Unraid's CSRF token, checks
-each value and runs `disktree` with every argument quoted. Until a round
+posts to `include/action.php`, which checks each value and runs
+`disktree` with every argument quoted. Unraid's own prelude
+(`local_prepend.php`) checks the CSRF token of every POST and removes it
+before `action.php` runs; `action.php` checks the token itself only when
+that prelude didn't run. Pairing attempts go to `/var/log/disktree.log`.
+On Unraid, `disktree agent` and `disktree approver` default to the
+plugin's `agent.json`, and pairing there asks the daemon to report. Until a round
 has finished (`last_round` empty) the page says it's still looking, with
 the daemon's `doing` ("scanning disk2 (2 of 5)"), rather than reading a
 missing Docker or VM section as switched off. Unraid's stylesheet keeps
@@ -762,6 +768,9 @@ the package's SHA-256.
   tests (each against a made-up server folder: disks, shares, Docker over
   a fake socket, VMs, protection, quarantine, moves), and the Hub's
   end-to-end tests.
+- `php unraid/tests/page_test.php` runs the plugin page's `action.php` as
+  Unraid does, behind a copy of Unraid's token check and with a stand-in
+  `disktree` command: pairing, saving, a wrong token, a refused pairing.
 - `scripts/release.sh` runs them before building a release on the build
   machine. The CI workflow runs them on Windows, macOS and Linux and builds
   the APK, but only when started by hand.

@@ -40,6 +40,11 @@ function dt_state() {
   return "$dt_config/agent.json";
 }
 
+/** Adds a line to the plugin's log, next to the background part's. */
+function dt_log($line) {
+  @file_put_contents(dt_file('/var/log/disktree.log'), $line."\n", FILE_APPEND);
+}
+
 /** Asks the background part for something. */
 function dt_request($name) {
   global $dt_data;
@@ -72,10 +77,17 @@ function dt_fail($message, $status = 400) {
   dt_reply(['ok' => false, 'output' => $message], $status);
 }
 
-/** Unraid checks this for every POST already; checked again here. */
+/**
+ * Unraid's own prelude (local_prepend.php, run before every page script)
+ * checks the token on every POST, stops the request when it's wrong, and
+ * then removes it from $_POST. So when the prelude ran there is nothing
+ * left to compare, and the request already passed. Without the prelude
+ * (the tests, or a web server set up differently) the token is checked here.
+ */
 function dt_check_csrf() {
+  if (function_exists('csrf_terminate')) return;
   $var = @parse_ini_file(dt_file('/var/local/emhttp/var.ini')) ?: [];
-  $token = $_POST['csrf_token'] ?? '';
+  $token = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
   if (empty($var['csrf_token']) || !is_string($token) || !hash_equals($var['csrf_token'], $token)) {
     dt_fail('the page is out of date; reload it', 403);
   }

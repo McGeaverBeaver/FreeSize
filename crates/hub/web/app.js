@@ -271,12 +271,32 @@ PAGES.devices = async () => {
 };
 
 async function copy(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast("Copied");
-  } catch {
-    toast("Select the text and copy it", true);
+  // The clipboard API only works over https (or on localhost). Over plain
+  // http the older copy command still copies selected text.
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Copied");
+      return;
+    } catch {
+      // Fall through to the copy command.
+    }
   }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.append(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  toast(copied ? "Copied" : "Select the text and copy it", !copied);
 }
 
 async function pairDialog() {

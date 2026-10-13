@@ -555,7 +555,9 @@ is reachable from the internet is your choice: on a LAN or WireGuard address
 only your own devices see it; reachable from outside, sign-in goes through
 Authentik's own protections and pairing codes are one-time and short-lived,
 and the Hub limits wrong guesses, but the devices' reports (folder and file
-names) are only as private as your HTTPS.
+names) are only as private as your HTTPS. A plain `http://` address works
+too, on every device including Android; devices warn when they pair over it,
+since anyone on the network can read what they send.
 
 **Unraid**: the template is in `unraid/disktree-hub.xml`. Until it's in
 Community Applications, add it from the Unraid terminal, then pick
@@ -838,7 +840,15 @@ disktree unraid folders --share Movies --folder "Old Films"   # --wake: sleeping
 disktree unraid move plan --share Movies --folder "Old Films" --from disk1 --to disk3
 disktree unraid move start --share Movies --folder "Old Films" --from disk1 --from disk2 --to disk3
 disktree unraid docker-cleanup <id>...    # ids from status --json
+disktree agent pair 'disktree://pair?...' # same as pairing on the page
+disktree agent status                     # the Hub, the approver, grants
+disktree approver set XXXX-XXXX-XXXX-XXXX
 ```
+
+On Unraid, `disktree agent` and `disktree approver` use the plugin's
+pairing on the flash drive; pairing there is picked up by the plugin
+straight away. The plugin's log is `/var/log/disktree.log`, with every
+pairing attempt from the page.
 
 ## Releases
 

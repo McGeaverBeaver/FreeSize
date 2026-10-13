@@ -62,6 +62,12 @@ target_sdk_version = 36
 label = "DiskTree"
 icon = "@mipmap/ic_launcher"
 theme = "@style/AppTheme"
+# Lets the app reach a Hub at a plain http address, the usual LAN setup;
+# Android refuses plain http otherwise, for apps targeting Android 9 and
+# later. The app warns when the Hub's address is plain http. Android ignores
+# this attribute for apps targeting API 38 and later, which then need a
+# network security config instead.
+uses_cleartext_traffic = true
 
 [package.metadata.android.application.activity]
 # Handle these changes in place: Slint relayouts on its own, and recreating a

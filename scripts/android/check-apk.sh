@@ -66,6 +66,13 @@ else
     fail "activity is not marked android:exported=true"
 fi
 
+# Without it Android refuses a Hub at a plain http address, the usual LAN setup.
+if grep -Eq 'usesCleartextTraffic\([^)]*\)=(true|\(type 0x12\)0xffffffff)' <<<"$manifest"; then
+    pass "may reach a plain http Hub"
+else
+    fail "android:usesCleartextTraffic is not true: a plain http Hub can't be reached"
+fi
+
 signature="$("$build_tools/apksigner" verify --verbose "$apk")" || fail "apksigner verify failed"
 if grep -Eq "Verified using v(2|3) scheme \(APK Signature Scheme v(2|3)\): true" <<<"$signature"; then
     pass "signed with APK Signature Scheme v2/v3"

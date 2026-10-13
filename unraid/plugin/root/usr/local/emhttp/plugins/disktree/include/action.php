@@ -121,13 +121,29 @@ case 'keep':
 case 'pair':
   $link = trim((string)($_POST['link'] ?? ''));
   if (!preg_match('#^disktree://pair\?[A-Za-z0-9%._~=&+-]{1,1000}$#', $link)) {
+    dt_log('Pairing with the Hub failed: the pasted text isn\'t a whole pairing link');
     dt_fail('paste the whole pairing link from the dashboard (Pair a device); it starts with disktree://pair?');
   }
   $args = ['agent', 'pair', $link, '--state', dt_state()];
   $name = dt_text('name', 80);
   if ($name !== '') array_push($args, '--name', $name);
   $result = dt_run($args, false);
-  if ($result['ok']) dt_request('hub');
+  // The command warns first (a plain http Hub) and gives its reason last.
+  // The page shows the reason first, and the log keeps every attempt; the
+  // link itself is never logged.
+  $said = [];
+  $warnings = [];
+  foreach ($result['output'] === '' ? [] : explode("\n", $result['output']) as $line) {
+    if (str_starts_with($line, 'warning: ')) $warnings[] = $line;
+    else $said[] = preg_replace('/^disktree: /', '', $line);
+  }
+  if ($result['ok']) {
+    dt_log($said[0] ?? 'Paired with the Hub.');
+    dt_request('hub');
+  } else {
+    dt_log('Pairing with the Hub failed: '.implode(' ', $said));
+  }
+  $result['output'] = implode("\n", array_merge($said, $warnings));
   dt_reply($result, $result['ok'] ? 200 : 400);
 
 case 'approver_check':

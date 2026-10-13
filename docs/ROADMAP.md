@@ -121,6 +121,15 @@ else that can delete:
   over plain `http://` to another machine warns. A damaged device key is
   refused rather than replaced. The README reads the client secret from a
   file and says what a device sends.
+- 0.8.5: every button on the Unraid plugin's page works again. Unraid checks
+  the page's token itself and removes it before the plugin's PHP runs, so
+  the plugin's own second check refused everything with "the page is out of
+  date"; a test now runs the page's PHP the way Unraid does. Pairing on the
+  page is logged and its error stays on the page, reason first. On Unraid,
+  `disktree agent` and `disktree approver` use the plugin's pairing without
+  `--state`. The Android app can reach a Hub at a plain `http://` address
+  and shows Java's reason when it can't reach one. The dashboard's Copy link
+  works over plain http.
 
 Left over and planned (the release it goes in is under Next releases):
 - **A quarantine on phones and desktops**, with one Put back for everything,
@@ -187,14 +196,14 @@ Each release is small enough to ship in a few weeks, and each says what
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
-- **0.8.5, the rename to FreeSize.** Crates, binaries (`freesize`,
+- **0.8.6, the rename to FreeSize.** Crates, binaries (`freesize`,
   `freesize-gui`, `freesize-hub`), the Docker image, the plugin
   (`freesize.plg`, migrating `/boot/config/plugins/disktree`), the data
   folders (migrated on first start), the pairing link scheme (both accepted
   for one release), the Android package id
   (`io.github.mcgeaverbeaver.freesize`; a new id is a new app to Android, so
   the old one is uninstalled once; the signing key stays). The wire names
-  inside the protocol stay as they are. Done when a 0.8.4 plugin, Hub,
+  inside the protocol stay as they are. Done when a 0.8.5 plugin, Hub,
   Windows app and phone each upgrade with pairing, settings, history and
   quarantine intact.
 - **0.9, trust and updates.** The license (GPL-3.0-or-later) and a
@@ -654,6 +663,17 @@ that no file in the scan accounts for, on every platform.
   keep device approvals for every destructive action, and make every remote
   view read-only by default (JAM made SpaceObServer's web access read-only
   for the same reason).
+- **Unraid's own prelude** (`local_prepend.php`, run before every page
+  script) checks a POST's token and then removes it from `$_POST`. A
+  plugin's PHP can't check it a second time; `unraid/tests/page_test.php`
+  runs the page behind a copy of that prelude.
+- **Android refuses plain `http://`** for apps targeting Android 9 and later
+  unless the manifest allows it. `usesCleartextTraffic` does that until the
+  app targets API 38, which ignores it; then it takes a network security
+  config.
+- **Android 17's local network permission**: an app targeting API 37 needs
+  `ACCESS_LOCAL_NETWORK`, asked at run time, to reach a Hub on the LAN. Apps
+  targeting 36 or lower get LAN access through `INTERNET`.
 - **Windows Storage Sense** already makes OneDrive files online-only after
   30 unopened days on C:. The Nextcloud work is worth it for verified copies
   and other drives, not for that toggle.
@@ -679,8 +699,8 @@ that no file in the scan accounts for, on every platform.
 - Phases 2b and 2c come before the Hub (done in 0.4), then 2d (0.5) and
   2e (0.6). The Hub (phase 3) is in 0.7, the Unraid plugin (phase 4), with
   the quarantine and the approver in its settings page, in 0.8.
-- After 0.8.3 (decided 2026-10-12): 0.8.4 fixes, 0.8.5 the rename to
-  FreeSize, 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
+- After 0.8.3 (decided 2026-10-12): 0.8.4 fixes, 0.8.5 the fixes found
+  testing 0.8.4 on a real server and phone, 0.8.6 the rename to FreeSize, 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
   0.10 the junk cleaner (phase 6), 0.11 where the space goes (phase 8) and
   balancing, 0.12 Nextcloud read-only, 0.13 Nextcloud actions, 0.14 the
   phone in the background. See Next releases.

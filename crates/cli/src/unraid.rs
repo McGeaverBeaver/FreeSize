@@ -33,13 +33,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::{Outcome, handle, log};
 
+/// Where the plugin keeps its settings and the Hub pairing (flash drive).
+const PLUGIN_CONFIG: &str = "/boot/config/plugins/disktree";
+/// Where the plugin's page and background part talk (in memory).
+const PLUGIN_DATA: &str = "/var/local/disktree";
+
+/// The plugin's Hub pairing, so `disktree agent` and `disktree approver`
+/// on Unraid use the same file as the page without `--state`.
+pub fn plugin_state() -> PathBuf {
+    Path::new(PLUGIN_CONFIG).join("agent.json")
+}
+
+/// After pairing from the terminal: asks the background part to tell the
+/// Hub everything now, as pairing on the page does. False if it can't.
+pub fn tell_daemon_paired() -> bool {
+    Dirs::new(DirArgs {
+        config: PLUGIN_CONFIG.into(),
+        data: PLUGIN_DATA.into(),
+        root: "/".into(),
+    })
+    .request("hub", "")
+    .is_ok()
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct DirArgs {
     /// Settings, the Hub pairing and saved results (on the flash drive).
-    #[arg(long, global = true, default_value = "/boot/config/plugins/disktree")]
+    #[arg(long, global = true, default_value = PLUGIN_CONFIG)]
     config: PathBuf,
     /// The page's status and requests (in memory).
-    #[arg(long, global = true, default_value = "/var/local/disktree")]
+    #[arg(long, global = true, default_value = PLUGIN_DATA)]
     data: PathBuf,
     /// Where the server's files are; for tests.
     #[arg(long, global = true, default_value = "/", hide = true)]

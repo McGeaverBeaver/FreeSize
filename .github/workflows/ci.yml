@@ -49,6 +49,8 @@ jobs:
           for f in unraid/plugin/root/usr/local/emhttp/plugins/disktree/include/*.php; do php -l "$f"; done
           node --check unraid/plugin/root/usr/local/emhttp/plugins/disktree/disktree.js
           bash -n unraid/plugin/root/etc/rc.d/rc.disktree
+      - name: Test the page's PHP as Unraid runs it
+        run: php unraid/tests/page_test.php
       - name: Build the plugin
         run: |
           cargo build --release --target x86_64-unknown-linux-musl -p disktree-cli
