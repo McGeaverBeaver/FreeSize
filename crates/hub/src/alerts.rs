@@ -351,11 +351,18 @@ pub fn evaluate(
                         "{name}: {} of junk to review",
                         freesize_core::format_size(junk.total)
                     ),
-                    message: format!(
-                        "{} of it is safe to clean. Open the device's Junk tab here, or FreeSize \
-                         on it; nothing is cleaned without approval on the device.",
-                        freesize_core::format_size(junk.safe)
-                    ),
+                    message: if junk.safe > 0 {
+                        format!(
+                            "{} of it is safe to clean. Open the device's Junk tab here, or \
+                             FreeSize on it; nothing is cleaned without approval on the device.",
+                            freesize_core::format_size(junk.safe)
+                        )
+                    } else {
+                        "None of it is safe to clean without a look first. Open the device's \
+                         Junk tab here, or FreeSize on it; nothing is cleaned without approval \
+                         on the device."
+                            .into()
+                    },
                 });
             }
         }

@@ -387,6 +387,16 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.16.4, polish: mistakes around deleting. Clean junk ticked the trash
+  by default and emptied it for good while the confirmation spoke only of
+  caches; the trash now starts unticked and the confirmation names it.
+  The selection bar kept the old count after a new scan (the selection
+  itself was empty), so ticking seemed to replace it. Deleting several
+  items made one quarantine batch each; it's one batch now, put back
+  together. Similar photos and duplicates showed file lengths while the
+  selection counted size on disk (883 KB against 888 KB); both use the
+  scan's sizes now. The Hub's junk alert said "0 B of it is safe to
+  clean".
 - 0.16.3, the first of the polish (the owner's call, 2026-10-13: everyday
   people on a phone or Windows PC first, no new features until it's
   polished). The one long scrolling home screen became places: a list on

@@ -356,9 +356,12 @@ exact paths, each with **Show** to look at the files first.
 - **Safe** rules are ticked: caches and temporary files, which their apps
   make again. They're deleted after the confirmation, which says so (in a
   quarantine they'd free nothing).
-- **Check first** rules (old downloads, installers, the trash, Steam's
-  finished downloads) are never ticked by default. Ticked, they go to the
+- **Check first** rules (old downloads, installers, Steam's finished
+  downloads) are never ticked by default. Ticked, they go to the
   quarantine, where **Put back** restores them.
+- **The trash** (Recycle Bin, Trash, the trash folders in Unraid's shares)
+  isn't ticked by default either: it holds files you deleted earlier.
+  Ticked, it's emptied for good, and the confirmation says so by name.
 - **Use the tool** rules (`Windows.old` and Windows Update's files, the
   hibernation file, macOS updates, the apt cache, the journal) can't be
   ticked: a button opens the system's settings page or shows the command.

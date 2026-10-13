@@ -158,6 +158,16 @@ pub fn delete_all(paths: &[PathBuf], reason: &str) -> (u64, Vec<String>) {
     (bytes, errors)
 }
 
+/// Moves several items into the quarantine as one batch, so Put back
+/// returns them together; what happened to each, in order.
+pub fn delete_each(paths: &[PathBuf]) -> Vec<Result<(), String>> {
+    move_in(&batch_id(), "", "", paths)
+        .results
+        .into_iter()
+        .map(|result| result.map(|_| ()))
+        .collect()
+}
+
 /// Moves one item into the quarantine.
 pub fn delete(path: &Path) -> Result<(), String> {
     let (_, errors) = delete_all(std::slice::from_ref(&path.to_path_buf()), "");

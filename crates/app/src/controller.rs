@@ -1240,6 +1240,8 @@ impl Controller {
         self.refresh_focus_views();
         self.refresh_selection();
         self.refresh_status();
+        // The selection was of the old tree: show it emptied.
+        self.refresh_basket();
         self.refresh_cleanup();
     }
 
@@ -1263,6 +1265,7 @@ impl Controller {
         self.dupe_filter = None;
         self.change_rows.clear();
         self.basket.clear();
+        self.refresh_basket();
         self.earlier.clear();
         self.compare = None;
         ui.set_has_tree(false);
@@ -2735,8 +2738,12 @@ impl Controller {
         .into_iter()
         .collect();
         sections.extend(self.cleanup_found.iter().cloned());
-        let mut dupes =
-            filecleanup::duplicate_section(tree, duplicates, self.dupe_filter.as_deref());
+        let mut dupes = filecleanup::duplicate_section(
+            tree,
+            self.mode,
+            duplicates,
+            self.dupe_filter.as_deref(),
+        );
         if !dupes
             .filters
             .iter()
@@ -2746,6 +2753,7 @@ impl Controller {
             if self.dupe_filter.take().is_some() {
                 dupes = filecleanup::duplicate_section(
                     tree,
+                    self.mode,
                     match &self.dupes {
                         DupeSearch::Done(groups) => Duplicates::Found(groups),
                         _ => Duplicates::NotSearched,
@@ -2767,7 +2775,7 @@ impl Controller {
                 Similar::Found(groups, &lookup)
             }
         };
-        sections.push(filecleanup::similar_section(tree, photos));
+        sections.push(filecleanup::similar_section(tree, self.mode, photos));
         if self.imported {
             // A read-only scan: nothing to tick.
             for section in &mut sections {
@@ -4202,9 +4210,19 @@ impl Controller {
                     moved: None,
                 };
                 let mut moved = Vec::new();
+                // Everything deleted at once is one batch in the quarantine.
+                let mut deleted = match &action {
+                    BasketAction::Delete => {
+                        let paths: Vec<PathBuf> = items.iter().map(|(_, p, _)| p.clone()).collect();
+                        actions::delete_each(&paths).into_iter()
+                    }
+                    BasketAction::Move(_) => Vec::new().into_iter(),
+                };
                 for (id, path, size) in items {
                     let result = match &action {
-                        BasketAction::Delete => actions::delete(&path),
+                        BasketAction::Delete => {
+                            deleted.next().unwrap_or_else(|| Err("not moved".into()))
+                        }
                         BasketAction::Move(destination) => {
                             let to = moves::target(&root_path, &path, destination);
                             let result = moves::move_item(&path, &to).map_err(|e| e.to_string());

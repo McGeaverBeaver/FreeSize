@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.16.3)
+## Where things stand (0.16.4)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -170,7 +170,9 @@ compiling inside Docker.
   home screen (`home::Section`, a sidebar on desktops, bottom tabs on
   phones), Settings with drop-downs, Run as administrator beside Scan on
   Windows (the old window closes), and the Copies fix for Nextcloud
-  accounts signed in by email (`nextcloud.dav_user`).
+  accounts signed in by email (`nextcloud.dav_user`). 0.16.4: fixes
+  around deleting (the trash unticked by default, one quarantine batch
+  per Delete, the selection bar after a new scan, matching sizes).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

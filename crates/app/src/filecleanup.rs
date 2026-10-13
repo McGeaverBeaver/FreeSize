@@ -127,7 +127,7 @@ pub fn flatten(sections: &[Section]) -> Vec<CleanRow> {
 #[cfg(test)]
 pub fn rows(tree: &Tree, mode: SizeMode, now: i64, duplicates: Duplicates) -> Vec<CleanRow> {
     let mut sections = found_sections(tree, mode, now, &[], None, &Offer::default());
-    sections.push(duplicate_section(tree, duplicates, None));
+    sections.push(duplicate_section(tree, mode, duplicates, None));
     flatten(&sections)
 }
 
@@ -382,7 +382,12 @@ pub fn keeper(tree: &Tree, nodes: &[NodeId]) -> NodeId {
 }
 
 /// The duplicate files section; `filter` is an extension to list only.
-pub fn duplicate_section(tree: &Tree, duplicates: Duplicates, filter: Option<&str>) -> Section {
+pub fn duplicate_section(
+    tree: &Tree,
+    mode: SizeMode,
+    duplicates: Duplicates,
+    filter: Option<&str>,
+) -> Section {
     let root_path = tree.path(tree.root());
     let mut section = Section {
         key: DUPLICATES,
@@ -422,7 +427,11 @@ pub fn duplicate_section(tree: &Tree, duplicates: Duplicates, filter: Option<&st
                 .copied()
                 .filter(|&id| !gone(tree, id))
                 .collect();
-            (g.size, left)
+            // The tree's size, as the selection counts it.
+            let size = left
+                .first()
+                .map_or(g.size, |&id| tree.node(id).size_in(mode));
+            (size, left)
         })
         .filter(|(_, left)| left.len() > 1)
         .collect();
@@ -545,7 +554,7 @@ pub fn duplicate_section(tree: &Tree, duplicates: Duplicates, filter: Option<&st
 }
 
 /// The similar photos section.
-pub fn similar_section(tree: &Tree, similar: Similar) -> Section {
+pub fn similar_section(tree: &Tree, mode: SizeMode, similar: Similar) -> Section {
     let root_path = tree.path(tree.root());
     let mut section = Section {
         key: SIMILAR,
@@ -576,15 +585,16 @@ pub fn similar_section(tree: &Tree, similar: Similar) -> Section {
         Similar::Found(groups, preview) => (groups, preview),
     };
     section.action = "Search again".into();
-    // Leave out photos deleted since the search.
+    // Leave out photos deleted since the search. Sizes are the tree's, as
+    // the selection counts them, so the two agree.
     let groups: Vec<Vec<(NodeId, u64)>> = groups
         .iter()
         .map(|g| {
             g.photos
                 .iter()
                 .copied()
-                .zip(g.sizes.iter().copied())
-                .filter(|&(id, _)| !gone(tree, id))
+                .filter(|&id| !gone(tree, id))
+                .map(|id| (id, tree.node(id).size_in(mode)))
                 .collect::<Vec<_>>()
         })
         .filter(|left| left.len() > 1)
@@ -853,7 +863,7 @@ mod tests {
         assert_eq!(folders, ["a", "b"]);
 
         // One copy is kept: the other is what "select extra copies" ticks.
-        let section = duplicate_section(&tree, Duplicates::Found(&groups), None);
+        let section = duplicate_section(&tree, SizeMode::Logical, Duplicates::Found(&groups), None);
         assert_eq!(section.picks.len(), 1);
         assert_eq!(section.groups, vec![section.picks.clone()]);
         let kept: Vec<_> = section.rows.iter().filter(|r| r.badge == "Keep").collect();
@@ -879,14 +889,19 @@ mod tests {
         let groups = find_duplicates(&tree, tree.root(), MIN_DUPLICATE, &DuplicateProgress::new());
         assert_eq!(groups.len(), 2);
 
-        let all = duplicate_section(&tree, Duplicates::Found(&groups), None);
+        let all = duplicate_section(&tree, SizeMode::Logical, Duplicates::Found(&groups), None);
         // EXE frees 4 MB (two extra copies), JPG 3 MB: EXE first.
         let keys: Vec<_> = all.filters.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(keys, ["exe", "jpg"]);
         assert_eq!(all.filters[0].1, "EXE files · 1 set, 4.00 MB");
         assert_eq!(all.picks.len(), 3);
 
-        let exe = duplicate_section(&tree, Duplicates::Found(&groups), Some("exe"));
+        let exe = duplicate_section(
+            &tree,
+            SizeMode::Logical,
+            Duplicates::Found(&groups),
+            Some("exe"),
+        );
         assert_eq!(exe.groups.len(), 1);
         assert_eq!(exe.picks.len(), 2);
         assert!(

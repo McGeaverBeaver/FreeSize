@@ -193,9 +193,16 @@ pub struct Rule {
 
 impl Rule {
     /// Items of this rule are ticked by default: only what's safe and not
-    /// in use.
+    /// in use, and not the trash: those are the person's own files, gone
+    /// for good once it's emptied, so emptying it is their choice.
     pub fn ticked_by_default(&self) -> bool {
-        self.safety == Safety::Safe
+        self.safety == Safety::Safe && !self.empties_trash()
+    }
+
+    /// Emptying the Recycle Bin or the Trash: files the person deleted
+    /// earlier, which no program makes again.
+    pub fn empties_trash(&self) -> bool {
+        matches!(self.id, "recycle-bin" | "trash" | "client-trash")
     }
 }
 
@@ -383,6 +390,9 @@ impl Finding {
             format!("{} is running; close it first.", self.rule.app)
         } else {
             match self.rule.safety {
+                Safety::Safe if self.rule.empties_trash() => {
+                    "Files you deleted earlier; emptying is for good.".into()
+                }
                 Safety::Safe => String::new(),
                 Safety::CheckFirst => "Look first; goes to the quarantine.".into(),
                 Safety::UseTool => format!("Use its own tool: {}", self.rule.tool),
@@ -3132,6 +3142,29 @@ mod tests {
             &["/usr/lib/firefox/firefox".to_string()],
             FIREFOX
         ));
+    }
+
+    #[test]
+    fn the_trash_starts_unticked_but_can_be_ticked() {
+        let dir = tempfile::tempdir().unwrap();
+        let env = Env::under(dir.path());
+        let trash = rule_by_id(Platform::Linux, "trash").unwrap();
+        build(&env, trash.fixture.hit, true);
+        let findings = find(Platform::Linux, &env, &[], now());
+        let found = findings.iter().find(|f| f.rule.id == "trash").unwrap();
+        assert!(!found.ticked() && found.can_tick());
+        assert!(found.why_not().contains("for good"));
+        assert_eq!(safe_total(&findings), 0);
+        for platform in Platform::ALL {
+            for rule in rules_for(platform) {
+                if rule.category == Category::Trash
+                    && rule.safety == Safety::Safe
+                    && rule.take != Take::EmptyFolders
+                {
+                    assert!(rule.empties_trash(), "{}", rule.id);
+                }
+            }
+        }
     }
 
     #[test]

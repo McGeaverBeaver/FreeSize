@@ -166,3 +166,8 @@ pub fn open_url(url: &str) -> Result<(), String> {
 pub fn delete(path: &Path) -> Result<(), String> {
     crate::quarantine::delete(path)
 }
+
+/// Deletes several items as one quarantine batch; each one's outcome.
+pub fn delete_each(paths: &[PathBuf]) -> Vec<Result<(), String>> {
+    crate::quarantine::delete_each(paths)
+}

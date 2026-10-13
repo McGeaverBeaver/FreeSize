@@ -44,7 +44,6 @@ pub struct Photo {
 /// Photos that look alike, largest first.
 pub struct Group {
     pub photos: Vec<NodeId>,
-    pub sizes: Vec<u64>,
     /// Small versions to show, where there was room for one.
     pub previews: Vec<Option<Pixels>>,
 }
@@ -177,7 +176,6 @@ pub fn find(photos: &[Photo], progress: &Progress) -> Vec<Group> {
                 .collect();
             Group {
                 photos: members.iter().map(|&i| photos[i].node).collect(),
-                sizes: members.iter().map(|&i| photos[i].size).collect(),
                 previews,
             }
         })
@@ -606,7 +604,8 @@ mod tests {
         assert_eq!(names, ["a.jpg", "b.jpg", "d.jpg"]);
         let preview = groups[0].previews[0].as_ref().unwrap();
         assert!(preview.width <= PREVIEW && preview.height <= PREVIEW);
-        assert!(groups[0].sizes[0] >= groups[0].sizes[1]);
+        let size = |id: NodeId| tree.node(id).size_in(freesize_core::SizeMode::Logical);
+        assert!(size(groups[0].photos[0]) >= size(groups[0].photos[1]));
         let _ = fs::remove_dir_all(&dir);
     }
 }

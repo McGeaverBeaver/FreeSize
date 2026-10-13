@@ -199,9 +199,14 @@ impl State {
     /// what goes to the quarantine.
     pub fn confirm_text(&self) -> String {
         let chosen = self.chosen();
+        let trash: u64 = chosen
+            .iter()
+            .filter(|f| f.rule.empties_trash())
+            .map(|f| f.bytes)
+            .sum();
         let deleted: u64 = chosen
             .iter()
-            .filter(|f| f.rule.safety == Safety::Safe)
+            .filter(|f| f.rule.safety == Safety::Safe && !f.rule.empties_trash())
             .map(|f| f.bytes)
             .sum();
         let aside: u64 = chosen
@@ -220,6 +225,16 @@ impl State {
                 "Delete {} for good? Caches and temporary files are deleted outright: their \
                  apps make them again when needed, and in a quarantine they'd free nothing.",
                 format_size(deleted)
+            ));
+        }
+        if trash > 0 {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&format!(
+                "Empty the trash for good ({})? Those are files you deleted earlier; they \
+                 can't be put back afterwards.",
+                format_size(trash)
             ));
         }
         if aside > 0 {
@@ -482,6 +497,36 @@ mod tests {
     use freesize_core::junk::{Env, Platform};
 
     use super::*;
+
+    #[test]
+    fn emptying_the_trash_is_asked_for_by_name() {
+        let dir = std::env::temp_dir().join(format!("freesize-trash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let env = Env::under(&dir);
+        for path in [
+            "~/.cache/thumbnails/large/a.png",
+            "~/.local/share/Trash/files/old.pdf",
+        ] {
+            let path = env.expand(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"junk").unwrap();
+        }
+        let mut state = State::default();
+        let findings = junk::find(Platform::Linux, &env, &[], junk::now());
+        state.found(findings, 100);
+        let trash = state
+            .findings
+            .iter()
+            .position(|f| f.rule.id == "trash")
+            .unwrap();
+        assert!(!state.ticked[trash]);
+        assert!(!state.confirm_text().contains("trash"));
+        state.toggle(trash);
+        let text = state.confirm_text();
+        assert!(text.starts_with("Delete 4 B for good? Caches"), "{text}");
+        assert!(text.contains("Empty the trash for good (4 B)?"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn rows_tick_what_is_safe_and_open_to_paths() {
