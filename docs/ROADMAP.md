@@ -381,7 +381,9 @@ Parked, each with its reason:
   `/private`, which deletes refuse). Fixed, and it runs on master pushes
   only, no longer again for each release tag. Found by it: on a desktop
   where FreeSize hadn't saved anything yet, the first delete went to the
-  top of the disk and failed; the data folder is now made first.
+  top of the disk and failed; the data folder is now made first. And on
+  Windows and macOS every https request crashed (the Hub since 0.8.7,
+  the update check): ureq was built without its `native-tls` feature.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

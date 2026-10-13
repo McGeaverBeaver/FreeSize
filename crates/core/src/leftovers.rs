@@ -1065,6 +1065,7 @@ mod tests {
             .collect()
     }
 
+    /// With "/" between folders, on Windows too.
     fn paths(items: &[Item], env: &Env) -> Vec<String> {
         items
             .iter()
@@ -1073,7 +1074,7 @@ mod tests {
                     .strip_prefix(&env.home)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned()
+                    .replace('\\', "/")
             })
             .collect()
     }
@@ -1304,7 +1305,7 @@ mod tests {
                     .strip_prefix(dir.path())
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned()
+                    .replace('\\', "/")
             })
             .collect();
         assert_eq!(

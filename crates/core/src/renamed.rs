@@ -78,9 +78,13 @@ mod tests {
         );
         assert!(base.join("disktree-hub").is_dir());
 
-        // Neither: nothing is made.
-        assert_eq!(adopt_dir(base.join("freesize")), base.join("freesize"));
-        assert!(!base.join("freesize").exists());
+        // Neither: nothing is made. (Not "freesize": on Windows and macOS
+        // that's the "FreeSize" made above.)
+        assert_eq!(
+            adopt_dir(base.join("freesize-cli")),
+            base.join("freesize-cli")
+        );
+        assert!(!base.join("freesize-cli").exists());
         std::fs::remove_dir_all(&base).unwrap();
     }
 

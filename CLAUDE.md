@@ -145,7 +145,10 @@ compiling inside Docker.
   instead of `/storage/emulated/0`. 0.16.2: CI green for the first time
   (it had failed since 0.9 on tests that assumed Linux paths), runs on
   master only, not twice per release; a desktop's first delete before
-  FreeSize had saved anything went to the disk's top and failed.
+  FreeSize had saved anything went to the disk's top and failed; and the
+  Windows and macOS app and command line crashed on any https address
+  (the Hub since 0.8.7, update checks): ureq needs its `native-tls`
+  feature, not `native-tls-no-default`.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

@@ -71,7 +71,9 @@ async fn the_approver_decides_for_a_server() {
         assert_eq!(found.name, "Phone");
         server.approver = Some(Approver { device: found.id, name: found.name, key: found.key });
 
-        let dir = std::env::temp_dir().join(format!("freesize-hub-approve-{}", std::process::id()));
+        // Not the temporary folder: on macOS that's under /private, which
+        // deletes refuse as a system folder.
+        let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("freesize-hub-approve-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("share/isos")).unwrap();
         std::fs::write(dir.join("share/isos/old.iso"), vec![1u8; 70_000]).unwrap();

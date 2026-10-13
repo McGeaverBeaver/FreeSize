@@ -25,8 +25,10 @@ zip = { version = "9.0.2", default-features = false, features = ["deflate"], opt
 
 # The system's TLS and certificate store on Windows and macOS, so nothing
 # needs a C compiler there; rustls with the system's certificates elsewhere.
+# ("native-tls", not "native-tls-no-default": with only the latter, ureq
+# panics on every https address, the Hub's included.)
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-ureq = { version = "3.4.2", optional = true, default-features = false, features = ["native-tls-no-default"] }
+ureq = { version = "3.4.2", optional = true, default-features = false, features = ["native-tls"] }
 
 [target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
 ureq = { version = "3.4.2", optional = true, default-features = false, features = ["rustls", "platform-verifier"] }

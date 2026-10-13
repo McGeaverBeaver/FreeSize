@@ -433,8 +433,8 @@ mod tests {
                     tree.path(r.node)
                         .strip_prefix(root)
                         .unwrap()
-                        .display()
-                        .to_string(),
+                        .to_string_lossy()
+                        .replace('\\', "/"),
                     r.what,
                 )
             })
