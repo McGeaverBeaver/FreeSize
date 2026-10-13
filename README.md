@@ -222,8 +222,8 @@ or, on a phone or a narrow window, from the tabs along the bottom:
 - **Home**: the drives and folders to scan, with how full each is. On a
   phone it also shows how the storage divides up and how it changed.
 - **Clean**: junk FreeSize can find without a scan (see
-  [Clean junk](#clean-junk)); on a phone, the Free up space cards and the
-  quarantine.
+  [Clean junk](#clean-junk)); on a phone, the Free up space cards (with Clean junk)
+  and the quarantine.
 - **Apps** (phones): your apps in groups (see
   [Cleaning up apps](#cleaning-up-apps)).
 - **Quarantine** (desktops): what you deleted, waiting to be put back or
@@ -329,6 +329,16 @@ or Select from the bar at the bottom. Delete moves it to the quarantine.
   storage, get a `.disktree-quarantine` folder at their top, as servers
   do. Deletes a Hub asks for land in the same quarantine, as a batch under
   the request, so the dashboard's Put back and Empty work on them too.
+- **Open a batch** to look inside it like a file explorer: its items,
+  grouped by the folder they came from (or, for a Clean junk batch, by
+  rule), with folders you can open and a path to go back up. Each item has
+  **Open**, **Show in folder**, **Put back** and **Delete for good**;
+  tick several to put back or delete just those. Programs and scripts
+  (`.exe`, `.msi`, `.sh`, `.apk`, …) only get Show in folder, so nothing
+  runs by accident. When the original place already has a file of that
+  name, Put back asks: **Keep both** (the one coming back is called
+  "name (put back).ext"), **Replace** (what's there goes into the
+  quarantine instead) or **Skip**.
 
 ### Clean junk
 
@@ -363,10 +373,18 @@ exact paths, each with **Show** to look at the files first.
   isn't ticked by default either: it holds files you deleted earlier.
   Ticked, it's emptied for good, and the confirmation says so by name.
 - **Use the tool** rules (`Windows.old` and Windows Update's files, the
-  hibernation file, macOS updates, the apt cache, the journal) can't be
-  ticked: a button opens the system's settings page or shows the command.
+  hibernation file, macOS updates, the apt cache, the journal) have no
+  tick box and aren't counted in the total: they're listed at the bottom
+  under "Clean with Windows' own tools" (macOS's, Linux's). **Open
+  settings** opens the system's page; **Show command** opens the command
+  in the row with **Copy** and **Run**. Run asks first, naming the command,
+  what it changes and how to undo it, then shows its output in the row and
+  looks at the rule again. Commands that need an administrator say **Run
+  as administrator**: on Windows FreeSize opens again as administrator,
+  straight on Clean junk; on macOS and Linux the system asks for your
+  password. Started as administrator, it just runs.
 - A rule whose program is running (Chrome's cache while Chrome is open)
-  is skipped until it's closed, and says so.
+  keeps a greyed tick box and a "Chrome is open" badge until it's closed.
 - **Leftovers of removed programs** (Apps, check first) are the settings
   and caches a program left in AppData, `~/Library` or `~/.config`,
   `~/.cache` and `~/.local/share` after it was uninstalled. FreeSize only
@@ -382,16 +400,27 @@ exact paths, each with **Show** to look at the files first.
   back. Nothing is offered on a machine whose list of programs couldn't
   be read.
 
-**Clean** asks once, then frees what it can and reports what was freed,
-what went to the quarantine, what was skipped because a file was in use
-and how much of it will refill. **Remind me about junk**, in Settings, checks
+The card at the top says how much the ticked rules free ("Free 1.6
+GB"), with the **Clean** button and how many rules are ticked, to check
+first, and left to the system's tools. **Clean** asks once, then shows a
+progress page: a bar, each rule waiting, cleaning, done or failed, and
+**Stop**, which stops after the rule it's on. **Close** hides the page while
+cleaning carries on. A results page follows: what was freed, what went to
+the quarantine (with a link to it), what was skipped and why (a file in
+use, a folder that wasn't there) and how much will refill; **Done** goes
+back to the list. Everything one Clean sends to the quarantine is one
+batch called "Clean junk", its items grouped by rule. **Remind me about junk**, in Settings, checks
 once a week or once a day and says under Clean how much junk there is
 to review ("2.4 GB of junk to review, 1.6 GB safe to clean"); it never
 cleans anything by itself. Registry cleaning, memory "boosters" and
 browser history, cookies and saved passwords are left out on purpose: they
 free nothing, or sign you out.
 
-On phones the same rules show as Free up space cards (see
+On phones the home screen shows one **Clean junk** card with the total and
+what's in it, and **Review** opens the same Clean junk screen: the trash,
+saved installers, the thumbnail cache and leftovers of removed apps, with
+the same tick boxes, progress and results pages (the trash goes to the
+quarantine, like the rest; see
 [Cleaning up apps](#cleaning-up-apps)); on an Unraid server the Quarantine
 tab lists the trash folders in the shares; and a paired device's junk is
 on the Hub's Junk tab, with an alert when it grows past a limit. Tick the
@@ -612,21 +641,23 @@ files access:
   (`Android/data/<app>/cache`), usually a small part; the card says how much
   that is (Android 12+) and only offers it when it's worth it. For the rest,
   use *Biggest caches* and Clear cache on each app's info page.
-- **Empty the trash** (Android 11+): photos and videos deleted in the last 30
-  days still take space until Android removes them for good.
-- **Delete old app installers**: `.apk` files in Download. APKs saved with
-  FreeSize in `Download/FreeSize` are kept.
-- **Clear the thumbnail cache**: `DCIM/.thumbnails`, which gallery apps
-  rebuild.
-- **Delete leftovers of removed apps**: their folders in `Android/media`.
-- **Old downloads**: files in Download not changed for 3 months, and
-  **Screen recordings** older than a month, to look through first; some
-  may be the only copy.
-- **Empty folders**: folders with nothing in them, left by removed apps
-  and old downloads.
+- **Clean junk**: one card with the total and what it holds, opening the
+  same Clean junk screen as on a computer (see [Clean junk](#clean-junk)),
+  with a tick box per rule, a progress page and a results page:
+  - the trash (Android 11+): photos and videos deleted in the last 30
+    days, which still take space until Android removes them for good;
+  - old app installers: `.apk` files in Download. APKs saved with
+    FreeSize in `Download/FreeSize` are kept;
+  - the thumbnail cache, `DCIM/.thumbnails`, which gallery apps rebuild
+    (ticked to start with, like empty folders);
+  - leftovers of removed apps: their folders in `Android/media`;
+  - old downloads (files in Download not changed for 3 months) and screen
+    recordings older than a month, to look through first; some may be the
+    only copy;
+  - empty folders left by removed apps and old downloads.
 
-FreeSize asks before deleting anything, moves what goes to the quarantine,
-then measures again.
+FreeSize asks before cleaning, deletes the thumbnail cache and empty folders,
+moves the rest to the quarantine, then measures again.
 
 Two more cards are for things that aren't junk, so they never delete
 anything themselves; **Review** opens the files to look through:

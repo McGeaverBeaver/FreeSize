@@ -135,12 +135,66 @@ struct StoredItem {
     /// Where it is now.
     stored: String,
     bytes: u64,
+    /// What it was set aside as (a junk rule's title); empty for none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    group: String,
 }
 
 /// What a move into the quarantine did, per item asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Moved {
     pub results: Vec<Result<u64, String>>,
+}
+
+/// What a put back does when something is at the item's old place now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Conflict {
+    /// Leave the item in the quarantine.
+    #[default]
+    Skip,
+    /// Put it back beside, as "name (put back).ext".
+    KeepBoth,
+    /// Move what's there into the quarantine, then put the item back.
+    Replace,
+}
+
+/// A name beside `path` that's free: "name (put back).ext", then
+/// "name (put back 2).ext" and on.
+fn free_name(path: &Path) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    (1..)
+        .map(|n| {
+            let tag = if n == 1 {
+                "put back".to_string()
+            } else {
+                format!("put back {n}")
+            };
+            path.with_file_name(format!("{stem} ({tag}){ext}"))
+        })
+        .find(|p| std::fs::symlink_metadata(p).is_err())
+        .expect("some name is free")
+}
+
+/// Saves what's left of a batch on one disk, or removes its folder when
+/// nothing is.
+fn write_or_remove(dir: &Path, mut manifest: Manifest, left: Vec<StoredItem>) {
+    if left.is_empty() {
+        let _ = std::fs::remove_file(dir.join("manifest.json"));
+        let _ = std::fs::remove_dir(dir);
+    } else {
+        manifest.items = left;
+        let _ = std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap_or_default(),
+        );
+    }
 }
 
 pub struct Quarantine {
@@ -185,6 +239,20 @@ impl Quarantine {
     /// Moves `items` aside as batch `id`. Nothing is copied: an item that
     /// can't be moved within its own filesystem stays where it is.
     pub fn move_in(&self, id: &str, by: &str, reason: &str, items: &[PathBuf], now: i64) -> Moved {
+        self.move_in_group(id, by, reason, "", items, now)
+    }
+
+    /// Like [`Quarantine::move_in`], marking the items as `group`. Moving
+    /// into a batch that exists already adds to it.
+    pub fn move_in_group(
+        &self,
+        id: &str,
+        by: &str,
+        reason: &str,
+        group: &str,
+        items: &[PathBuf],
+        now: i64,
+    ) -> Moved {
         let mut results = Vec::new();
         if !valid_id(id) {
             return Moved {
@@ -224,7 +292,14 @@ impl Quarantine {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "item".into());
-                let stored = batch_dir.join(format!("{n}-{k}-{name}"));
+                // A batch added to may hold that name from an earlier move.
+                let stored = (0..)
+                    .map(|j| match j {
+                        0 => batch_dir.join(format!("{n}-{k}-{name}")),
+                        j => batch_dir.join(format!("{n}-{k}-{j}-{name}")),
+                    })
+                    .find(|p| std::fs::symlink_metadata(p).is_err())
+                    .expect("some name is free");
                 let size = size_on_disk(&place.path);
                 let moved = std::fs::create_dir_all(&batch_dir)
                     .and_then(|()| std::fs::rename(&place.path, &stored));
@@ -235,15 +310,21 @@ impl Quarantine {
                         {
                             Some((_, m)) => m,
                             None => {
+                                // A batch added to keeps what it holds.
+                                let earlier =
+                                    std::fs::read_to_string(batch_dir.join("manifest.json"))
+                                        .ok()
+                                        .and_then(|t| serde_json::from_str::<Manifest>(&t).ok())
+                                        .filter(|m| m.id == id);
                                 manifests.push((
                                     batch_dir.clone(),
-                                    Manifest {
+                                    earlier.unwrap_or_else(|| Manifest {
                                         id: id.to_string(),
                                         when: now,
                                         by: by.to_string(),
                                         reason: reason.to_string(),
                                         items: Vec::new(),
-                                    },
+                                    }),
                                 ));
                                 &mut manifests.last_mut().expect("just pushed").1
                             }
@@ -253,6 +334,7 @@ impl Quarantine {
                             physical: place.path.to_string_lossy().into_owned(),
                             stored: stored.to_string_lossy().into_owned(),
                             bytes: size,
+                            group: group.to_string(),
                         });
                         let text = serde_json::to_string_pretty(&*manifest).unwrap_or_default();
                         if let Err(err) = std::fs::write(batch_dir.join("manifest.json"), text) {
@@ -303,6 +385,7 @@ impl Quarantine {
                 original: i.original.clone(),
                 stored: i.stored.clone(),
                 bytes: i.bytes,
+                group: i.group.clone(),
             });
             match batches.iter_mut().find(|b| b.id == manifest.id) {
                 Some(batch) => batch.items.extend(items),
@@ -326,6 +409,11 @@ impl Quarantine {
     /// Puts a batch back. An item whose old place is taken stays in the
     /// quarantine; nothing is overwritten.
     pub fn restore(&self, id: &str) -> Result<String, String> {
+        self.restore_items(id, None, Conflict::Skip)
+    }
+
+    /// The batch's parts on each disk, by id.
+    fn parts(&self, id: &str) -> Result<Vec<(PathBuf, Manifest)>, String> {
         if !valid_id(id) {
             return Err("no such batch".into());
         }
@@ -337,15 +425,67 @@ impl Quarantine {
         if parts.is_empty() {
             return Err("that batch isn't in the quarantine (or its disk is asleep)".into());
         }
+        Ok(parts)
+    }
+
+    /// Of the items `stored` names (all when `None`), the ones whose old
+    /// place is taken now, as shown.
+    pub fn taken(&self, id: &str, stored: Option<&[String]>) -> Vec<String> {
+        let Ok(parts) = self.parts(id) else {
+            return Vec::new();
+        };
+        parts
+            .iter()
+            .flat_map(|(_, m)| &m.items)
+            .filter(|i| stored.is_none_or(|s| s.contains(&i.stored)))
+            .filter(|i| std::fs::symlink_metadata(&i.physical).is_ok())
+            .map(|i| i.original.clone())
+            .collect()
+    }
+
+    /// Puts back the items `stored` names (all when `None`). An item whose
+    /// old place is taken is dealt with as `conflict` says; what was in the
+    /// way is never overwritten, only moved into the quarantine itself.
+    pub fn restore_items(
+        &self,
+        id: &str,
+        stored: Option<&[String]>,
+        conflict: Conflict,
+    ) -> Result<String, String> {
+        let parts = self.parts(id)?;
         let (mut back, mut kept) = (0, Vec::new());
+        let aside_id = format!("r{}", crate::now());
         for (dir, mut manifest) in parts {
             let mut left = Vec::new();
             for item in manifest.items.drain(..) {
-                let physical = PathBuf::from(&item.physical);
-                if std::fs::symlink_metadata(&physical).is_ok() {
-                    kept.push(format!("{}: something is there now", item.original));
+                if stored.is_some_and(|s| !s.contains(&item.stored)) {
                     left.push(item);
                     continue;
+                }
+                let mut physical = PathBuf::from(&item.physical);
+                if std::fs::symlink_metadata(&physical).is_ok() {
+                    match conflict {
+                        Conflict::Skip => {
+                            kept.push(format!("{}: something is there now", item.original));
+                            left.push(item);
+                            continue;
+                        }
+                        Conflict::KeepBoth => physical = free_name(&physical),
+                        Conflict::Replace => {
+                            let moved = self.move_in(
+                                &aside_id,
+                                "",
+                                "replaced by a put back",
+                                std::slice::from_ref(&physical),
+                                crate::now(),
+                            );
+                            if let Some(Err(err)) = moved.results.into_iter().next() {
+                                kept.push(format!("{}: {err}", item.original));
+                                left.push(item);
+                                continue;
+                            }
+                        }
+                    }
                 }
                 let moved = physical
                     .parent()
@@ -359,16 +499,7 @@ impl Quarantine {
                     }
                 }
             }
-            if left.is_empty() {
-                let _ = std::fs::remove_file(dir.join("manifest.json"));
-                let _ = std::fs::remove_dir(&dir);
-            } else {
-                manifest.items = left;
-                let _ = std::fs::write(
-                    dir.join("manifest.json"),
-                    serde_json::to_string_pretty(&manifest).unwrap_or_default(),
-                );
-            }
+            write_or_remove(&dir, manifest, left);
         }
         if kept.is_empty() {
             Ok(format!(
@@ -383,6 +514,46 @@ impl Quarantine {
         } else {
             Err(kept.join("; "))
         }
+    }
+
+    /// Deletes some items of a batch for good; returns the bytes they held.
+    pub fn empty_items(&self, id: &str, stored: &[String]) -> Result<u64, String> {
+        let parts = self.parts(id)?;
+        let (mut freed, mut errors) = (0, Vec::new());
+        for (dir, mut manifest) in parts {
+            let mut left = Vec::new();
+            for item in manifest.items.drain(..) {
+                if !stored.contains(&item.stored) {
+                    left.push(item);
+                    continue;
+                }
+                let path = PathBuf::from(&item.stored);
+                // Only ever inside this batch's own folder.
+                if !path.starts_with(&dir) {
+                    errors.push(format!("{}: not in the quarantine", item.original));
+                    left.push(item);
+                    continue;
+                }
+                let removed = match std::fs::symlink_metadata(&path) {
+                    Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&path),
+                    Ok(_) => std::fs::remove_file(&path),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(err) => Err(err),
+                };
+                match removed {
+                    Ok(()) => freed += item.bytes,
+                    Err(err) => {
+                        errors.push(format!("{}: {err}", item.original));
+                        left.push(item);
+                    }
+                }
+            }
+            write_or_remove(&dir, manifest, left);
+        }
+        if freed == 0 && !errors.is_empty() {
+            return Err(errors.join("; "));
+        }
+        Ok(freed)
     }
 
     /// Deletes batches for good; returns the bytes they held.
@@ -644,6 +815,94 @@ mod tests {
         );
         assert!(q.list().is_empty());
         assert!(q.restore("b1").is_err());
+    }
+
+    #[test]
+    fn single_items_go_back_or_go_for_good() {
+        let (_dir, q, disk1, _disk2) = setup();
+        std::fs::write(disk1.join("Movies/b.mkv"), b"bb").unwrap();
+        q.move_in(
+            "b1",
+            "a",
+            "",
+            &[disk1.join("Movies/keep.mkv"), disk1.join("Movies/b.mkv")],
+            100,
+        );
+        let items = q.list()[0].items.clone();
+        let keep = items
+            .iter()
+            .find(|i| i.original.ends_with("keep.mkv"))
+            .unwrap()
+            .stored
+            .clone();
+        let b = items
+            .iter()
+            .find(|i| i.original.ends_with("b.mkv"))
+            .unwrap()
+            .stored
+            .clone();
+
+        // A new keep.mkv took its place: kept both, the new one untouched.
+        std::fs::write(disk1.join("Movies/keep.mkv"), b"new").unwrap();
+        assert_eq!(q.taken("b1", Some(std::slice::from_ref(&keep))).len(), 1);
+        let answer = q
+            .restore_items("b1", Some(std::slice::from_ref(&keep)), Conflict::KeepBoth)
+            .unwrap();
+        assert_eq!(answer, "put back 1 item");
+        assert_eq!(
+            std::fs::read(disk1.join("Movies/keep.mkv")).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(disk1.join("Movies/keep (put back).mkv")).unwrap(),
+            b"x"
+        );
+        assert_eq!(q.list()[0].items.len(), 1);
+
+        // The other one is deleted for good; the batch is gone with it.
+        assert!(q.empty_items("b1", std::slice::from_ref(&b)).unwrap() > 0);
+        assert!(!PathBuf::from(&b).exists());
+        assert!(q.list().is_empty());
+    }
+
+    #[test]
+    fn adding_to_a_batch_keeps_what_it_held() {
+        let (_dir, q, disk1, _disk2) = setup();
+        std::fs::write(disk1.join("Movies/b.mkv"), b"bb").unwrap();
+        q.move_in_group(
+            "b1",
+            "",
+            "Clean junk",
+            "Old downloads",
+            &[disk1.join("Movies/keep.mkv")],
+            1,
+        );
+        q.move_in_group(
+            "b1",
+            "",
+            "Clean junk",
+            "Installers",
+            &[disk1.join("Movies/b.mkv")],
+            1,
+        );
+        let list = q.list();
+        assert_eq!(list.len(), 1);
+        let groups: Vec<&str> = list[0].items.iter().map(|i| i.group.as_str()).collect();
+        assert_eq!(groups, ["Old downloads", "Installers"]);
+        assert_eq!(q.restore("b1").unwrap(), "put back 2 items");
+        assert_eq!(std::fs::read(disk1.join("Movies/b.mkv")).unwrap(), b"bb");
+    }
+
+    #[test]
+    fn replacing_moves_what_was_in_the_way_aside() {
+        let (_dir, q, disk1, _disk2) = setup();
+        q.move_in("b1", "a", "", &[disk1.join("Movies/keep.mkv")], 100);
+        std::fs::write(disk1.join("Movies/keep.mkv"), b"new").unwrap();
+        q.restore_items("b1", None, Conflict::Replace).unwrap();
+        assert_eq!(std::fs::read(disk1.join("Movies/keep.mkv")).unwrap(), b"x");
+        let list = q.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].reason, "replaced by a put back");
     }
 
     #[test]

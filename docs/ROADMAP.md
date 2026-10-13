@@ -387,6 +387,24 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.17.0, polish: Clean junk and the quarantine, on desktops and phones
+  together (the owner's review, 2026-10-13: "Show command" showed nothing,
+  rules that can't be cleaned had tick boxes, and Clean went to a page
+  that looked like a scan). Rules left to the system's tools moved to
+  their own section at the bottom with no tick box and out of the total;
+  Show command opens the command in the row with Copy and Run, Run asks
+  first (the command, what it changes, how to undo it) and shows the
+  output, and "Run as administrator" reopens FreeSize as administrator on
+  Clean junk on Windows (`--junk`) or asks for the password on macOS and
+  Linux. A summary card says what Clean frees; Clean shows a progress page
+  (a bar, each rule's state, Stop after the current rule) and then a
+  results page. One Clean makes one quarantine batch, "Clean junk", with
+  its items grouped by rule. A quarantine batch opens like a file
+  explorer, with Open, Show in folder, Put back and Delete for good on
+  each item, tick boxes for several, and folders to browse; programs and
+  scripts only get Show in folder. Putting back over a name that's taken
+  asks Keep both, Replace or Skip. The phone's per-kind junk cards became
+  one Clean junk card opening the same screen.
 - 0.16.4, polish: mistakes around deleting. Clean junk ticked the trash
   by default and emptied it for good while the confirmation spoke only of
   caches; the trash now starts unticked and the confirmation names it.
@@ -487,6 +505,44 @@ Parked, each with its reason:
   box and a phone, check the cleaner lists nothing the system's own tool
   would refuse, frees what it says within a few percent, and the result
   shows what was skipped (TESTING.md).
+## Polish
+
+Before any public release (the owner's call, 2026-10-13): no new features
+until FreeSize is polished for everyday people, first on a phone or a
+Windows PC, then home-lab users. The order is the phone app, the desktop
+app, the Hub, then the Unraid page. Only fixes, wording, layout and flow.
+A screen is done when a newcomer can use it without the README, no button
+does nothing and no screen is a dead end, the words match CONTEXT.md, it
+works in light and dark and fits a phone, and every delete says where
+things go and how to get them back. Shizuku mode, the Hub as a Windows
+service and the parked ideas wait until then. The release key, Google's
+registration and the Community Applications submission come last.
+
+Decided for Clean junk and the quarantine (the owner's answers,
+2026-10-13; shipped in 0.17.0):
+
+- Rules only the system's tools can clean have no tick box and aren't
+  counted; they're listed at the bottom under "Clean with Windows' (macOS',
+  Linux's) own tools". A rule whose app is open keeps a greyed tick box
+  with an "X is open" badge.
+- A command shows in the row with Copy and Run. Run asks first, naming
+  the command, what it changes and how to undo it; its output shows in the
+  row and the rule is looked at again. Without administrator rights the
+  button says "Run as administrator": Windows reopens FreeSize as
+  administrator on Clean junk, macOS and Linux ask for the password.
+  Settings-only rules keep "Open settings", plus Run where a safe command
+  exists.
+- Clean shows a real progress page (a bar, each rule, Stop after the
+  current rule; Close hides it while cleaning goes on), then a results
+  page (freed, quarantined with a link, skipped and why, Done). The list
+  starts with a summary card: a big "Free X", Clean, and the counts.
+- One Clean is one quarantine batch, "Clean junk", grouped by rule.
+- A batch opens as an explorer page: per item Open, Show in folder, Put
+  back and Delete for good, plus tick boxes. Programs and scripts only get
+  Show in folder. Putting back over an existing name asks Keep both (the
+  default, "name (put back).ext"), Replace or Skip.
+- The phone gets the same design.
+
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what

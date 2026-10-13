@@ -9,7 +9,7 @@ use freesize_core::{DiskSpace, disk_space, format_count, format_size};
 use std::path::Path;
 
 use crate::apps::{Abilities, AppReport, AppUsage};
-use crate::cleanup::{Junk, JunkKind, MediaUse, Review, ReviewKind, SAVED_APKS};
+use crate::cleanup::{Junk, JunkKind, MediaUse, Review, ReviewKind};
 use crate::growth::{self, DriveLog};
 use crate::history::Entry;
 use crate::insights::{self, Source, View, ago, date, duration};
@@ -624,12 +624,19 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
     if cache >= CACHE_WORTH_IT {
         cards.push(cache_card(report, &options, cache));
     }
-    for kind in JunkKind::ALL {
-        if let Some(junk) = report.junk.iter().find(|j| {
-            j.kind == kind && (j.bytes >= WORTH_SHOWING || (kind.counted() && !j.paths.is_empty()))
-        }) {
-            cards.push(junk_row(junk));
-        }
+    // The trash, installers and the rest: one card, opening the Clean junk
+    // screen where each kind is ticked or not.
+    let worth: Vec<&Junk> = JunkKind::ALL
+        .iter()
+        .filter_map(|&kind| {
+            report.junk.iter().find(|j| {
+                j.kind == kind
+                    && (j.bytes >= WORTH_SHOWING || (kind.counted() && !j.paths.is_empty()))
+            })
+        })
+        .collect();
+    if !worth.is_empty() {
+        cards.push(junk_card(&worth));
     }
     for kind in ReviewKind::ALL {
         if let Some(review) = report
@@ -729,21 +736,6 @@ pub fn hub_sheet(state: &freesize_agent::AgentState, status: &str, now: i64) -> 
     }
 }
 
-/// "a.jpg, b.jpg and 3 more".
-fn some_names(names: &[String]) -> String {
-    const SHOWN: usize = 3;
-    let shown = names
-        .iter()
-        .take(SHOWN)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
-    match names.len().saturating_sub(SHOWN) {
-        0 => shown,
-        more => format!("{shown} and {more} more"),
-    }
-}
-
 pub(crate) fn count(n: usize, one: &str, many: &str) -> String {
     format!(
         "{} {}",
@@ -762,77 +754,41 @@ fn short_folder(path: &Path) -> String {
         .to_string()
 }
 
-fn junk_row(junk: &Junk) -> HomeRow {
-    let size = format_size(junk.bytes);
-    let n = junk.paths.len();
-    let (title, text, button) = match junk.kind {
-        JunkKind::Trash => (
-            format!("Empty the trash: {size}"),
-            format!(
-                "{} you deleted in the last 30 days, such as {}. They still take space until \
-                 Android removes them for good.",
-                count(n, "item", "items"),
-                some_names(&junk.names)
-            ),
-            "Empty trash",
+/// The phone's Clean junk card: what each kind holds, and the way to the
+/// screen that cleans them.
+fn junk_card(found: &[&Junk]) -> HomeRow {
+    let total: u64 = found.iter().map(|j| j.bytes).sum();
+    let kinds: Vec<String> = found
+        .iter()
+        .map(|j| {
+            let name = match j.kind {
+                JunkKind::Trash => "the trash",
+                JunkKind::Installers => "old installers",
+                JunkKind::Thumbnails => "thumbnails",
+                JunkKind::Leftovers => "leftovers of removed apps",
+                JunkKind::OldDownloads => "old downloads",
+                JunkKind::ScreenRecordings => "screen recordings",
+                JunkKind::EmptyFolders => "empty folders",
+            };
+            if j.bytes > 0 {
+                format!("{name} ({})", format_size(j.bytes))
+            } else {
+                name.to_string()
+            }
+        })
+        .collect();
+    let mut list = kinds.join(", ");
+    if let Some(first) = list.get(..1) {
+        list = first.to_uppercase() + &list[1..];
+    }
+    notice(
+        &format!("Clean junk: {}", format_size(total)),
+        &format!(
+            "{list}. Tick what goes on the next screen; nothing is deleted until you \
+             confirm."
         ),
-        JunkKind::Installers => (
-            format!("Delete old app installers: {size}"),
-            format!(
-                "{} in Download: {}. Installers you saved with FreeSize in {SAVED_APKS} are \
-                 kept.",
-                count(n, "APK file", "APK files"),
-                some_names(&junk.names)
-            ),
-            "Delete",
-        ),
-        JunkKind::Thumbnails => (
-            format!("Clear the thumbnail cache: {size}"),
-            "Old preview images in DCIM/.thumbnails. Gallery apps make new ones when they \
-             need them."
-                .to_string(),
-            "Clear",
-        ),
-        JunkKind::Leftovers => (
-            format!("Delete leftovers of removed apps: {size}"),
-            format!(
-                "{} in Android/media from apps that are no longer installed: {}.",
-                count(n, "folder", "folders"),
-                some_names(&junk.names)
-            ),
-            "Delete",
-        ),
-        JunkKind::OldDownloads => (
-            format!("Old downloads: {size}"),
-            format!(
-                "{} in Download not changed for 3 months: {}. Look through them first; some \
-                 may be the only copy.",
-                count(n, "file", "files"),
-                some_names(&junk.names)
-            ),
-            "Review",
-        ),
-        JunkKind::ScreenRecordings => (
-            format!("Screen recordings: {size}"),
-            format!(
-                "{} older than a month: {}. They add up fast; keep the ones you want.",
-                count(n, "recording", "recordings"),
-                some_names(&junk.names)
-            ),
-            "Review",
-        ),
-        JunkKind::EmptyFolders => (
-            format!("Empty folders: {}", count(n, "folder", "folders")),
-            format!(
-                "Left by removed apps and old downloads, such as {}. They take no space, \
-                 only clutter.",
-                some_names(&junk.names)
-            ),
-            "Remove",
-        ),
-    };
-    let key = format!("{CLEAN_PREFIX}{}", junk.kind.id());
-    notice(&title, &text, Some((button, &key)))
+        Some(("Review", crate::junk::OPEN)),
+    )
 }
 
 fn review_row(review: &Review) -> HomeRow {
@@ -1828,10 +1784,22 @@ mod tests {
             .iter()
             .map(|r| r.key.to_string())
             .collect();
-        assert_eq!(keys, ["clean:trash", "clean:leftovers"]);
-        let trash = home.iter().find(|r| r.key == "clean:trash").unwrap();
-        assert_eq!(trash.title, "Empty the trash: 5.00 MB");
-        assert!(trash.subtitle.contains("a.jpg, b.jpg, c.jpg and 1 more"));
+        // One card for all of it; the thumbnails are too small to name.
+        assert_eq!(keys, [crate::junk::OPEN]);
+        let card = home.iter().find(|r| r.key == crate::junk::OPEN).unwrap();
+        assert_eq!(card.title, "Clean junk: 7.00 MB");
+        assert!(
+            card.subtitle
+                .starts_with("The trash (5.00 MB), leftovers of removed apps (2.00 MB).")
+        );
+        // The screen it opens lists each kind, the trash unticked.
+        let findings = crate::junk::phone_findings(&report.junk);
+        let titles: Vec<&str> = findings.iter().map(|f| f.rule.title).collect();
+        assert_eq!(
+            titles,
+            ["Thumbnail cache", "Trash", "Leftovers of removed apps"]
+        );
+        assert!(findings[0].ticked() && !findings[1].ticked() && !findings[2].ticked());
         assert_eq!(
             junk_confirm(&report.junk[2]),
             "Move 1 folder left by removed apps (2.00 MB) to the quarantine? Put back restores \

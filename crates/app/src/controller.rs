@@ -338,6 +338,18 @@ pub struct Controller {
     junk_quiet: bool,
     /// The chosen junk waits for the confirmation.
     pending_junk: bool,
+    /// The tool rule whose command runs once the confirmation is accepted.
+    pending_command: Option<usize>,
+    /// The phone's Clean junk screen waits for the apps report.
+    junk_after_apps: bool,
+    /// A quarantined batch's page, while it's open.
+    quarantine_view: Option<quarantine::View>,
+    /// Items of a batch to delete for good once confirmed.
+    pending_empty_items: Option<(String, Vec<String>)>,
+    /// Items of a batch to put back once a conflict is answered.
+    pending_restore: Option<(String, Vec<String>)>,
+    /// A tool rule's command running, and what it printed.
+    command_job: Option<(&'static str, Slot<Result<String, String>>)>,
     timer: Timer,
     ticks: u64,
 }
@@ -495,12 +507,22 @@ pub fn install(
             photos: PhotoSearch::Idle,
             drive_log: DriveLog::default(),
             pending_open: None,
-            junk: junk::State::new(growth::data_dir()),
+            junk: {
+                let mut state = junk::State::new(growth::data_dir());
+                state.elevated = elevated || freesize_core::access::rights().sees_everything();
+                state
+            },
             junk_rows: Rc::new(VecModel::default()),
             junk_find_job: None,
             junk_clean_job: None,
             junk_quiet: false,
             pending_junk: false,
+            pending_command: None,
+            junk_after_apps: false,
+            quarantine_view: None,
+            pending_empty_items: None,
+            pending_restore: None,
+            command_job: None,
             timer: Timer::default(),
             ticks: 0,
         })
@@ -513,7 +535,10 @@ pub fn install(
     ui.set_app_bubbles(ModelRc::from(ctl.borrow().app_bubble_rows.clone()));
     ui.set_change_rows(ModelRc::from(ctl.borrow().change_rows.clone()));
     ui.set_junk_rows(ModelRc::from(ctl.borrow().junk_rows.clone()));
-    let start = initial.clone().unwrap_or_else(locations::default_path);
+    let start = initial
+        .clone()
+        .filter(|p| p.as_os_str() != elevate::JUNK_FLAG)
+        .unwrap_or_else(locations::default_path);
     ui.set_path(start.to_string_lossy().as_ref().into());
     ui.set_can_browse(actions::CAN_BROWSE);
     ui.set_can_reveal(actions::CAN_REVEAL);
@@ -620,6 +645,24 @@ pub fn install(
     on!(ui, on_junk_tool, weak, |c, index| c.junk_tool(index));
     on!(ui, on_junk_clean, weak, |c| c.request_junk_clean());
     on!(ui, on_junk_again, weak, |c| c.junk_find(false));
+    on!(ui, on_junk_stop, weak, |c| c.junk_stop());
+    on!(ui, on_qv_back, weak, |c| c.qv_back());
+    on!(ui, on_qv_toggle, weak, |c, id| c.qv_toggle(id));
+    on!(ui, on_qv_open_item, weak, |c, id| c.qv_open_item(id));
+    on!(ui, on_qv_reveal, weak, |c, id| c.qv_reveal(id));
+    on!(ui, on_qv_restore, weak, |c, id| c.qv_restore(Some(id)));
+    on!(ui, on_qv_delete, weak, |c, id| c.qv_delete(Some(id)));
+    on!(ui, on_qv_restore_chosen, weak, |c| c.qv_restore(None));
+    on!(ui, on_qv_delete_chosen, weak, |c| c.qv_delete(None));
+    on!(ui, on_conflict_chosen, weak, |c, choice| c
+        .conflict_chosen(choice));
+    on!(ui, on_junk_done, weak, |c| c.junk_done());
+    on!(ui, on_junk_command, weak, |c, index| c.junk_command(index));
+    on!(ui, on_junk_run, weak, |c, index| c.request_junk_run(index));
+    on!(ui, on_junk_quarantine, weak, |c| {
+        c.junk_open(false);
+        c.show_section(Section::Quarantine);
+    });
 
     // Folder pickers are modal, so they run without holding the controller.
     let move_weak = weak.clone();
@@ -680,9 +723,17 @@ pub fn install(
         c.refresh_home();
     }
 
-    if let Some(path) = initial {
-        ctl.borrow_mut()
-            .start_scan(path.to_string_lossy().into_owned());
+    match initial {
+        // The window as administrator, opened to run a Clean junk command.
+        Some(path) if path.as_os_str() == elevate::JUNK_FLAG => {
+            let mut c = ctl.borrow_mut();
+            c.junk_open(true);
+            c.junk_find(false);
+        }
+        Some(path) => ctl
+            .borrow_mut()
+            .start_scan(path.to_string_lossy().into_owned()),
+        None => {}
     }
     ctl
 }
@@ -788,6 +839,9 @@ impl Controller {
                 Ok(report) => AppsState::Ready(report),
                 Err(err) => AppsState::Failed(err),
             };
+            if std::mem::take(&mut self.junk_after_apps) {
+                self.junk_from_report();
+            }
             if let AppsState::Ready(report) = &self.apps {
                 // Folders of apps in Android/media and the like get their icons.
                 self.owners.set_android_icons(report.icons.clone());
@@ -995,10 +1049,29 @@ impl Controller {
             && let Some(outcome) = take(job)
         {
             self.junk_clean_job = None;
+            self.junk.progress = None;
+            self.junk.stage = junk::Stage::Done;
             self.junk.outcome = Some(outcome.clone());
             self.set_status(&outcome.summary());
             self.quarantine_changed();
             // What's left, now that some of it went.
+            self.junk_find(false);
+        } else if self.junk_clean_job.is_some() {
+            // The progress page follows the clean.
+            self.junk_refresh();
+        }
+        if let Some((index, job)) = &self.command_job
+            && let Some(result) = take(job)
+        {
+            let id = *index;
+            self.command_job = None;
+            self.junk.command_running = None;
+            let text = match result {
+                Ok(text) => text,
+                Err(err) => format!("Didn't work: {err}"),
+            };
+            self.junk.command_output.insert(id, text);
+            // Look again: the rule should be smaller now.
             self.junk_find(false);
         }
 
@@ -1018,7 +1091,8 @@ impl Controller {
             || self.basket_job.is_some()
             || self.put_back_job.is_some()
             || self.junk_find_job.is_some()
-            || self.junk_clean_job.is_some();
+            || self.junk_clean_job.is_some()
+            || self.command_job.is_some();
         if !busy {
             self.timer.stop();
         }
@@ -1311,7 +1385,7 @@ impl Controller {
         };
         let mut rows = home::rows(&self.apps, options);
         if page.is_none() {
-            if self.section == Section::Clean && !cfg!(target_os = "android") {
+            if self.section == Section::Clean && !phone_junk() {
                 rows.extend(self.junk.home_rows(now));
             }
             if self.section.has_quarantine() {
@@ -1620,6 +1694,11 @@ impl Controller {
                 }
             }
             quarantine::EMPTY_ALL_ACTION => self.confirm_empty(None),
+            id if id.starts_with(quarantine::OPEN_PREFIX) => {
+                self.quarantine_view =
+                    Some(quarantine::View::new(&id[quarantine::OPEN_PREFIX.len()..]));
+                self.refresh_quarantine_view();
+            }
             id if id.starts_with(quarantine::RESTORE_PREFIX) => {
                 self.restore_batch(id[quarantine::RESTORE_PREFIX.len()..].to_string());
             }
@@ -1632,7 +1711,9 @@ impl Controller {
             }
             junk::OPEN => {
                 self.junk_open(true);
-                if !self.junk.looked {
+                if phone_junk() {
+                    self.junk_from_report();
+                } else if !self.junk.looked {
                     self.junk_find(false);
                 }
             }
@@ -3136,6 +3217,13 @@ impl Controller {
         if self.junk_find_job.is_some() {
             return;
         }
+        // A phone's junk is what the apps report found: measured again.
+        if phone_junk() {
+            self.junk_after_apps = true;
+            self.start_apps_job();
+            self.junk_refresh();
+            return;
+        }
         let result: Slot<Vec<freesize_core::junk::Finding>> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
@@ -3156,7 +3244,6 @@ impl Controller {
             Ok(_) => {
                 self.junk_find_job = Some(result);
                 self.junk_quiet = quiet;
-                self.junk.outcome = None;
                 self.ensure_ticking();
                 self.junk_refresh();
             }
@@ -3200,17 +3287,135 @@ impl Controller {
         let Some(ui) = self.ui() else {
             return;
         };
-        let busy = self.junk_find_job.is_some() || self.junk_clean_job.is_some();
-        self.junk_rows.set_vec(self.junk.rows(busy));
+        let looking = self.junk_find_job.is_some() || self.junk_after_apps;
+        let cleaning = self.junk_clean_job.is_some();
+        self.junk_rows.set_vec(self.junk.rows(looking && !cleaning));
+        ui.set_junk_stage(self.junk.stage.key());
+        ui.set_junk_headline(self.junk.headline().into());
         ui.set_junk_summary(self.junk.summary().into());
-        ui.set_junk_busy(busy);
+        ui.set_junk_busy(looking || cleaning);
         let chosen = self.junk.chosen_bytes();
-        ui.set_junk_can_clean(chosen > 0);
+        ui.set_junk_can_clean(chosen > 0 && !looking && !cleaning);
         ui.set_junk_clean_label(if chosen > 0 {
             format!("Clean {}", format_size(chosen)).into()
         } else {
             "Clean".into()
         });
+        match self.junk.stage {
+            junk::Stage::Cleaning => {
+                let (steps, fraction, line) = self.junk.progress_view();
+                ui.set_junk_steps(ModelRc::new(VecModel::from(steps)));
+                ui.set_junk_fraction(fraction);
+                ui.set_junk_progress_line(line.into());
+                ui.set_junk_stopping(
+                    self.junk
+                        .progress
+                        .as_ref()
+                        .is_some_and(|p| p.stop.load(Ordering::Relaxed)),
+                );
+            }
+            junk::Stage::Done => {
+                let (title, text, steps) = self.junk.results_view();
+                ui.set_junk_result_title(title.into());
+                ui.set_junk_result_text(text.into());
+                ui.set_junk_steps(ModelRc::new(VecModel::from(steps)));
+                ui.set_junk_has_quarantined(
+                    self.junk
+                        .outcome
+                        .as_ref()
+                        .is_some_and(|o| o.quarantined > 0),
+                );
+            }
+            junk::Stage::List => {}
+        }
+    }
+
+    /// The phone's Clean junk screen, from what the apps report found.
+    fn junk_from_report(&mut self) {
+        let findings = self
+            .report()
+            .map(|r| junk::phone_findings(&r.junk))
+            .unwrap_or_default();
+        self.junk.phone = true;
+        self.junk.found(findings, apps::now() as i64);
+        self.junk_refresh();
+    }
+
+    /// Stop after the rule cleaning now.
+    fn junk_stop(&mut self) {
+        if let Some(progress) = &self.junk.progress {
+            progress.stop.store(true, Ordering::Relaxed);
+        }
+        self.junk_refresh();
+    }
+
+    /// Back from the results to the list, looked at again.
+    fn junk_done(&mut self) {
+        self.junk.stage = junk::Stage::List;
+        self.junk.outcome = None;
+        self.junk_refresh();
+    }
+
+    /// Shows or hides a tool rule's command.
+    fn junk_command(&mut self, index: i32) {
+        if let Ok(index) = usize::try_from(index) {
+            self.junk.toggle_command(index);
+            self.junk_refresh();
+        }
+    }
+
+    /// Run: asks first. Without the rights it needs, Windows opens
+    /// FreeSize again as administrator on this screen instead.
+    fn request_junk_run(&mut self, index: i32) {
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let Some(command) = self.junk.command_of(index) else {
+            return;
+        };
+        if self.command_job.is_some() {
+            return;
+        }
+        if command.admin && !self.junk.elevated && cfg!(windows) {
+            match elevate::relaunch_for_junk() {
+                Ok(()) => {
+                    self.junk_open(false);
+                    self.leave_for_admin_window();
+                }
+                Err(err) => self.set_status(&format!("Couldn't open as administrator: {err}.")),
+            }
+            return;
+        }
+        let (Some(ui), Some(text)) = (self.ui(), self.junk.run_confirm_text(index)) else {
+            return;
+        };
+        ui.set_confirm_text(text.into());
+        ui.set_delete_label("Run".into());
+        ui.set_confirm_open(true);
+        self.pending_command = Some(index);
+    }
+
+    fn run_junk_command(&mut self, index: usize) {
+        let (Some(command), Some(id)) = (self.junk.command_of(index), self.junk.rule_id(index))
+        else {
+            return;
+        };
+        let elevated = self.junk.elevated;
+        let result: Slot<Result<String, String>> = Arc::default();
+        let worker_result = result.clone();
+        let spawned = std::thread::Builder::new()
+            .name("freesize-junk-command".into())
+            .spawn(move || put(&worker_result, junk::run_command(command, elevated)));
+        match spawned {
+            Ok(_) => {
+                self.command_job = Some((id, result));
+                self.junk.command_running = Some(id);
+                self.junk.command_output.remove(id);
+                self.ensure_ticking();
+                self.junk_refresh();
+            }
+            Err(err) => self.set_status(&format!("Couldn't run it: {err}")),
+        }
     }
 
     fn junk_toggle(&mut self, index: i32) {
@@ -3236,8 +3441,7 @@ impl Controller {
         }
     }
 
-    /// Opens the settings page that removes a rule's junk, or names the
-    /// command.
+    /// Opens the settings page that removes a rule's junk.
     fn junk_tool(&mut self, index: i32) {
         let Some(finding) = usize::try_from(index)
             .ok()
@@ -3246,13 +3450,10 @@ impl Controller {
             return;
         };
         let tool = finding.rule.tool;
-        match junk::tool_url(tool) {
-            Some(url) => {
-                if let Err(err) = actions::open_url(url) {
-                    self.set_status(&format!("Couldn't open {tool}: {err}"));
-                }
-            }
-            None => self.set_status(&format!("Run in a terminal: {tool}")),
+        if let Some(url) = junk::tool_url(tool)
+            && let Err(err) = actions::open_url(url)
+        {
+            self.set_status(&format!("Couldn't open {tool}: {err}"));
         }
     }
 
@@ -3284,12 +3485,16 @@ impl Controller {
         }
         let result: Slot<junk::Outcome> = Arc::default();
         let worker_result = result.clone();
+        let progress: Arc<junk::Progress> = Arc::default();
+        let worker_progress = progress.clone();
         let spawned = std::thread::Builder::new()
             .name("freesize-junk-clean".into())
-            .spawn(move || put(&worker_result, junk::clean(chosen)));
+            .spawn(move || put(&worker_result, junk::clean(chosen, &worker_progress)));
         match spawned {
             Ok(_) => {
                 self.junk_clean_job = Some(result);
+                self.junk.progress = Some(progress);
+                self.junk.stage = junk::Stage::Cleaning;
                 self.ensure_ticking();
                 self.set_status("Cleaning…");
                 self.junk_refresh();
@@ -3302,6 +3507,7 @@ impl Controller {
     /// Hub's request): the lists, the home screen and the Hub hear of it.
     fn quarantine_changed(&mut self) {
         self.quarantine = quarantine::list();
+        self.refresh_quarantine_view();
         if self.hub.state().is_some() {
             self.hub.report(freesize_proto::Report {
                 quarantine: Some(self.quarantine.clone()),
@@ -3333,9 +3539,201 @@ impl Controller {
         self.pending_empty = Some(batches.into_iter().map(|b| b.id).collect());
     }
 
+    /// Shows the open batch's page as the quarantine is now, or closes it
+    /// when the batch is gone.
+    fn refresh_quarantine_view(&mut self) {
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        let now = apps::now() as i64;
+        let built = self
+            .quarantine_view
+            .as_mut()
+            .and_then(|view| view.rows(&self.quarantine, now));
+        match built {
+            Some((head, rows)) => {
+                ui.set_qv_title(head.title.into());
+                ui.set_qv_subtitle(head.subtitle.into());
+                ui.set_qv_crumbs(head.crumbs.into());
+                ui.set_qv_picked(head.picked.into());
+                ui.set_qv_rows(ModelRc::new(VecModel::from(rows)));
+                ui.set_qv_busy(self.quarantine_job.is_some());
+                ui.set_qv_open(true);
+            }
+            None => {
+                self.quarantine_view = None;
+                ui.set_qv_open(false);
+            }
+        }
+    }
+
+    /// Up a folder, or back to the quarantine.
+    fn qv_back(&mut self) {
+        if let Some(view) = &mut self.quarantine_view
+            && view.folders.pop().is_none()
+        {
+            self.quarantine_view = None;
+        }
+        if self.quarantine_view.is_none()
+            && let Some(ui) = self.ui()
+        {
+            ui.set_qv_open(false);
+        }
+        self.refresh_quarantine_view();
+    }
+
+    fn qv_toggle(&mut self, id: i32) {
+        if let Some(view) = &mut self.quarantine_view {
+            view.toggle(id);
+        }
+        self.refresh_quarantine_view();
+    }
+
+    /// A folder opens here; a file opens with its app, unless it's a
+    /// program, which would run.
+    fn qv_open_item(&mut self, id: i32) {
+        let Some((path, _)) = self
+            .quarantine_view
+            .as_ref()
+            .and_then(|v| v.target(id))
+            .cloned()
+        else {
+            return;
+        };
+        if path.is_dir() {
+            if let Some(view) = &mut self.quarantine_view {
+                view.folders.push(path);
+            }
+            self.refresh_quarantine_view();
+        } else if quarantine::runs_when_opened(&path) {
+            self.set_status("Programs aren't opened from the quarantine; use Show in folder.");
+        } else if let Err(err) = actions::open(&path) {
+            self.set_status(&format!("Couldn't open it: {err}"));
+        }
+    }
+
+    fn qv_reveal(&mut self, id: i32) {
+        if let Some((path, _)) = self.quarantine_view.as_ref().and_then(|v| v.target(id))
+            && let Err(err) = actions::reveal(path)
+        {
+            self.set_status(&format!("Couldn't show it: {err}"));
+        }
+    }
+
+    /// The items a button acts on: one row's, or the ticked ones (all
+    /// when none is ticked).
+    fn qv_items(&self, id: Option<i32>) -> Option<(String, Vec<String>)> {
+        let view = self.quarantine_view.as_ref()?;
+        let batch = self.quarantine.iter().find(|b| b.id == view.batch)?;
+        let items = match id {
+            Some(id) => vec![view.target(id)?.1.clone()?],
+            None => view.chosen(batch),
+        };
+        Some((view.batch.clone(), items))
+    }
+
+    /// Puts items back; when something new is at an item's old place,
+    /// asks what to do first.
+    fn qv_restore(&mut self, id: Option<i32>) {
+        let Some((batch, items)) = self.qv_items(id) else {
+            return;
+        };
+        if self.quarantine_job.is_some() {
+            return;
+        }
+        let taken = quarantine::taken(&batch, &items);
+        if taken.is_empty() {
+            self.restore_items(batch, items, quarantine::Conflict::Skip);
+            return;
+        }
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        let mut text = if taken.len() == 1 {
+            format!(
+                "Something new is at {} now. Keep both (the one put back is named \
+                 “… (put back)”), replace it (it goes to the quarantine instead), or skip it?",
+                taken[0]
+            )
+        } else {
+            format!(
+                "Something new is where {} of these were. Keep both (those put back are named \
+                 “… (put back)”), replace them (what's there goes to the quarantine \
+                 instead), or skip them?",
+                taken.len()
+            )
+        };
+        if taken.len() > 1 {
+            for name in taken.iter().take(8) {
+                text.push_str("\n• ");
+                text.push_str(name);
+            }
+        }
+        ui.set_conflict_text(text.into());
+        ui.set_conflict_open(true);
+        self.pending_restore = Some((batch, items));
+    }
+
+    fn conflict_chosen(&mut self, choice: i32) {
+        if let Some(ui) = self.ui() {
+            ui.set_conflict_open(false);
+        }
+        let Some((batch, items)) = self.pending_restore.take() else {
+            return;
+        };
+        let conflict = match choice {
+            0 => quarantine::Conflict::KeepBoth,
+            1 => quarantine::Conflict::Replace,
+            2 => quarantine::Conflict::Skip,
+            _ => return,
+        };
+        self.restore_items(batch, items, conflict);
+    }
+
+    fn restore_items(&mut self, batch: String, items: Vec<String>, conflict: quarantine::Conflict) {
+        self.run_quarantine_job("Putting back…", move || {
+            quarantine::restore_items(&batch, &items, conflict)
+                .map(|text| capitalize_first(&text) + ".")
+        });
+        self.refresh_quarantine_view();
+    }
+
+    /// Deletes items for good, after the confirmation listing them.
+    fn qv_delete(&mut self, id: Option<i32>) {
+        let Some((batch, items)) = self.qv_items(id) else {
+            return;
+        };
+        let Some(whole) = self.quarantine.iter().find(|b| b.id == batch).cloned() else {
+            return;
+        };
+        if self.quarantine_job.is_some() {
+            return;
+        }
+        let chosen = freesize_proto::unraid::QuarantineBatch {
+            items: whole
+                .items
+                .iter()
+                .filter(|i| items.contains(&i.stored))
+                .cloned()
+                .collect(),
+            ..whole
+        };
+        let chosen = freesize_proto::unraid::QuarantineBatch {
+            bytes: chosen.items.iter().map(|i| i.bytes).sum(),
+            ..chosen
+        };
+        let Some(ui) = self.ui() else {
+            return;
+        };
+        ui.set_confirm_text(quarantine::confirm_text(std::slice::from_ref(&chosen)).into());
+        ui.set_delete_label("Delete for good".into());
+        ui.set_confirm_open(true);
+        self.pending_empty_items = Some((batch, items));
+    }
+
     fn restore_batch(&mut self, id: String) {
         self.run_quarantine_job("Putting back…", move || {
-            quarantine::restore(&id).map(|text| format!("Put back: {text}"))
+            quarantine::restore(&id).map(|text| capitalize_first(&text) + ".")
         });
     }
 
@@ -4398,6 +4796,8 @@ impl Controller {
         self.pending_basket = false;
         self.pending_empty = None;
         self.pending_junk = false;
+        self.pending_command = None;
+        self.pending_empty_items = None;
         if let Some(ui) = self.ui() {
             ui.set_confirm_open(false);
             ui.set_delete_label(actions::DELETE_LABEL.into());
@@ -4435,6 +4835,25 @@ impl Controller {
                 ui.set_delete_label(actions::DELETE_LABEL.into());
             }
             self.run_junk_clean();
+            return;
+        }
+        if let Some((batch, items)) = self.pending_empty_items.take() {
+            if let Some(ui) = self.ui() {
+                ui.set_confirm_open(false);
+                ui.set_delete_label(actions::DELETE_LABEL.into());
+            }
+            self.run_quarantine_job("Deleting for good…", move || {
+                quarantine::empty_items(&batch, &items)
+                    .map(|bytes| format!("Deleted for good, freeing {}.", format_size(bytes)))
+            });
+            return;
+        }
+        if let Some(index) = self.pending_command.take() {
+            if let Some(ui) = self.ui() {
+                ui.set_confirm_open(false);
+                ui.set_delete_label(actions::DELETE_LABEL.into());
+            }
+            self.run_junk_command(index);
             return;
         }
         let (Some(ui), Some(tree)) = (self.ui(), &self.tree) else {
@@ -4653,6 +5072,20 @@ fn format_date(secs: i64) -> Option<String> {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+/// "put back 2 items" → "Put back 2 items".
+fn capitalize_first(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+}
+
+/// Whether Clean junk lists the phone's junk (the apps report's) rather
+/// than the desktop's known places: on phones, and in the fake-apps demo.
+fn phone_junk() -> bool {
+    cfg!(target_os = "android") || apps::demo_enabled()
 }
 
 #[cfg(test)]

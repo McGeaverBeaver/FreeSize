@@ -222,8 +222,22 @@ fn open_full_disk_access() -> Result<(), String> {
 }
 
 /// Windows: starts this program again, elevated, scanning `root`.
-#[cfg_attr(not(windows), allow(unused_variables))]
 fn relaunch_as_administrator(root: &Path) -> Result<(), String> {
+    // The path is one argument whatever spaces it holds.
+    relaunch_with(&format!(
+        "{ELEVATED_FLAG} \"{}\"",
+        root.display().to_string().replace('"', "")
+    ))
+}
+
+/// Windows: starts this program again, elevated, on the Clean junk
+/// screen, to run a command that needs an administrator.
+pub fn relaunch_for_junk() -> Result<(), String> {
+    relaunch_with(&format!("{ELEVATED_FLAG} {JUNK_FLAG}"))
+}
+
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn relaunch_with(arguments: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -236,14 +250,7 @@ fn relaunch_as_administrator(root: &Path) -> Result<(), String> {
         let wide = |s: &std::ffi::OsStr| -> Vec<u16> { s.encode_wide().chain([0]).collect() };
         let verb = wide("runas".as_ref());
         let file = wide(exe.as_os_str());
-        // The path is one argument whatever spaces it holds.
-        let parameters = wide(
-            format!(
-                "{ELEVATED_FLAG} \"{}\"",
-                root.display().to_string().replace('"', "")
-            )
-            .as_ref(),
-        );
+        let parameters = wide(arguments.as_ref());
         // SAFETY: every string is NUL-terminated and lives through the call.
         let result = unsafe {
             ShellExecuteW(
@@ -271,6 +278,8 @@ fn relaunch_as_administrator(root: &Path) -> Result<(), String> {
 
 /// The flag the elevated window is started with.
 pub const ELEVATED_FLAG: &str = "--administrator";
+/// In place of the path to scan: open on the Clean junk screen.
+pub const JUNK_FLAG: &str = "--junk";
 /// The flag of the windowless scan: `freesize-gui --export FILE PATH`.
 pub const EXPORT_FLAG: &str = "--export";
 

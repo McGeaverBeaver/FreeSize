@@ -257,6 +257,10 @@ pub struct QuarantineItem {
     /// Where it is now (on the same disk).
     pub stored: String,
     pub bytes: u64,
+    /// What it was set aside as, when a batch holds several kinds (the
+    /// junk rule: "Old downloads"); empty otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
 }
 
 /// What a disk did over the last day.

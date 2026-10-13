@@ -38,6 +38,24 @@ what was tried in the release's draft notes, and say what wasn't.
       (compare the drive's free space before and after) and the result
       names what was skipped; a "check first" rule lands in the
       quarantine and Put back restores it; `freesize junk` lists the same.
+- [ ] Clean junk (0.17.0): the rules for the system's tools sit at the
+      bottom without tick boxes and aren't in the "Free X" total; Show
+      command opens the command with Copy (paste it somewhere) and Run.
+      On Windows without administrator rights, "Run as administrator" on
+      the hibernation file shows UAC and FreeSize opens again on Clean
+      junk; Run there turns hibernation off (`powercfg /h on` undoes it)
+      and the output shows in the row. On Linux Run on the apt cache asks
+      for the password. Clean shows the progress page with each rule;
+      Stop stops after the current one; the results page says what was
+      freed and skipped, and Open the quarantine shows one "Clean junk"
+      batch.
+- [ ] Quarantine explorer (0.17.0): a batch opens to its items grouped by
+      rule or folder; a folder in it opens and the path at the top goes
+      back; Open shows a picture, an `.exe` only has Show in folder; Put
+      back on one item restores just that one; with a file of the same
+      name back in place, Put back asks, and Keep both makes
+      "name (put back).ext", Replace puts the other one in the quarantine;
+      Delete for good on one item frees its space and keeps the rest.
 - [ ] Leftovers of removed programs: run Find junk, uninstall a program
       whose settings folder is in AppData or `~/.config` (Discord, say),
       set the folder's files two weeks back (or wait), and Find junk lists
@@ -64,9 +82,13 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] All files access and Usage access are asked for and, once granted,
       the home screen shows apps and the system breakdown.
 - [ ] A delete lands in the quarantine and Put back restores it.
-- [ ] Free up space: Old downloads, Screen recordings and Empty folders
-      show when there are any, say what they'd move, and land in the
-      quarantine.
+- [ ] Free up space (0.17.0): one Clean junk card with the total; Review
+      opens the Clean junk screen with the trash, old installers,
+      thumbnails, leftovers, old downloads, screen recordings and empty
+      folders as there are any; only thumbnails and empty folders start
+      ticked; Clean shows the progress and results pages; what's moved
+      lands in the quarantine as one batch that opens like on a desktop,
+      and the tabs and buttons are easy to hit.
 - [ ] Pairs from the QR code; a delete from the Hub is approved on the
       phone.
 - [ ] The QR code fills in the connect dialog both ways (0.15.1): with

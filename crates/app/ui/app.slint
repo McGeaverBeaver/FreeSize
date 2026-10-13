@@ -146,9 +146,37 @@ export struct JunkRow {
     ticked: bool,
     enabled: bool,
     open: bool,
-    /// Button text: rules removed with their own tool get "Open settings"
-    /// or "Show command", items "Show"; empty for none.
+    /// Button text: tool rules get "Open settings", items "Show", a
+    /// command its Run button; empty for none.
     action: string,
+    /// Tool rules: "Show command" or "Hide command"; empty for none.
+    second: string,
+    /// A warning beside the title ("Edge is open").
+    badge: string,
+}
+
+/// One row of a quarantined batch's page.
+export struct QuarantineRow {
+    /// 0 a heading (a rule, or the folder items came from), 1 an item of
+    /// the batch, 2 something inside a folder item.
+    kind: int,
+    /// For the callbacks; -1 for headings.
+    id: int,
+    title: string,
+    subtitle: string,
+    detail: string,
+    is-dir: bool,
+    ticked: bool,
+    /// Programs and scripts aren't opened from the quarantine.
+    can-open: bool,
+}
+
+/// One rule of a clean, on the progress and results pages.
+export struct JunkStep {
+    title: string,
+    detail: string,
+    /// 0 waiting, 1 cleaning now, 2 done, 3 failed, 4 left out (stopped).
+    state: int,
 }
 
 /// A button of the app sheet.
@@ -186,6 +214,9 @@ export struct HomeRow {
     /// A notice's second, plain button and its action id.
     action2: string,
     key2: string,
+    /// Notices: a tap on the card opens this (a quarantined batch's page);
+    /// empty for none.
+    open-key: string,
     /// Choice rows (9): the options, and which one is on.
     choices: [string],
     chosen: int,
@@ -1555,67 +1586,114 @@ component CleanupView inherits Rectangle {
     }
 }
 
-/// The Clean junk screen: what the known places hold, by category, ticked
-/// where it's safe. A rule opens to the paths that would go.
-component JunkPane inherits Rectangle {
-    in property <[JunkRow]> rows;
-    in property <string> summary;
+component Card inherits Rectangle {
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Palette.border;
+    background: Palette.control-background;
+}
+
+/// One quarantined batch, like a file manager shows a folder: its items
+/// grouped by the rule or folder they came from, each with Open, Show,
+/// Put back and Delete; folders open to what's inside.
+component QuarantinePane inherits Rectangle {
+    in property <[QuarantineRow]> rows;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> crumbs;
+    in property <string> picked;
     in property <bool> busy;
-    in property <string> clean-label;
-    in property <bool> can-clean;
+    in property <bool> can-reveal;
+    in property <bool> compact;
     in property <length> top-inset;
     in property <length> bottom-inset;
-    callback close();
+    callback back();
     callback toggle(int);
-    callback expand(int);
-    /// Shows an item's path in the file manager.
-    callback show(int);
-    /// Opens the settings page, or shows the command, of a rule that's
-    /// removed with its own tool.
-    callback tool(int);
-    callback clean();
-    callback again();
+    /// Opens a file with its app, or a folder here.
+    callback open(int);
+    callback reveal(int);
+    callback restore(int);
+    callback delete(int);
+    /// The ticked items, or all of them when none is.
+    callback restore-chosen();
+    callback delete-chosen();
     background: Palette.background;
 
     VerticalLayout {
         HorizontalLayout {
             padding: 12px;
             padding-top: 12px + root.top-inset;
-            spacing: 8px;
+            spacing: 10px;
+            Button {
+                text: "‹ Back";
+                clicked => {
+                    root.back();
+                }
+            }
+
             VerticalLayout {
                 horizontal-stretch: 1;
+                alignment: center;
                 spacing: 2px;
                 Text {
-                    text: "Clean junk";
+                    text: root.crumbs != "" ? root.crumbs : root.title;
                     font-size: 18px;
                     font-weight: 600;
+                    overflow: elide;
                 }
 
                 Text {
-                    text: root.summary;
+                    text: root.subtitle;
                     font-size: 12px;
                     color: Theme.dim;
-                    wrap: word-wrap;
-                }
-            }
-
-            Button {
-                text: "Look again";
-                enabled: !root.busy;
-                clicked => {
-                    root.again();
-                }
-            }
-
-            Button {
-                text: "Close";
-                clicked => {
-                    root.close();
+                    overflow: elide;
                 }
             }
         }
 
-        // Sized like the home screen's list; see HomePane.
+        // What the buttons act on, and the buttons; inside a folder the
+        // batch's page is where they are.
+        if root.crumbs == "": Rectangle {
+            height: bar.preferred-height + 12px;
+            Card {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height - 4px;
+                y: 0;
+                background: Palette.alternate-background;
+                bar := HorizontalLayout {
+                    padding: 10px;
+                    spacing: 8px;
+                    Text {
+                        text: root.picked != "" ? root.picked : "Tick items to choose some, or act on all of them.";
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                        font-size: 12px;
+                        font-weight: root.picked != "" ? 600 : 400;
+                        color: root.picked != "" ? Palette.foreground : Theme.dim;
+                        wrap: word-wrap;
+                    }
+
+                    Button {
+                        text: root.picked != "" ? "Put back" : "Put back all";
+                        primary: true;
+                        enabled: !root.busy;
+                        clicked => {
+                            root.restore-chosen();
+                        }
+                    }
+
+                    Button {
+                        text: root.picked != "" ? "Delete for good…" : "Empty all…";
+                        enabled: !root.busy;
+                        clicked => {
+                            root.delete-chosen();
+                        }
+                    }
+                }
+            }
+        }
+
         scroll := ScrollView {
             vertical-stretch: 1;
             content-width: self.visible-width;
@@ -1626,157 +1704,152 @@ component JunkPane inherits Rectangle {
                 height: self.preferred-height * 2 + 1000px;
                 alignment: start;
                 padding: 10px;
+                padding-bottom: 10px + root.bottom-inset;
                 for row in root.rows: VerticalLayout {
-                    if row.kind == 0: VerticalLayout {
+                    if row.kind == 0: HorizontalLayout {
                         padding-top: 12px;
-                        padding-bottom: 6px;
-                        spacing: 2px;
-                        HorizontalLayout {
-                            spacing: 8px;
-                            Text {
-                                text: row.title;
-                                font-size: 15px;
-                                font-weight: 600;
-                                horizontal-stretch: 1;
-                                wrap: word-wrap;
-                            }
-
-                            Text {
-                                text: row.detail;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                            }
+                        padding-bottom: 4px;
+                        padding-left: 4px;
+                        spacing: 8px;
+                        Text {
+                            text: row.title;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            wrap: word-wrap;
+                            color: row.id < 0 && row.detail == "" ? Theme.dim : Palette.foreground;
                         }
 
-                        if row.subtitle != "": Text {
-                            text: row.subtitle;
+                        Text {
+                            text: row.detail;
+                            font-weight: 600;
                             font-size: 12px;
-                            color: Theme.dim;
-                            wrap: word-wrap;
                         }
                     }
 
-                    if row.kind == 1: Rectangle {
-                        height: rule.preferred-height + 10px;
+                    if row.kind != 0: Rectangle {
+                        height: line.preferred-height + 8px;
                         border-radius: 6px;
-                        background: rule-touch.has-hover ? Palette.alternate-background : transparent;
-                        rule-touch := TouchArea {
+                        background: touch.pressed ? Theme.pressed : touch.has-hover ? Palette.alternate-background : transparent;
+                        touch := TouchArea {
                             clicked => {
-                                root.expand(row.id);
+                                if (row.is-dir) {
+                                    root.open(row.id);
+                                } else if (row.kind == 1) {
+                                    root.toggle(row.id);
+                                }
                             }
                         }
 
-                        rule := HorizontalLayout {
-                            y: 5px;
-                            padding-left: 8px;
-                            padding-right: 8px;
+                        line := HorizontalLayout {
+                            y: 4px;
+                            padding-right: 6px;
+                            padding-left: row.kind == 2 ? 10px : 0px;
                             spacing: 8px;
-                            CheckBox {
+                            if row.kind == 1: Tick {
                                 checked: row.ticked;
-                                enabled: row.enabled;
                                 toggled => {
                                     root.toggle(row.id);
                                 }
                             }
-
                             VerticalLayout {
                                 alignment: center;
+                                Image {
+                                    source: row.is-dir ? Icons.folder : Icons.file;
+                                    width: 20px;
+                                    height: 20px;
+                                    colorize: row.is-dir ? Palette.accent-background : Theme.dim;
+                                }
+                            }
+
+                            VerticalLayout {
                                 horizontal-stretch: 1;
+                                alignment: center;
                                 spacing: 2px;
-                                Text {
-                                    text: row.title;
-                                    wrap: word-wrap;
-                                    color: row.enabled ? Palette.foreground : Theme.dim;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: row.title;
+                                        overflow: elide;
+                                        horizontal-stretch: 1;
+                                        font-weight: row.kind == 1 ? 600 : 400;
+                                    }
+
+                                    Text {
+                                        text: row.detail;
+                                        font-size: 12px;
+                                        color: Theme.dim;
+                                    }
                                 }
 
-                                Text {
+                                if row.subtitle != "": Text {
                                     text: row.subtitle;
-                                    wrap: word-wrap;
                                     font-size: 11px;
                                     color: Theme.dim;
+                                    overflow: elide;
+                                }
+                                if root.compact: HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: start;
+                                    if row.can-open: Button {
+                                        text: "Open";
+                                        clicked => {
+                                            root.open(row.id);
+                                        }
+                                    }
+                                    if row.kind == 1: Button {
+                                        text: "Put back";
+                                        clicked => {
+                                            root.restore(row.id);
+                                        }
+                                    }
+                                    if row.kind == 1: Button {
+                                        text: "Delete…";
+                                        clicked => {
+                                            root.delete(row.id);
+                                        }
+                                    }
                                 }
                             }
 
-                            Text {
-                                text: row.detail;
-                                vertical-alignment: center;
-                                font-size: 12px;
-                            }
-
-                            if row.action != "": Button {
-                                text: row.action;
-                                clicked => {
-                                    root.tool(row.id);
+                            if !root.compact: HorizontalLayout {
+                                spacing: 6px;
+                                alignment: center;
+                                if row.can-open: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Open";
+                                        clicked => {
+                                            root.open(row.id);
+                                        }
+                                    }
                                 }
-                            }
-                            Chevron {
-                                expanded: row.open;
-                                tint: Theme.dim;
-                            }
-                        }
-                    }
-
-                    if row.kind == 2: Rectangle {
-                        height: 30px;
-                        HorizontalLayout {
-                            padding-left: 44px;
-                            padding-right: 8px;
-                            spacing: 8px;
-                            Text {
-                                text: row.title;
-                                font-size: 12px;
-                                overflow: elide;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                color: row.id < 0 ? Theme.dim : Palette.foreground;
-                            }
-
-                            // Leftovers: the program the path belonged to.
-                            if row.subtitle != "": Text {
-                                text: row.subtitle;
-                                font-size: 12px;
-                                color: Theme.dim;
-                                overflow: elide;
-                                vertical-alignment: center;
-                                max-width: 220px;
-                            }
-
-                            Text {
-                                text: row.detail;
-                                font-size: 12px;
-                                color: Theme.dim;
-                                vertical-alignment: center;
-                            }
-
-                            if row.action != "": Button {
-                                text: row.action;
-                                clicked => {
-                                    root.show(row.id);
+                                if root.can-reveal: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Show in folder";
+                                        clicked => {
+                                            root.reveal(row.id);
+                                        }
+                                    }
                                 }
-                            }
-                        }
-                    }
-
-                    if row.kind == 3: Rectangle {
-                        height: note.preferred-height + 16px;
-                        border-radius: 6px;
-                        background: Palette.alternate-background;
-                        note := VerticalLayout {
-                            y: 8px;
-                            padding-left: 10px;
-                            padding-right: 10px;
-                            spacing: 2px;
-                            Text {
-                                text: row.title;
-                                font-weight: 600;
-                                wrap: word-wrap;
-                            }
-
-                            Text {
-                                text: row.subtitle;
-                                wrap: word-wrap;
-                                font-size: 12px;
-                                color: Theme.dim;
+                                if row.kind == 1: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Put back";
+                                        clicked => {
+                                            root.restore(row.id);
+                                        }
+                                    }
+                                }
+                                if row.kind == 1: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Delete for good…";
+                                        clicked => {
+                                            root.delete(row.id);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1787,26 +1860,551 @@ component JunkPane inherits Rectangle {
                 }
             }
         }
+    }
+}
 
+/// One rule of a clean, on the progress and results pages.
+component JunkStepRow inherits Rectangle {
+    in property <JunkStep> step;
+    height: max(32px, line.preferred-height + 12px);
+    line := HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        spacing: 10px;
+        Rectangle {
+            width: 20px;
+            if root.step.state == 1: Spinner {
+                width: 18px;
+                height: 18px;
+                indeterminate: true;
+            }
+            if root.step.state != 1: Text {
+                // Waiting, running, done, failed, left out.
+                text: root.step.state == 2 ? "✓" : root.step.state == 3 ? "!" : root.step.state == 4 ? "–" : "○";
+                font-size: 15px;
+                font-weight: 700;
+                color: root.step.state == 2 ? Theme.rebuild : root.step.state == 3 ? Theme.warn : Theme.dim;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.step.title;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+            font-weight: root.step.state == 1 ? 600 : 400;
+            color: root.step.state == 0 || root.step.state == 4 ? Theme.dim : Palette.foreground;
+        }
+
+        Text {
+            text: root.step.detail;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            font-size: 12px;
+            wrap: word-wrap;
+            max-width: 340px;
+            color: root.step.state == 3 ? Theme.warn : Theme.dim;
+        }
+    }
+}
+
+/// The Clean junk screen: the rules by category, ticked where it's safe,
+/// with the ones only the system's own tools clean last; then the
+/// progress of a clean, and what it did.
+component JunkPane inherits Rectangle {
+    in property <[JunkRow]> rows;
+    /// 0 the list, 1 cleaning, 2 the results.
+    in property <int> stage;
+    in property <string> headline;
+    in property <string> summary;
+    in property <bool> busy;
+    in property <string> clean-label;
+    in property <bool> can-clean;
+    in property <[JunkStep]> steps;
+    in property <float> fraction;
+    in property <string> progress-line;
+    in property <bool> stopping;
+    in property <string> result-title;
+    in property <string> result-text;
+    in property <bool> has-quarantined;
+    in property <bool> compact;
+    in property <length> top-inset;
+    in property <length> bottom-inset;
+    callback close();
+    callback toggle(int);
+    callback expand(int);
+    /// Shows an item's path in the file manager.
+    callback show(int);
+    /// Opens the settings page of a rule removed with its own tool.
+    callback tool(int);
+    /// Shows or hides that rule's command.
+    callback command(int);
+    /// Runs it, after asking.
+    callback run(int);
+    callback clean();
+    callback again();
+    callback stop();
+    callback done();
+    callback open-quarantine();
+    background: Palette.background;
+
+    VerticalLayout {
         HorizontalLayout {
             padding: 12px;
-            padding-bottom: 12px + root.bottom-inset;
+            padding-top: 12px + root.top-inset;
             spacing: 8px;
             Text {
-                text: "Safe rules are ticked. \"Check first\" rules go to the quarantine, where Put back restores them. Nothing is deleted until you confirm.";
-                font-size: 11px;
-                color: Theme.dim;
-                wrap: word-wrap;
+                text: root.stage == 1 ? "Cleaning" : root.stage == 2 ? "Cleaned" : "Clean junk";
+                font-size: 18px;
+                font-weight: 600;
                 horizontal-stretch: 1;
                 vertical-alignment: center;
             }
 
-            Button {
-                text: root.clean-label;
-                primary: true;
-                enabled: root.can-clean && !root.busy;
+            if root.stage == 0: Button {
+                text: "Look again";
+                enabled: !root.busy;
                 clicked => {
-                    root.clean();
+                    root.again();
+                }
+            }
+            Button {
+                text: "Close";
+                clicked => {
+                    root.close();
+                }
+            }
+        }
+
+        // The list.
+        if root.stage == 0: VerticalLayout {
+            vertical-stretch: 1;
+            // What Clean frees, with the button beside it.
+            Rectangle {
+                height: card.preferred-height + 24px;
+                Card {
+                    x: 12px;
+                    y: 0;
+                    width: parent.width - 24px;
+                    height: parent.height - 12px;
+                    card := HorizontalLayout {
+                        padding: 14px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 4px;
+                            Text {
+                                text: root.busy && root.headline == "" ? "Looking…" : root.headline;
+                                font-size: root.compact ? 22px : 26px;
+                                font-weight: 700;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: root.summary;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: "Ticked caches and temporary files are deleted; \"check first\" rules go to the quarantine, where Put back restores them. Nothing happens until you confirm.";
+                                font-size: 11px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                text: root.clean-label;
+                                primary: true;
+                                enabled: root.can-clean;
+                                clicked => {
+                                    root.clean();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Sized like the home screen's list; see HomePane.
+            scroll := ScrollView {
+                vertical-stretch: 1;
+                content-width: self.visible-width;
+                content-height: max(column.preferred-height, end.y + 10px);
+                column := VerticalLayout {
+                    y: 0;
+                    width: scroll.visible-width;
+                    height: self.preferred-height * 2 + 1000px;
+                    alignment: start;
+                    padding: 10px;
+                    padding-top: 0;
+                    padding-bottom: 10px + root.bottom-inset;
+                    for row in root.rows: VerticalLayout {
+                        if row.kind == 0: VerticalLayout {
+                            padding-top: 14px;
+                            padding-bottom: 6px;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: row.title;
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                    horizontal-stretch: 1;
+                                    wrap: word-wrap;
+                                }
+
+                                Text {
+                                    text: row.detail;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            if row.subtitle != "": Text {
+                                text: row.subtitle;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                wrap: word-wrap;
+                            }
+                        }
+
+                        // A rule with its tick box, or (4) one cleaned with
+                        // the system's own tools, with its buttons instead.
+                        if row.kind == 1 || row.kind == 4: Rectangle {
+                            height: rule.preferred-height + 10px;
+                            border-radius: 6px;
+                            background: rule-touch.pressed ? Theme.pressed : rule-touch.has-hover ? Palette.alternate-background : transparent;
+                            rule-touch := TouchArea {
+                                clicked => {
+                                    root.expand(row.id);
+                                }
+                            }
+
+                            rule := HorizontalLayout {
+                                y: 5px;
+                                padding-left: row.kind == 4 ? 12px : 0px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                if row.kind == 1: Tick {
+                                    checked: row.ticked;
+                                    enabled: row.enabled;
+                                    toggled => {
+                                        root.toggle(row.id);
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    spacing: 3px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text {
+                                            text: row.title;
+                                            wrap: word-wrap;
+                                            font-weight: 600;
+                                            horizontal-stretch: 1;
+                                            color: row.enabled || row.kind == 4 ? Palette.foreground : Theme.dim;
+                                        }
+
+                                        if row.badge != "": Badge {
+                                            text: row.badge;
+                                            warn: true;
+                                        }
+                                        if root.compact: Text {
+                                            text: row.detail;
+                                            font-size: 12px;
+                                            color: Theme.dim;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: row.subtitle;
+                                        wrap: word-wrap;
+                                        font-size: 11px;
+                                        color: Theme.dim;
+                                    }
+
+                                    if root.compact && (row.action != "" || row.second != ""): HorizontalLayout {
+                                        padding-top: 4px;
+                                        spacing: 8px;
+                                        alignment: start;
+                                        if row.action != "": Button {
+                                            text: row.action;
+                                            clicked => {
+                                                root.tool(row.id);
+                                            }
+                                        }
+                                        if row.second != "": Button {
+                                            text: row.second;
+                                            clicked => {
+                                                root.command(row.id);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if !root.compact: Text {
+                                    text: row.detail;
+                                    vertical-alignment: center;
+                                    font-size: 12px;
+                                }
+                                if !root.compact && row.action != "": VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: row.action;
+                                        clicked => {
+                                            root.tool(row.id);
+                                        }
+                                    }
+                                }
+                                if !root.compact && row.second != "": VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: row.second;
+                                        clicked => {
+                                            root.command(row.id);
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    Chevron {
+                                        expanded: row.open;
+                                        tint: Theme.dim;
+                                    }
+                                }
+                            }
+                        }
+
+                        if row.kind == 2: Rectangle {
+                            height: 30px;
+                            HorizontalLayout {
+                                padding-left: 44px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                Text {
+                                    text: row.title;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    color: row.id < 0 ? Theme.dim : Palette.foreground;
+                                }
+
+                                // Leftovers: the program the path belonged to.
+                                if row.subtitle != "": Text {
+                                    text: row.subtitle;
+                                    font-size: 12px;
+                                    color: Theme.dim;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                    max-width: 220px;
+                                }
+
+                                Text {
+                                    text: row.detail;
+                                    font-size: 12px;
+                                    color: Theme.dim;
+                                    vertical-alignment: center;
+                                }
+
+                                if row.action != "": Button {
+                                    text: row.action;
+                                    clicked => {
+                                        root.show(row.id);
+                                    }
+                                }
+                            }
+                        }
+
+                        if row.kind == 3: Rectangle {
+                            height: note.preferred-height + 16px;
+                            border-radius: 6px;
+                            background: Palette.alternate-background;
+                            note := VerticalLayout {
+                                y: 8px;
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 2px;
+                                Text {
+                                    text: row.title;
+                                    font-weight: 600;
+                                    wrap: word-wrap;
+                                }
+
+                                Text {
+                                    text: row.subtitle;
+                                    wrap: word-wrap;
+                                    font-size: 12px;
+                                    color: Theme.dim;
+                                }
+                            }
+                        }
+
+                        // A tool rule's command: copy it, or run it.
+                        if row.kind == 5: HorizontalLayout {
+                            padding-left: 12px;
+                            padding-bottom: 8px;
+                            Rectangle {
+                                height: command.preferred-height + 20px;
+                                border-radius: 6px;
+                                background: Palette.alternate-background;
+                                command := VerticalLayout {
+                                    y: 10px;
+                                    height: self.preferred-height;
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 8px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Rectangle {
+                                            horizontal-stretch: 1;
+                                            border-radius: 4px;
+                                            background: Palette.background;
+                                            height: shown.preferred-height + 12px;
+                                            shown := TextInput {
+                                                x: 8px;
+                                                width: parent.width - 16px;
+                                                text: row.title;
+                                                read-only: true;
+                                                single-line: false;
+                                                wrap: word-wrap;
+                                                font-family: "monospace";
+                                                font-size: 12px;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Button {
+                                                text: "Copy";
+                                                clicked => {
+                                                    shown.select-all();
+                                                    shown.copy();
+                                                    shown.clear-selection();
+                                                    self.text = "Copied";
+                                                }
+                                            }
+                                        }
+
+                                        if row.action != "": VerticalLayout {
+                                            alignment: center;
+                                            Button {
+                                                text: row.action;
+                                                primary: true;
+                                                enabled: row.enabled;
+                                                clicked => {
+                                                    root.run(row.id);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: row.subtitle;
+                                        font-size: 12px;
+                                        color: Theme.dim;
+                                        wrap: word-wrap;
+                                    }
+
+                                    if row.detail != "": Text {
+                                        text: row.detail;
+                                        font-family: "monospace";
+                                        font-size: 11px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    end := Rectangle {
+                        height: 0px;
+                    }
+                }
+            }
+        }
+
+        // Cleaning, then what it did: the bar or the big line, and a row
+        // per rule.
+        if root.stage != 0: VerticalLayout {
+            vertical-stretch: 1;
+            padding: 12px;
+            padding-top: 0;
+            padding-bottom: 12px + root.bottom-inset;
+            spacing: 12px;
+            Card {
+                height: head.preferred-height + 28px;
+                head := VerticalLayout {
+                    y: 14px;
+                    height: self.preferred-height;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 8px;
+                    Text {
+                        text: root.stage == 1 ? (root.stopping ? "Stopping after this one…" : "Cleaning…") : root.result-title;
+                        font-size: root.compact ? 22px : 26px;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                    }
+
+                    if root.stage == 1: SizeBar {
+                        fraction: root.fraction;
+                        height: 10px;
+                    }
+                    Text {
+                        text: root.stage == 1 ? root.progress-line : root.result-text;
+                        font-size: 12px;
+                        color: Theme.dim;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            steps-scroll := ScrollView {
+                vertical-stretch: 1;
+                content-width: self.visible-width;
+                VerticalLayout {
+                    width: steps-scroll.visible-width;
+                    alignment: start;
+                    spacing: 2px;
+                    for step in root.steps: JunkStepRow {
+                        step: step;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                if root.stage == 1: Button {
+                    text: root.stopping ? "Stopping…" : "Stop";
+                    enabled: !root.stopping;
+                    clicked => {
+                        root.stop();
+                    }
+                }
+                if root.stage == 2 && root.has-quarantined: Button {
+                    text: "Open the quarantine";
+                    clicked => {
+                        root.open-quarantine();
+                    }
+                }
+                if root.stage == 2: Button {
+                    text: "Done";
+                    primary: true;
+                    clicked => {
+                        root.done();
+                    }
                 }
             }
         }
@@ -1993,13 +2591,6 @@ component Legend inherits HorizontalLayout {
         horizontal-stretch: 1;
         overflow: elide;
     }
-}
-
-component Card inherits Rectangle {
-    border-radius: 8px;
-    border-width: 1px;
-    border-color: Palette.border;
-    background: Palette.control-background;
 }
 
 /// Drives to scan, and on Android how the whole device's storage divides up
@@ -2454,14 +3045,33 @@ component HomePane inherits Rectangle {
                     }
 
                     if row.kind == 4: Card {
-                        background: Palette.alternate-background;
+                        background: notice-touch.has-hover ? Palette.control-background : Palette.alternate-background;
+                        notice-touch := TouchArea {
+                            enabled: row.open-key != "";
+                            mouse-cursor: row.open-key != "" ? pointer : default;
+                            clicked => {
+                                root.action(row.open-key);
+                            }
+                        }
+
                         VerticalLayout {
                             padding: 12px;
                             spacing: 8px;
-                            Text {
-                                text: row.title;
-                                font-weight: 600;
-                                wrap: word-wrap;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: row.title;
+                                    font-weight: 600;
+                                    wrap: word-wrap;
+                                    horizontal-stretch: 1;
+                                }
+
+                                if row.open-key != "": Text {
+                                    text: "Open ›";
+                                    font-size: 12px;
+                                    color: Palette.accent-background;
+                                    vertical-alignment: center;
+                                }
                             }
 
                             if row.subtitle != "": Text {
@@ -2768,6 +3378,28 @@ export component AppWindow inherits Window {
     in property <bool> junk-busy;
     in property <string> junk-clean-label: "Clean";
     in property <bool> junk-can-clean;
+    in property <int> junk-stage;
+    in property <string> junk-headline;
+    in property <[JunkStep]> junk-steps;
+    in property <float> junk-fraction;
+    in property <string> junk-progress-line;
+    in property <bool> junk-stopping;
+    in property <string> junk-result-title;
+    in property <string> junk-result-text;
+    in property <bool> junk-has-quarantined;
+
+    // A quarantined batch's page.
+    in property <bool> qv-open;
+    in property <[QuarantineRow]> qv-rows;
+    in property <string> qv-title;
+    in property <string> qv-subtitle;
+    in property <string> qv-crumbs;
+    in property <string> qv-picked;
+    in property <bool> qv-busy;
+
+    // Putting back over something new: keep both, replace or skip.
+    in property <bool> conflict-open;
+    in property <string> conflict-text;
     /// The selected tab of each layout's tabs.
     in-out property <int> wide-tab;
     in-out property <int> compact-tab;
@@ -2878,6 +3510,21 @@ export component AppWindow inherits Window {
     callback junk-tool(int);
     callback junk-clean();
     callback junk-again();
+    callback junk-command(int);
+    callback junk-run(int);
+    callback junk-stop();
+    callback junk-done();
+    callback junk-quarantine();
+    callback qv-back();
+    callback qv-toggle(int);
+    callback qv-open-item(int);
+    callback qv-reveal(int);
+    callback qv-restore(int);
+    callback qv-delete(int);
+    callback qv-restore-chosen();
+    callback qv-delete-chosen();
+    /// 0 keep both, 1 replace, 2 skip; -1 cancel.
+    callback conflict-chosen(int);
     callback hub-connect();
     callback hub-confirm();
     callback hub-connect-cancel();
@@ -3562,6 +4209,16 @@ export component AppWindow inherits Window {
     // The Clean junk screen, over the whole window.
     if root.junk-open: JunkPane {
         rows: root.junk-rows;
+        stage: root.junk-stage;
+        headline: root.junk-headline;
+        steps: root.junk-steps;
+        fraction: root.junk-fraction;
+        progress-line: root.junk-progress-line;
+        stopping: root.junk-stopping;
+        result-title: root.junk-result-title;
+        result-text: root.junk-result-text;
+        has-quarantined: root.junk-has-quarantined;
+        compact: root.compact;
         summary: root.junk-summary;
         busy: root.junk-busy;
         clean-label: root.junk-clean-label;
@@ -3588,6 +4245,111 @@ export component AppWindow inherits Window {
         }
         again => {
             root.junk-again();
+        }
+        command(id) => {
+            root.junk-command(id);
+        }
+        run(id) => {
+            root.junk-run(id);
+        }
+        stop => {
+            root.junk-stop();
+        }
+        done => {
+            root.junk-done();
+        }
+        open-quarantine => {
+            root.junk-quarantine();
+        }
+    }
+
+    if root.qv-open: QuarantinePane {
+        rows: root.qv-rows;
+        title: root.qv-title;
+        subtitle: root.qv-subtitle;
+        crumbs: root.qv-crumbs;
+        picked: root.qv-picked;
+        busy: root.qv-busy;
+        can-reveal: root.can-reveal;
+        compact: root.compact;
+        top-inset: root.safe-area-insets.top;
+        bottom-inset: root.safe-area-insets.bottom;
+        back => {
+            root.qv-back();
+        }
+        toggle(id) => {
+            root.qv-toggle(id);
+        }
+        open(id) => {
+            root.qv-open-item(id);
+        }
+        reveal(id) => {
+            root.qv-reveal(id);
+        }
+        restore(id) => {
+            root.qv-restore(id);
+        }
+        delete(id) => {
+            root.qv-delete(id);
+        }
+        restore-chosen => {
+            root.qv-restore-chosen();
+        }
+        delete-chosen => {
+            root.qv-delete-chosen();
+        }
+    }
+
+    if root.conflict-open: Rectangle {
+        background: #00000088;
+        TouchArea { }
+
+        Rectangle {
+            width: min(parent.width - 32px, 480px);
+            height: conflict.preferred-height;
+            border-radius: 10px;
+            background: Palette.background;
+            conflict := VerticalLayout {
+                padding: 18px;
+                spacing: 14px;
+                Text {
+                    text: root.conflict-text;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+                    Button {
+                        text: "Cancel";
+                        clicked => {
+                            root.conflict-chosen(-1);
+                        }
+                    }
+
+                    Button {
+                        text: "Skip";
+                        clicked => {
+                            root.conflict-chosen(2);
+                        }
+                    }
+
+                    Button {
+                        text: "Replace";
+                        clicked => {
+                            root.conflict-chosen(1);
+                        }
+                    }
+
+                    Button {
+                        text: "Keep both";
+                        primary: true;
+                        clicked => {
+                            root.conflict-chosen(0);
+                        }
+                    }
+                }
+            }
         }
     }
 

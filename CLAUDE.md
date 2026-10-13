@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.16.4)
+## Where things stand (0.17.0)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -173,6 +173,13 @@ compiling inside Docker.
   accounts signed in by email (`nextcloud.dav_user`). 0.16.4: fixes
   around deleting (the trash unticked by default, one quarantine batch
   per Delete, the selection bar after a new scan, matching sizes).
+  0.17.0: Clean junk and the quarantine redesigned on desktops and phones
+  (the owner's decisions are under Polish in docs/ROADMAP.md): tool rules
+  in their own section with the command shown and run in the row (`--junk`
+  reopens as administrator on Clean junk), progress and results pages,
+  one "Clean junk" batch grouped by rule, and batches that open like a
+  file explorer with per-item Put back (Keep both, Replace, Skip) and
+  Delete for good; one Clean junk card on the phone.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

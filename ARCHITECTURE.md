@@ -579,19 +579,53 @@ on phones (`quarantine::section_rows`, newest first);
 after every change the app reports the quarantine to the Hub. Nothing in
 it is emptied on a timer.
 
-`junk.rs` is the Clean junk screen on desktops, a full-window pane
-(`JunkPane`, rows of `JunkRow`: category headings, rules with a tick box
-and a chevron, the paths of an open rule with Show, and notes). Its
-`State` keeps the last look's findings, which are ticked and open, the
-last clean's `Outcome`, and `junk.json` (the reminder: off, weekly or
-daily; when it last looked and what it found). The look runs
-`freesize_core::junk::find` on a worker thread, as does cleaning: safe
-rules are deleted through the core, "check first" rules go through
-`quarantine::delete_all`, and the finding is reported to the Hub as a
-`JunkReport`. The reminder's look runs at start and on the timer when due
-and only changes the start screen's card, which says how much there is to
-review. The Hub's `clean_junk` request on a desktop finds the rule afresh
-and cleans it the same way (`hub::AppExecutor::clean`).
+A batch card opens (`HomeRow.open_key`, `quarantine::OPEN_PREFIX`) the
+explorer page, `QuarantinePane`: `quarantine::View` keeps the batch, the
+folders opened inside it and the ticked items, and `View::rows` lists the
+items grouped by their `group` (the rule, for a Clean junk batch) or by
+the folder they came from, then a folder's own contents (`entry_rows`, at
+most 500). Open is hidden for programs and scripts
+(`runs_when_opened`). Single items go back or go for good through the
+agent's `restore_items` and `empty_items`, with the stored names of the
+ticked items (or all); `taken` lists the ones whose original place is
+occupied, and the conflict dialog picks a `Conflict`: `KeepBoth` puts it
+back as "name (put back).ext", `Replace` moves what's in the way into a
+batch of its own (`r<time>`, "replaced by a put back"), `Skip` leaves it.
+`move_in_group` adds to an existing batch, so one Clean is one batch.
+
+`junk.rs` is the Clean junk screen on desktops and phones, a full-window
+pane (`JunkPane`) with three stages (`Stage`): the list, cleaning and
+done. The list starts with a summary card (`headline`, `summary`), then
+rows of `JunkRow`: category headings, rules with a tick box and a chevron
+(greyed, with a badge, while their program is open), the paths of an open
+rule with Show, notes, and last the rules left to the system's tools
+(kind `TOOL`, no tick box, not counted) with Open settings and Show
+command. A shown command is a `COMMAND` row with the command line, Copy
+and Run; `COMMANDS` says per rule what runs, what it changes, how to undo
+it and whether it needs an administrator. `run_command` runs it on a
+worker thread (through `osascript … with administrator privileges` or
+`pkexec` when FreeSize isn't elevated on macOS or Linux; on Windows
+"Run as administrator" reopens FreeSize through UAC with `--junk`, which
+opens Clean junk), keeps the last lines of output in the row, and looks
+again. State that must survive a new look (open commands, output) is
+keyed by rule id. `State` also keeps the last look's findings, which are
+ticked and open, the last clean's `Outcome` and `junk.json` (the reminder:
+off, weekly or daily; when it last looked and what it found). The look
+runs `freesize_core::junk::find` on a worker thread, as does cleaning,
+which reports through a shared `Progress` (one `Step` per rule, files and
+bytes so far, a stop flag checked between rules): safe rules are deleted
+item by item, "check first" rules go through `quarantine::delete_group`
+into one batch called "Clean junk", each rule a group, and the finding is
+reported to the Hub as a `JunkReport`. The tick refreshes the progress
+page while it runs and shows the results page from the `Outcome`. On a
+phone the findings come from the apps report instead
+(`phone_findings`, turning `cleanup::Junk` into core findings with the
+phone's own rules for the trash, installers, thumbnails and leftovers),
+and home shows one Clean junk card opening the same pane. The reminder's
+look runs at start and on the timer when due and only changes the start
+screen's card, which says how much there is to review. The Hub's
+`clean_junk` request on a desktop finds the rule afresh and cleans it the
+same way (`hub::AppExecutor::clean`).
 
 `updater.rs` keeps `update.json` (`check`, off until turned on; `channel`;
 `checked`; one drop-down in Settings sets both) and the state machine shown

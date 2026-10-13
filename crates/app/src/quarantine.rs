@@ -7,22 +7,26 @@
 //! that data folder, which the person owns; other disks (and the phone's
 //! shared storage) get `.disktree-quarantine` at their top, as servers do.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+pub use freesize_agent::quarantine::Conflict;
 use freesize_agent::quarantine::{MountPlaces, Moved, Place, Places, QUARANTINE_DIR, Quarantine};
 use freesize_core::format_size;
 use freesize_proto::unraid::QuarantineBatch;
 
-use crate::CleanRow;
 use crate::insights::ago;
+use crate::{CleanRow, QuarantineRow};
 
 /// The Clean up tab's section, and the id of its button.
 pub const HEADING: &str = "Quarantine";
 /// Prefixes of the Clean up tab's per-batch buttons (the batch id follows).
 pub const RESTORE_PREFIX: &str = "restore ";
 pub const EMPTY_PREFIX: &str = "empty ";
+/// Prefix of the batch cards' key: opens the batch's own page.
+pub const OPEN_PREFIX: &str = "open-batch ";
 /// The heading's button: empties every batch, after the confirmation.
 pub const EMPTY_ALL: &str = "Empty all";
 /// The home screen's button for the same.
@@ -130,6 +134,11 @@ fn store() -> &'static Quarantine {
 
 /// A batch id for a delete made here: the time, and a counter for several
 /// in one second.
+/// A new batch's id.
+pub fn new_batch_id() -> String {
+    batch_id()
+}
+
 fn batch_id() -> String {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     format!(
@@ -168,6 +177,25 @@ pub fn delete_each(paths: &[PathBuf]) -> Vec<Result<(), String>> {
         .collect()
 }
 
+/// Moves items into batch `id`, adding to it if it exists, marked as
+/// `group`. Returns the bytes set aside and a message per item that
+/// couldn't be moved.
+pub fn delete_group(id: &str, reason: &str, group: &str, paths: &[PathBuf]) -> (u64, Vec<String>) {
+    let moved = store().move_in_group(id, "", reason, group, paths, freesize_agent::now());
+    let bytes = moved.results.iter().flatten().sum();
+    let errors = paths
+        .iter()
+        .zip(&moved.results)
+        .filter_map(|(path, result)| {
+            result
+                .as_ref()
+                .err()
+                .map(|err| format!("{}: {err}", path.display()))
+        })
+        .collect();
+    (bytes, errors)
+}
+
 /// Moves one item into the quarantine.
 pub fn delete(path: &Path) -> Result<(), String> {
     let (_, errors) = delete_all(std::slice::from_ref(&path.to_path_buf()), "");
@@ -195,6 +223,22 @@ pub fn restore(id: &str) -> Result<String, String> {
 /// Deletes batches for good; the bytes freed.
 pub fn empty(ids: &[String]) -> Result<u64, String> {
     store().empty(ids)
+}
+
+/// Of a batch's items (by where they're stored), the ones whose old place
+/// is taken now.
+pub fn taken(id: &str, stored: &[String]) -> Vec<String> {
+    store().taken(id, Some(stored))
+}
+
+/// Puts some items of a batch back.
+pub fn restore_items(id: &str, stored: &[String], conflict: Conflict) -> Result<String, String> {
+    store().restore_items(id, Some(stored), conflict)
+}
+
+/// Deletes some items of a batch for good; the bytes freed.
+pub fn empty_items(id: &str, stored: &[String]) -> Result<u64, String> {
+    store().empty_items(id, stored)
 }
 
 pub fn total(batches: &[QuarantineBatch]) -> u64 {
@@ -263,15 +307,6 @@ pub fn section_rows(batches: &[QuarantineBatch], now: i64, always: bool) -> Vec<
     let mut newest: Vec<&QuarantineBatch> = batches.iter().collect();
     newest.sort_by_key(|b| std::cmp::Reverse(b.when));
     rows.extend(newest.into_iter().map(|batch| {
-        let mut names: Vec<String> = batch
-            .items
-            .iter()
-            .take(3)
-            .map(|i| file_name(&i.original))
-            .collect();
-        if batch.items.len() > 3 {
-            names.push(format!("{} more", batch.items.len() - 3));
-        }
         let when = if now - batch.when < 60 {
             "Just now".to_string()
         } else {
@@ -282,25 +317,330 @@ pub fn section_rows(batches: &[QuarantineBatch], now: i64, always: bool) -> Vec<
         } else {
             format!(" · asked for by {} from the Hub", batch.by)
         };
-        let reason = if batch.reason.is_empty() {
+        let reason = if batch.reason.is_empty() || batch_title(batch) == batch.reason {
             String::new()
         } else {
             format!(" · {}", batch.reason)
         };
-        let from = batch
-            .items
-            .first()
-            .and_then(|i| Path::new(&i.original).parent())
-            .map(|p| format!("\nFrom {}", p.display()))
-            .unwrap_or_default();
-        notice2(
-            &names.join(", "),
-            &format!("{} · {when}{who}{reason}{from}", format_size(batch.bytes)),
-            ("Put back", &format!("{RESTORE_PREFIX}{}", batch.id)),
-            ("Empty…", &format!("{EMPTY_PREFIX}{}", batch.id)),
-        )
+        // A clean's batch says which rules it held; others where from.
+        let groups = groups(batch);
+        let from = if groups.is_empty() {
+            batch
+                .items
+                .first()
+                .and_then(|i| Path::new(&i.original).parent())
+                .map(|p| format!("\nFrom {}", p.display()))
+                .unwrap_or_default()
+        } else {
+            format!("\n{}", groups.join(", "))
+        };
+        crate::HomeRow {
+            open_key: format!("{OPEN_PREFIX}{}", batch.id).into(),
+            ..notice2(
+                &batch_title(batch),
+                &format!("{} · {when}{who}{reason}{from}", format_size(batch.bytes)),
+                ("Put back", &format!("{RESTORE_PREFIX}{}", batch.id)),
+                ("Empty…", &format!("{EMPTY_PREFIX}{}", batch.id)),
+            )
+        }
     }));
     rows
+}
+
+/// A batch's name: a clean's is "Clean junk"; others name their items.
+pub fn batch_title(batch: &QuarantineBatch) -> String {
+    if !groups(batch).is_empty() && !batch.reason.is_empty() {
+        return batch.reason.clone();
+    }
+    let mut names: Vec<String> = batch
+        .items
+        .iter()
+        .take(3)
+        .map(|i| file_name(&i.original))
+        .collect();
+    if batch.items.len() > 3 {
+        names.push(format!("{} more", batch.items.len() - 3));
+    }
+    names.join(", ")
+}
+
+/// The kinds a batch's items were set aside as, in order.
+fn groups(batch: &QuarantineBatch) -> Vec<String> {
+    let mut groups: Vec<String> = Vec::new();
+    for item in &batch.items {
+        if !item.group.is_empty() && !groups.contains(&item.group) {
+            groups.push(item.group.clone());
+        }
+    }
+    groups
+}
+
+/// Programs and scripts: opening one from the quarantine would run it, so
+/// they're only shown in their folder.
+pub fn runs_when_opened(path: &Path) -> bool {
+    const RUNNABLE: &[&str] = &[
+        "exe", "msi", "msix", "appx", "bat", "cmd", "com", "scr", "vbs", "ps1", "sh", "run", "apk",
+        "jar", "appimage", "deb", "rpm", "pkg", "app",
+    ];
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| RUNNABLE.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Row kinds of a batch's page.
+const VIEW_HEADING: i32 = 0;
+const VIEW_ITEM: i32 = 1;
+const VIEW_ENTRY: i32 = 2;
+/// Entries listed inside a folder before "and N more".
+const ENTRIES_SHOWN: usize = 500;
+
+/// A batch's own page: its items like a file manager shows them, grouped
+/// by the junk rule or the folder they came from; folders open.
+#[derive(Clone, Debug, Default)]
+pub struct View {
+    pub batch: String,
+    /// Inside a folder item: where it's stored now, then the folders
+    /// opened inside it. Empty: the batch's items.
+    pub folders: Vec<PathBuf>,
+    /// Ticked items, by where they're stored.
+    pub ticked: HashSet<String>,
+    /// Per row id, the path it stands for and, for items, their key.
+    targets: Vec<(PathBuf, Option<String>)>,
+}
+
+/// What the page's top shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ViewHead {
+    pub title: String,
+    pub subtitle: String,
+    /// "Clean junk › Old stuff › 2024", inside folders.
+    pub crumbs: String,
+    /// "2 selected · 4.1 MB", or empty.
+    pub picked: String,
+}
+
+impl View {
+    pub fn new(batch: &str) -> View {
+        View {
+            batch: batch.to_string(),
+            ..View::default()
+        }
+    }
+
+    /// The path and item key of a row.
+    pub fn target(&self, id: i32) -> Option<&(PathBuf, Option<String>)> {
+        usize::try_from(id).ok().and_then(|i| self.targets.get(i))
+    }
+
+    /// Ticks or unticks an item row.
+    pub fn toggle(&mut self, id: i32) {
+        if let Some((_, Some(key))) = self.target(id).cloned()
+            && !self.ticked.remove(&key)
+        {
+            self.ticked.insert(key);
+        }
+    }
+
+    /// The batch's items ticked now, or every one when none is.
+    pub fn chosen(&self, batch: &QuarantineBatch) -> Vec<String> {
+        let ticked: Vec<String> = batch
+            .items
+            .iter()
+            .filter(|i| self.ticked.contains(&i.stored))
+            .map(|i| i.stored.clone())
+            .collect();
+        if ticked.is_empty() {
+            batch.items.iter().map(|i| i.stored.clone()).collect()
+        } else {
+            ticked
+        }
+    }
+
+    /// Builds the page from the quarantine as it is now; `None` when the
+    /// batch is gone.
+    pub fn rows(
+        &mut self,
+        batches: &[QuarantineBatch],
+        now: i64,
+    ) -> Option<(ViewHead, Vec<QuarantineRow>)> {
+        let batch = batches.iter().find(|b| b.id == self.batch)?;
+        self.ticked
+            .retain(|key| batch.items.iter().any(|i| &i.stored == key));
+        self.targets.clear();
+        let when = if now - batch.when < 60 {
+            "just now".to_string()
+        } else {
+            ago(now.max(0) as u64, batch.when.max(0) as u64)
+        };
+        let mut head = ViewHead {
+            title: batch_title(batch),
+            subtitle: format!(
+                "{} · {} · moved {when}",
+                format_size(batch.bytes),
+                if batch.items.len() == 1 {
+                    "1 item".to_string()
+                } else {
+                    format!("{} items", batch.items.len())
+                }
+            ),
+            ..ViewHead::default()
+        };
+        let picked: Vec<_> = batch
+            .items
+            .iter()
+            .filter(|i| self.ticked.contains(&i.stored))
+            .collect();
+        if !picked.is_empty() {
+            head.picked = format!(
+                "{} selected · {}",
+                picked.len(),
+                format_size(picked.iter().map(|i| i.bytes).sum())
+            );
+        }
+        let mut rows = Vec::new();
+        if let Some(folder) = self.folders.last().cloned() {
+            let mut crumbs = vec![head.title.clone()];
+            crumbs.extend(self.folders.iter().enumerate().map(|(i, f)| {
+                if i == 0 {
+                    shown_name(f)
+                } else {
+                    f.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                }
+            }));
+            head.crumbs = crumbs.join(" › ");
+            self.entry_rows(&folder, &mut rows);
+            return Some((head, rows));
+        }
+        // By rule for a clean's batch, else by the folder they came from.
+        let mut sections: Vec<(String, Vec<usize>)> = Vec::new();
+        for (index, item) in batch.items.iter().enumerate() {
+            let key = if item.group.is_empty() {
+                Path::new(&item.original)
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            } else {
+                item.group.clone()
+            };
+            match sections.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, list)) => list.push(index),
+                None => sections.push((key, vec![index])),
+            }
+        }
+        for (key, list) in sections {
+            rows.push(QuarantineRow {
+                kind: VIEW_HEADING,
+                id: -1,
+                title: key.into(),
+                detail: format_size(list.iter().map(|&i| batch.items[i].bytes).sum()).into(),
+                ..QuarantineRow::default()
+            });
+            for index in list {
+                let item = &batch.items[index];
+                let stored = PathBuf::from(&item.stored);
+                let is_dir = stored.is_dir();
+                let id = self.targets.len() as i32;
+                self.targets
+                    .push((stored.clone(), Some(item.stored.clone())));
+                rows.push(QuarantineRow {
+                    kind: VIEW_ITEM,
+                    id,
+                    title: file_name(&item.original).into(),
+                    // Under a rule's heading, where it came from; under a
+                    // folder's, the heading says it.
+                    subtitle: if item.group.is_empty() {
+                        "".into()
+                    } else {
+                        format!(
+                            "From {}",
+                            Path::new(&item.original)
+                                .parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default()
+                        )
+                        .into()
+                    },
+                    detail: format_size(item.bytes).into(),
+                    is_dir,
+                    ticked: self.ticked.contains(&item.stored),
+                    can_open: is_dir || !runs_when_opened(&stored),
+                });
+            }
+        }
+        Some((head, rows))
+    }
+
+    /// The entries of a folder inside the quarantine: folders first.
+    fn entry_rows(&mut self, folder: &Path, rows: &mut Vec<QuarantineRow>) {
+        let mut entries: Vec<(bool, String, PathBuf)> = std::fs::read_dir(folder)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| {
+                        let path = e.path();
+                        let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                        (is_dir, e.file_name().to_string_lossy().into_owned(), path)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        entries.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+        });
+        if entries.is_empty() {
+            rows.push(QuarantineRow {
+                kind: VIEW_HEADING,
+                id: -1,
+                title: "This folder is empty".into(),
+                ..QuarantineRow::default()
+            });
+        }
+        let more = entries.len().saturating_sub(ENTRIES_SHOWN);
+        for (is_dir, name, path) in entries.into_iter().take(ENTRIES_SHOWN) {
+            let id = self.targets.len() as i32;
+            let bytes = freesize_agent::quarantine::size_on_disk(&path);
+            let can_open = is_dir || !runs_when_opened(&path);
+            self.targets.push((path, None));
+            rows.push(QuarantineRow {
+                kind: VIEW_ENTRY,
+                id,
+                title: name.into(),
+                detail: format_size(bytes).into(),
+                is_dir,
+                can_open,
+                ..QuarantineRow::default()
+            });
+        }
+        if more > 0 {
+            rows.push(QuarantineRow {
+                kind: VIEW_HEADING,
+                id: -1,
+                title: format!("… and {more} more").into(),
+                ..QuarantineRow::default()
+            });
+        }
+    }
+}
+
+/// A stored path's name as it was: stored items are named
+/// "<n>-<k>-<name>".
+fn shown_name(path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut parts = name.splitn(3, '-');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(a), Some(b), Some(rest))
+            if a.chars().all(|c| c.is_ascii_digit()) && b.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            rest.to_string()
+        }
+        _ => name,
+    }
 }
 
 fn file_name(path: &str) -> String {
@@ -358,7 +698,7 @@ pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
         } else {
             format!("asked by {} from the Hub", batch.by)
         };
-        let reason = if batch.reason.is_empty() {
+        let reason = if batch.reason.is_empty() || batch_title(batch) == batch.reason {
             String::new()
         } else {
             format!(" · {}", batch.reason)
@@ -428,6 +768,7 @@ mod tests {
                     original: format!("/home/me/file{n}.txt"),
                     stored: String::new(),
                     bytes: 400,
+                    ..Default::default()
                 })
                 .collect(),
         }];

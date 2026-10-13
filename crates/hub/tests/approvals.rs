@@ -472,6 +472,7 @@ async fn unraid_requests_name_only_what_the_server_reported() {
                         original: "/mnt/user/TV/Show".into(),
                         stored: "/mnt/disk3/.disktree-quarantine/w1/0".into(),
                         bytes: 2_000,
+                        ..Default::default()
                     }],
                 }]),
                 ..Report::default()
