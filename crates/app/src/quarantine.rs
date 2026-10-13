@@ -36,12 +36,31 @@ struct DevicePlaces {
     /// The quarantine in FreeSize's data folder, and the top of the disk
     /// that folder is on.
     own: Option<(PathBuf, PathBuf)>,
+    /// Phones: the storage roots a quarantine goes at the top of
+    /// (`/storage/emulated/0`, SD cards). Their filesystem's own top is
+    /// above them (`/storage/emulated`), where nothing can be written.
+    tops: Vec<PathBuf>,
     extra: Mutex<Vec<PathBuf>>,
+}
+
+/// The quarantine for `path` when it's under one of `tops` that sits below
+/// the filesystem's top: at that storage root rather than the filesystem's.
+fn quarantine_in_top(tops: &[PathBuf], path: &Path, current: &Path) -> Option<PathBuf> {
+    let filesystem = current.parent()?;
+    tops.iter()
+        .filter(|top| path.starts_with(top) && top.starts_with(filesystem) && *top != filesystem)
+        .max_by_key(|top| top.components().count())
+        .map(|top| top.join(QUARANTINE_DIR))
 }
 
 impl Places for DevicePlaces {
     fn places(&self, path: &Path) -> Result<Vec<Place>, String> {
         let mut places = self.mounts.places(path)?;
+        for place in &mut places {
+            if let Some(quarantine) = quarantine_in_top(&self.tops, path, &place.quarantine) {
+                place.quarantine = quarantine;
+            }
+        }
         if let Some((own, disk)) = &self.own {
             for place in &mut places {
                 if place.quarantine == disk.join(QUARANTINE_DIR) {
@@ -61,6 +80,7 @@ impl Places for DevicePlaces {
     fn roots(&self) -> Vec<PathBuf> {
         let mut roots = self.mounts.roots();
         roots.extend(self.own.iter().map(|(own, _)| own.clone()));
+        roots.extend(self.tops.iter().map(|top| top.join(QUARANTINE_DIR)));
         roots.extend(
             self.extra
                 .lock()
@@ -91,9 +111,15 @@ fn store() -> &'static Quarantine {
                 let disk = freesize_agent::quarantine::filesystem_root(&data).ok()?;
                 Some((data.join("quarantine"), disk))
             });
+        let tops = if cfg!(target_os = "android") {
+            roots.clone()
+        } else {
+            Vec::new()
+        };
         Quarantine::new(Box::new(DevicePlaces {
             mounts: MountPlaces::new(&roots),
             own,
+            tops,
             extra: Mutex::new(Vec::new()),
         }))
     })
@@ -281,6 +307,32 @@ pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_phone_quarantine_goes_at_the_storage_root() {
+        use std::path::{Path, PathBuf};
+        let tops = vec![
+            PathBuf::from("/storage/emulated/0"),
+            PathBuf::from("/storage/1234-ABCD"),
+        ];
+        // Shared storage is one filesystem from /storage/emulated down.
+        let below = super::quarantine_in_top(
+            &tops,
+            Path::new("/storage/emulated/0/Download/a.apk"),
+            Path::new("/storage/emulated/.disktree-quarantine"),
+        );
+        assert_eq!(
+            below,
+            Some(PathBuf::from("/storage/emulated/0/.disktree-quarantine"))
+        );
+        // An SD card is its own filesystem: its top is right already.
+        let card = super::quarantine_in_top(
+            &tops,
+            Path::new("/storage/1234-ABCD/DCIM/b.jpg"),
+            Path::new("/storage/1234-ABCD/.disktree-quarantine"),
+        );
+        assert_eq!(card, None);
+    }
+
     use super::*;
     use freesize_proto::unraid::QuarantineItem;
 

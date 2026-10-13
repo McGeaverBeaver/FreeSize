@@ -370,6 +370,12 @@ Parked, each with its reason:
   and asks for them in one dialog, and its Largest files tab lists one type
   and ticks all it lists. Still to do by hand: the Clean up checks in
   TESTING.md on Windows and on a phone.
+- 0.16.1: on a phone every delete failed, and so did every Free up space
+  card (found in testing, 2026-10-13): all of them move to the quarantine,
+  which was put at the top of the filesystem shared storage is on,
+  `/storage/emulated`, where apps can't write. It now goes at the top of
+  the storage root the item is in (`/storage/emulated/0`, or an SD card's
+  own top), as was always meant.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

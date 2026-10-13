@@ -61,7 +61,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.16.0)
+## Where things stand (0.16.1)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -140,6 +140,9 @@ compiling inside Docker.
   pages with tick boxes, "select extra copies" (by file type too), similar
   photos as tiles with "all but the largest", ticking fills the basket
   (called the selection), and the Hub's Junk tab ticks several rules.
+  0.16.1: nothing could be deleted on a phone: the quarantine went at the
+  top of shared storage's filesystem (`/storage/emulated`, not writable)
+  instead of `/storage/emulated/0`.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
