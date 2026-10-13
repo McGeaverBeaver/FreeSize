@@ -1430,6 +1430,7 @@ PAGES.settings = async () => {
           h("tr", {}, h("td", { class: "dim" }, "Address"), h("td", {}, hub.url || "not set (FREESIZE_HUB_URL)")),
           h("tr", {}, h("td", { class: "dim" }, "Key fingerprint"), h("td", { class: "fingerprint" }, hub.fingerprint)))),
         h("p", { class: "hint" }, "Devices check this fingerprint when they pair, so they know they reached this Hub.")),
+      certificateCard(hub),
       groupCard,
       h("div", { class: "card" },
         h("h2", {}, "Approvers"),
@@ -1438,6 +1439,29 @@ PAGES.settings = async () => {
           ". So a stolen dashboard sign-in can't send approvals to itself."))),
   ];
 };
+
+// How the dashboard and devices reach the Hub securely: the Hub's own
+// certificate (and the authority to install in a browser), an
+// administrator's, or none.
+function certificateCard(hub) {
+  const tls = hub.tls;
+  const ends = tls ? new Date(tls.not_after * 1000).toLocaleDateString() : "";
+  let body;
+  if (!tls) {
+    body = [h("p", {}, "TLS is off (FREESIZE_TLS=off): the Hub speaks plain http, for a reverse proxy that does HTTPS in front. Unset it and the Hub serves HTTPS with a certificate of its own.")];
+  } else if (tls.own) {
+    body = [
+      h("p", {}, `The Hub made its own certificate for ${tls.names.join(", ")}, valid until ${ends} and renewed by itself. Devices trust it for this address only; they learn it when they pair.`),
+      h("p", {}, "Browsers warn about it until you install the Hub's authority on your computer: ",
+        h("a", { href: "/ca.pem", download: "freesize-hub-authority.pem" }, "download freesize-hub-authority.pem"),
+        ", then add it to your system's trusted root certificates (Windows: open it, Install Certificate, Trusted Root Certification Authorities; macOS: Keychain Access, then Always Trust; Firefox: Settings, Certificates, Authorities)."),
+      h("p", { class: "hint" }, "Your own certificate instead: FREESIZE_TLS_CERT_FILE and FREESIZE_TLS_KEY_FILE (PEM, with the chain); devices then check it against their system's certificates."),
+    ];
+  } else {
+    body = [h("p", {}, `An administrator's certificate for ${tls.names.join(", ")}, valid until ${ends}. It's reloaded when its files change; devices check it against their system's certificates.`)];
+  }
+  return h("div", { class: "card" }, h("h2", {}, "Certificate"), ...body);
+}
 
 function groupDialog(group) {
   dialog((close) => {

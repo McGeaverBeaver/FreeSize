@@ -30,6 +30,25 @@ pub struct Hello {
     pub version: String,
     pub protocol: u32,
     pub key: PublicKey,
+    /// The Hub's own certificate authority (PEM), when it serves HTTPS with
+    /// a certificate it made itself. A device trusts it for this Hub's
+    /// address only. Missing when the Hub has an administrator's certificate
+    /// or a reverse proxy does TLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+}
+
+/// Where the Hub is reached from now on, signed by the Hub: sent to a device
+/// still using an older address (plain `http://` from before the Hub served
+/// HTTPS). The device checks the signature with the Hub key it paired with,
+/// then that the Hub answers there with the same key, before switching.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HubAddress {
+    pub url: String,
+    /// As in [`Hello::ca`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+    pub time: i64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -320,6 +339,9 @@ pub struct PollResponse {
     /// (Unsigned: withdrawing can only stop an action.)
     #[serde(default)]
     pub cancelled: Vec<String>,
+    /// The Hub's address has changed (it serves HTTPS now): move there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_to: Option<Signed<HubAddress>>,
 }
 
 /// The admin a command comes from.

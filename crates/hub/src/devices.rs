@@ -7,18 +7,18 @@ use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::{Extension, Json};
 use freesize_proto::keys::random_id;
 use freesize_proto::pairing::code_hash;
 use freesize_proto::signing::{
     DEVICE_HEADER, MAX_SKEW, NONCE_HEADER, SIGNATURE_HEADER, TIME_HEADER, verify_request,
 };
 use freesize_proto::{
-    DeviceInfo, DeviceKey, Hello, PROTOCOL, PairRequest, PairResponse, Platform, PollRequest,
-    PollResponse, PublicKey, Purpose, Report, RequestSignature, ScanReport, Signed,
+    DeviceInfo, DeviceKey, Hello, HubAddress, PROTOCOL, PairRequest, PairResponse, Platform,
+    PollRequest, PollResponse, PublicKey, Purpose, Report, RequestSignature, ScanReport, Signed,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::de::DeserializeOwned;
@@ -27,7 +27,7 @@ use tokio::sync::Notify;
 
 use crate::db::now;
 use crate::error::{ApiError, ApiResult};
-use crate::{AppState, audit};
+use crate::{AppState, Via, audit};
 
 /// Wakes a device's waiting poll when something arrives for it.
 #[derive(Default)]
@@ -86,7 +86,28 @@ fn hello_of(state: &AppState) -> Hello {
         version: env!("CARGO_PKG_VERSION").into(),
         protocol: PROTOCOL,
         key: state.key.public(),
+        ca: state
+            .tls
+            .as_ref()
+            .and_then(|t| t.ca_pem())
+            .map(String::from),
     }
+}
+
+/// For a device still on plain http while the Hub serves HTTPS: where to
+/// go, signed. None without a public address to send it to.
+fn move_for(state: &AppState, via: Option<&Via>) -> Option<Signed<HubAddress>> {
+    let via = via?;
+    if via.tls || state.tls.is_none() {
+        return None;
+    }
+    let url = state.config.public_url()?;
+    let address = HubAddress {
+        url,
+        ca: hello_of(state).ca,
+        time: now(),
+    };
+    Some(Signed::sign(&address, &state.key, Purpose::Move))
 }
 
 /// `POST /api/v1/pair`: a new device with a one-time code.
@@ -509,8 +530,10 @@ const MAX_WAIT: u32 = 60;
 /// `wait` seconds until something is.
 pub async fn poll(
     State(state): State<AppState>,
+    via: Option<Extension<Via>>,
     request: DeviceRequest<PollRequest>,
 ) -> ApiResult<Json<PollResponse>> {
+    let move_to = move_for(&state, via.as_ref().map(|v| &v.0));
     let device = request.device;
     let wait = Duration::from_secs(u64::from(request.body.wait.min(MAX_WAIT)));
     let deadline = tokio::time::Instant::now() + wait;
@@ -518,13 +541,14 @@ pub async fn poll(
     let mut resend = request.body.resend;
     loop {
         let notified = waker.notified();
-        let pending = crate::commands::pending_for(&state, &device, resend).await?;
+        let mut pending = crate::commands::pending_for(&state, &device, resend).await?;
         resend = false;
         let empty = pending.commands.is_empty()
             && pending.approvals.is_empty()
             && pending.decisions.is_empty()
             && pending.cancelled.is_empty();
-        if !empty || tokio::time::Instant::now() >= deadline {
+        if !empty || tokio::time::Instant::now() >= deadline || move_to.is_some() {
+            pending.move_to = move_to;
             return Ok(Json(pending));
         }
         if tokio::time::timeout_at(deadline, notified).await.is_err() {

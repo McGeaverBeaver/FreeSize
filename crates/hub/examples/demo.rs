@@ -43,6 +43,8 @@ async fn main() {
         &format!("http://{hub_addr}"),
         "--name",
         "Home Hub",
+        "--tls",
+        "off",
         "--oidc-issuer",
         &idp.issuer,
         "--oidc-client-id",

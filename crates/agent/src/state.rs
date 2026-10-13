@@ -10,6 +10,8 @@ use base64::engine::general_purpose::STANDARD;
 use freesize_proto::{ActionKind, Grant, KeyPair, PublicKey};
 use serde::{Deserialize, Serialize};
 
+use crate::transport::Trust;
+
 /// Command ids remembered so a command is never carried out twice.
 const REMEMBERED_COMMANDS: usize = 500;
 
@@ -21,6 +23,10 @@ pub struct AgentState {
     /// The Hub's key, learned (and checked) at pairing. Commands must carry
     /// its signature.
     pub hub_key: PublicKey,
+    /// The Hub's own certificate authority (PEM), trusted for `hub` only;
+    /// none when the Hub's certificate is checked against the system's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
     /// This device's id at the Hub.
     pub device: String,
     /// The name it paired under.
@@ -58,6 +64,7 @@ impl AgentState {
             hub,
             hub_name,
             hub_key,
+            ca: None,
             device,
             name: String::new(),
             key: STANDARD.encode(key.seed()),
@@ -82,6 +89,14 @@ impl AgentState {
 
     pub fn fingerprint(&self) -> String {
         self.key().public().fingerprint()
+    }
+
+    /// What requests to the Hub trust.
+    pub fn trust(&self) -> Trust {
+        match &self.ca {
+            Some(ca) => Trust::Authority(ca.clone()),
+            None => Trust::System,
+        }
     }
 
     pub fn load(path: &Path) -> Result<Option<AgentState>, String> {

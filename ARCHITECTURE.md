@@ -575,15 +575,26 @@ whole array, rather than every file.
   and key, this device's id and private key, the approver's device and key,
   grants, and the last 500 handled commands (so a redelivered one never runs
   twice).
-- `transport.rs`: HTTP through a `Transport` trait. Desktops and servers use
-  ureq (the system's TLS on Windows and macOS, rustls with the system's
-  certificates elsewhere, no redirects); Android passes Java's
-  `HttpURLConnection` in through JNI, and when Java throws, the error is
-  Java's own message (the manifest allows plain `http://` for LAN Hubs).
-- `client.rs`: `hello` (the Hub's name and key), `pair` (refuses a Hub whose
-  key doesn't match the link's fingerprint, or asks the person to compare
-  it when the link has none), and a signed `Client` for reports, polls,
-  updates and decisions.
+- `transport.rs`: HTTP through a `Transport` trait; every request says what
+  to trust (`Trust::System`, or `Trust::Authority` with the Hub's own
+  authority as PEM, used for the Hub's address and nothing else). Desktops
+  and servers use ureq (the system's TLS on Windows and macOS, rustls with
+  the system's certificates elsewhere, no redirects), with exactly the
+  authority as root when one is pinned; Android passes Java's
+  `HttpURLConnection` in through JNI, with an `SSLSocketFactory` whose trust
+  manager holds only the authority when one is pinned, and when Java
+  throws, the error is Java's own message (the manifest allows plain
+  `http://` for Hubs with TLS off).
+- `client.rs`: `hello` (the Hub's name, key and authority), `pair`
+  (refuses a Hub whose key doesn't match the link's fingerprint, or asks the
+  person to compare it when the link has none; the first hello is over
+  https with the system's certificates or, failing that, plain http on the
+  same port, which a Hub with its own authority answers naming it; pairing
+  then goes over https trusting that authority, and the signed answer must
+  name the same one), `move_to` (a signed `HubAddress` from a poll: only
+  the Hub's own signature counts, and the new address must answer with the
+  Hub's key before the state changes), and a signed `Client` for reports,
+  polls, updates and decisions.
 - `commands.rs` decides what to do with a command:
   1. it must be signed by the pinned Hub key, for this device, not expired
      and not handled before;
@@ -636,10 +647,28 @@ channels.
   Sessions are a random token in an HttpOnly, SameSite=Lax cookie (Secure
   over HTTPS), stored hashed; changes need the session's CSRF token in a
   header.
+- `tls.rs`: HTTPS. With `--tls auto` (the default) the Hub makes its own
+  authority on first start (`tls-ca.pem`, key 0600, ECDSA P-256, 20 years,
+  CA with path length 0) and a certificate for the host of its address
+  (`tls-cert.pem`: SHA-256, the host as DNS or IP subject alternative name,
+  serverAuth, 825 days, Apple's limit), renewed a month before it ends or
+  when the host changes; `--tls-cert-file`/`--tls-key-file` load an
+  administrator's PEM instead and reload it when the files' times change;
+  `--tls off` is plain http only. `lib.rs`'s accept loop (hyper-util, not
+  `axum::serve`) peeks the first byte of each connection: 0x16 is a TLS
+  handshake (rustls with ring, ALPN h2 and http/1.1), anything else plain
+  http on the same port, and a `Via { tls, peer }` extension says which.
+  `web::https_only` sends plain-http requests for the dashboard to
+  `https://` on the same host and port, leaving `/api/v1/` (devices from
+  before 0.8.7) and `/api/status` (the health check) alone; `/ca.pem` hands
+  the authority out. With TLS on, `Config::public_url` is `https://`
+  whatever was given, so pairing links and the sign-in redirect URI are.
 - `devices.rs`: the device API under `/api/v1/` (`hello`, `pair`, `report`,
   `poll`, the approver's key by fingerprint) behind the request signature
-  check. A poll waits up to 60 s on a per-device `Notify`, woken when
-  something arrives for it.
+  check. `hello` names the Hub's own authority; a poll over plain http from
+  a Hub that serves HTTPS answers at once with `move_to`, the public address
+  and authority signed by the Hub. A poll waits up to 60 s on a per-device
+  `Notify`, woken when something arrives for it.
 - `commands.rs`: requests from the dashboard, checked against what the
   device reported (the folder must be one the device scanned, and the sizes
   shown come from that scan; an Unraid finding, app, junk kind or

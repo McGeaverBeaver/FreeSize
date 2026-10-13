@@ -67,6 +67,35 @@ pub struct Config {
     /// Bearer token for `/metrics`; without it, metrics are off.
     #[arg(long, env = "FREESIZE_METRICS_TOKEN", hide_env_values = true)]
     pub metrics_token: Option<String>,
+
+    /// HTTPS: `auto` serves it with the Hub's own certificate (or the files
+    /// below) and still answers plain http on the same port; `off` is plain
+    /// http only, for a reverse proxy that does TLS in front.
+    #[arg(long, env = "FREESIZE_TLS", default_value = "auto", value_parser = ["auto", "off"])]
+    pub tls: String,
+
+    /// An administrator's certificate (PEM, with its chain) instead of the
+    /// Hub's own. Reloaded when the file changes.
+    #[arg(long, env = "FREESIZE_TLS_CERT_FILE", requires = "tls_key_file")]
+    pub tls_cert_file: Option<PathBuf>,
+
+    /// The private key (PEM) for that certificate.
+    #[arg(long, env = "FREESIZE_TLS_KEY_FILE", requires = "tls_cert_file")]
+    pub tls_key_file: Option<PathBuf>,
+}
+
+/// The host in an address like `https://hub.lan:9090/x` or `http://[::1]:9090`.
+pub fn host_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split('/').next()?;
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next()?
+    } else {
+        authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _)| host)
+    };
+    (!host.is_empty()).then(|| host.to_string())
 }
 
 fn default_data_dir() -> PathBuf {
@@ -135,11 +164,42 @@ impl Config {
         )
     }
 
-    /// The public address without a trailing slash.
+    /// Whether the Hub serves HTTPS itself.
+    pub fn tls_on(&self) -> bool {
+        self.tls != "off"
+    }
+
+    /// The public address without a trailing slash. With the Hub serving
+    /// HTTPS, it's `https://` whatever the setting says: the Hub answers
+    /// plain http on the same port only for devices paired before it did.
     pub fn public_url(&self) -> Option<String> {
+        let url = self
+            .url
+            .as_deref()
+            .and_then(freesize_proto::pairing::normalize_hub)?;
+        Some(match (self.tls_on(), url.strip_prefix("http://")) {
+            (true, Some(rest)) => format!("https://{rest}"),
+            _ => url,
+        })
+    }
+
+    /// Whether the address was given as plain `http://` although the Hub
+    /// serves HTTPS, so sign-in's redirect URI is `https://` now.
+    pub fn url_was_http(&self) -> bool {
+        self.tls_on()
+            && self
+                .url
+                .as_deref()
+                .is_some_and(|u| u.trim().starts_with("http://"))
+    }
+
+    /// The host the Hub's own certificate is for: the address's, else this
+    /// machine's name.
+    pub fn tls_host(&self) -> String {
         self.url
             .as_deref()
-            .and_then(freesize_proto::pairing::normalize_hub)
+            .and_then(host_of)
+            .unwrap_or_else(freesize_agent::hostname)
     }
 
     /// Whether the dashboard is reached over HTTPS, so cookies are marked
@@ -194,7 +254,7 @@ mod tests {
 
     #[test]
     fn sign_in_needs_every_setting() {
-        let config = parse(&["--url", "freesize.lan/"]);
+        let config = parse(&["--url", "freesize.lan/", "--tls", "off"]);
         assert_eq!(config.public_url().as_deref(), Some("https://freesize.lan"));
         assert!(config.https());
         let missing = config.oidc().unwrap_err();
@@ -202,6 +262,8 @@ mod tests {
         assert!(!missing.contains("FREESIZE_HUB_URL"));
 
         let config = parse(&[
+            "--tls",
+            "off",
             "--url",
             "http://10.0.0.2:9090",
             "--oidc-issuer",
@@ -215,6 +277,25 @@ mod tests {
         assert_eq!(oidc.client_secret, "secret");
         assert_eq!(oidc.redirect_uri, "http://10.0.0.2:9090/auth/callback");
         assert!(!config.https());
+    }
+
+    #[test]
+    fn https_by_default_turns_the_address_https() {
+        let config = parse(&["--url", "http://10.0.0.2:9090"]);
+        assert!(config.tls_on());
+        assert_eq!(
+            config.public_url().as_deref(),
+            Some("https://10.0.0.2:9090")
+        );
+        assert!(config.https() && config.url_was_http());
+        assert_eq!(config.tls_host(), "10.0.0.2");
+        let config = parse(&["--url", "https://hub.lan/", "--tls", "off"]);
+        assert_eq!(config.public_url().as_deref(), Some("https://hub.lan"));
+        assert!(!config.url_was_http());
+        assert_eq!(host_of("http://[::1]:9090/x"), Some("::1".into()));
+        assert_eq!(host_of("hub.lan"), Some("hub.lan".into()));
+        assert_eq!(host_of("https://hub.lan:9090"), Some("hub.lan".into()));
+        assert_eq!(host_of("https://"), None);
     }
 
     #[test]

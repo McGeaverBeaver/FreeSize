@@ -580,15 +580,39 @@ everything it reported.
 
 ### Running the Hub
 
-The Hub is one program with its database (SQLite) and key in a data folder.
-**Back that folder up**: devices trust the key, and a new one means pairing
-every device again. Put HTTPS in front with a reverse proxy. Whether the Hub
-is reachable from the internet is your choice: on a LAN or WireGuard address
-only your own devices see it; reachable from outside, sign-in goes through
-Authentik's own protections and pairing codes are one-time and short-lived,
-and the Hub limits wrong guesses, but the devices' reports (folder and file
-names) are only as private as your HTTPS. A plain `http://` address works
-too, on every device including Android; devices warn when they pair over it,
+The Hub is one program with its database (SQLite), key and certificates in
+a data folder. **Back that folder up**: devices trust the key, and a new one
+means pairing every device again. Whether the Hub is reachable from the
+internet is your choice: on a LAN or WireGuard address only your own devices
+see it; reachable from outside, sign-in goes through Authentik's own
+protections and pairing codes are one-time and short-lived, and the Hub
+limits wrong guesses.
+
+**HTTPS** is on from the start, with no setup. On first start the Hub makes
+its own small certificate authority (`tls-ca.pem` in the data folder, its
+key next to it) and a certificate for the host in its address (SHA-256, the
+address in the subject alternative names, server authentication, 825 days,
+Apple's limit), which it renews a month before it ends or when the address
+changes. Devices learn that authority when they pair, through the pairing
+link, which already vouches for the Hub's key, and trust it for this Hub's
+address only, never for anything else; it never goes into the system's
+certificate store. Browsers do warn on the first visit: the dashboard's
+Settings page offers `freesize-hub-authority.pem` to install on your own
+computers. Pairing links and the Authentik redirect URI are `https://`
+(an address given as `http://` is read as `https://`).
+
+- Your own certificate (from your home CA, or Let's Encrypt) instead:
+  `FREESIZE_TLS_CERT_FILE` and `FREESIZE_TLS_KEY_FILE`, PEM with the chain,
+  picked up again when the files change. Devices then check it against
+  their system's certificates, so a home CA has to be installed on them.
+- A reverse proxy doing HTTPS in front: `FREESIZE_TLS=off`, and the Hub
+  speaks plain http to the proxy only.
+
+The Hub also answers plain http on the same port: for the container's
+health check, and for devices paired with a Hub before 0.8.7. Those are
+told the new address in an answer signed with the Hub's key and move over
+by themselves; the browser is sent to `https://`. Pairing over plain
+`http://` is still possible with `FREESIZE_TLS=off`; devices warn then,
 since anyone on the network can read what they send.
 
 **Unraid**: the template is in `unraid/freesize-hub.xml`. Until it's in
@@ -602,8 +626,8 @@ wget -O /boot/config/plugins/dockerMan/templates-user/my-freesize-hub.xml \
 
 It asks for the web port, the appdata folder
 (`/mnt/user/appdata/freesize-hub`), the Hub's address and the Authentik
-settings; the listen address and metrics token are under "Show more
-settings".
+settings; the listen address, TLS and the metrics token are under "Show
+more settings".
 
 **Docker** (any Linux, Synology, Docker Desktop):
 
@@ -647,6 +671,8 @@ a flag; `freesize-hub --help` lists them):
 | `FREESIZE_HUB_NAME` | Name in the dashboard and on devices |
 | `FREESIZE_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` (or `_CLIENT_SECRET_FILE`) | The Authentik provider |
 | `FREESIZE_ADMIN_GROUP`, `FREESIZE_VIEWER_GROUP` | Groups for admins and viewers (`freesize-admins`, `freesize-viewers`) |
+| `FREESIZE_TLS` | `auto` (HTTPS with the Hub's own certificate, the default) or `off` (plain http, for a reverse proxy) |
+| `FREESIZE_TLS_CERT_FILE`, `FREESIZE_TLS_KEY_FILE` | Your own certificate (PEM with the chain) and key instead of the Hub's own |
 | `FREESIZE_METRICS_TOKEN` | Turns on `/metrics` and `/metrics/json` |
 | `FREESIZE_HUB_LOG` | `info`, or `debug` |
 
@@ -680,7 +706,9 @@ see just their own phone and PC.
 
 In the dashboard, **Pair a device** shows a code and a QR code, valid for 10
 minutes and good for one device. It carries the Hub's address and its key's
-fingerprint, which the device checks before it trusts the Hub.
+fingerprint, which the device checks before it trusts the Hub; the Hub's
+signed answer carries its certificate authority, which the device keeps for
+this Hub's address.
 
 - **Phone**: scan the QR code with the camera; it opens FreeSize's connect
   dialog. Or open the FreeSize Hub card on the start screen → Connect, and

@@ -1845,6 +1845,8 @@ fn app_icon(env: &mut Env, pm: &JObject, package: &str) -> JniResult<Pixels> {
 /// HTTP for the Hub through Java's `HttpURLConnection`, which checks
 /// certificates against Android's own store (including CAs the user
 /// installed, where the app allows them) and needs no native TLS library.
+/// For a Hub with its own certificate authority, the connection gets a
+/// trust manager holding exactly that authority instead.
 pub struct JavaTransport;
 
 impl freesize_agent::Transport for JavaTransport {
@@ -1855,9 +1857,14 @@ impl freesize_agent::Transport for JavaTransport {
         headers: &[(&str, String)],
         body: Option<&[u8]>,
         timeout_secs: u64,
+        trust: &freesize_agent::Trust,
     ) -> Result<(u16, Vec<u8>), String> {
+        let ca = match trust {
+            freesize_agent::Trust::Authority(pem) => Some(pem.as_str()),
+            freesize_agent::Trust::System => None,
+        };
         with_activity(
-            |env, _| match http(env, method, url, headers, body, timeout_secs) {
+            |env, _| match http(env, method, url, headers, body, timeout_secs, ca) {
                 Ok(answer) => Ok(Ok(answer)),
                 // Java's own reason, like "Cleartext HTTP traffic to … not
                 // permitted" or "failed to connect to …", instead of jni's
@@ -1885,6 +1892,124 @@ fn java_reason(env: &mut Env) -> String {
     }
 }
 
+/// An `SSLSocketFactory` trusting exactly one authority (PEM): a key store
+/// with that certificate, a trust manager factory loaded with it, an
+/// `SSLContext` using those trust managers.
+fn pinned_socket_factory<'l>(env: &mut Env<'l>, ca_pem: &str) -> JniResult<JObject<'l>> {
+    env.with_local_frame_returning_local(24, |env| {
+        let kind = env.new_string("X.509")?;
+        let factory = env
+            .call_static_method(
+                jni_str!("java/security/cert/CertificateFactory"),
+                jni_str!("getInstance"),
+                jni_sig!("(Ljava/lang/String;)Ljava/security/cert/CertificateFactory;"),
+                &[JValue::Object(&kind)],
+            )?
+            .l()?;
+        let bytes = env.byte_array_from_slice(ca_pem.as_bytes())?;
+        let input = env.new_object(
+            jni_str!("java/io/ByteArrayInputStream"),
+            jni_sig!("([B)V"),
+            &[JValue::Object(&bytes)],
+        )?;
+        let certificate = env
+            .call_method(
+                &factory,
+                jni_str!("generateCertificate"),
+                jni_sig!("(Ljava/io/InputStream;)Ljava/security/cert/Certificate;"),
+                &[JValue::Object(&input)],
+            )?
+            .l()?;
+        let store_type = env
+            .call_static_method(
+                jni_str!("java/security/KeyStore"),
+                jni_str!("getDefaultType"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        let store = env
+            .call_static_method(
+                jni_str!("java/security/KeyStore"),
+                jni_str!("getInstance"),
+                jni_sig!("(Ljava/lang/String;)Ljava/security/KeyStore;"),
+                &[JValue::Object(&store_type)],
+            )?
+            .l()?;
+        env.call_method(
+            &store,
+            jni_str!("load"),
+            jni_sig!("(Ljava/io/InputStream;[C)V"),
+            &[JValue::Object(&JObject::null()), JValue::Object(&JObject::null())],
+        )?;
+        let alias = env.new_string("hub")?;
+        env.call_method(
+            &store,
+            jni_str!("setCertificateEntry"),
+            jni_sig!("(Ljava/lang/String;Ljava/security/cert/Certificate;)V"),
+            &[JValue::Object(&alias), JValue::Object(&certificate)],
+        )?;
+        let algorithm = env
+            .call_static_method(
+                jni_str!("javax/net/ssl/TrustManagerFactory"),
+                jni_str!("getDefaultAlgorithm"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        let managers = env
+            .call_static_method(
+                jni_str!("javax/net/ssl/TrustManagerFactory"),
+                jni_str!("getInstance"),
+                jni_sig!("(Ljava/lang/String;)Ljavax/net/ssl/TrustManagerFactory;"),
+                &[JValue::Object(&algorithm)],
+            )?
+            .l()?;
+        env.call_method(
+            &managers,
+            jni_str!("init"),
+            jni_sig!("(Ljava/security/KeyStore;)V"),
+            &[JValue::Object(&store)],
+        )?;
+        let trust_managers = env
+            .call_method(
+                &managers,
+                jni_str!("getTrustManagers"),
+                jni_sig!("()[Ljavax/net/ssl/TrustManager;"),
+                &[],
+            )?
+            .l()?;
+        let protocol = env.new_string("TLS")?;
+        let context = env
+            .call_static_method(
+                jni_str!("javax/net/ssl/SSLContext"),
+                jni_str!("getInstance"),
+                jni_sig!("(Ljava/lang/String;)Ljavax/net/ssl/SSLContext;"),
+                &[JValue::Object(&protocol)],
+            )?
+            .l()?;
+        env.call_method(
+            &context,
+            jni_str!("init"),
+            jni_sig!(
+                "([Ljavax/net/ssl/KeyManager;[Ljavax/net/ssl/TrustManager;Ljava/security/SecureRandom;)V"
+            ),
+            &[
+                JValue::Object(&JObject::null()),
+                JValue::Object(&trust_managers),
+                JValue::Object(&JObject::null()),
+            ],
+        )?;
+        env.call_method(
+            &context,
+            jni_str!("getSocketFactory"),
+            jni_sig!("()Ljavax/net/ssl/SSLSocketFactory;"),
+            &[],
+        )?
+        .l()
+    })
+}
+
 fn http(
     env: &mut Env,
     method: &str,
@@ -1892,8 +2017,10 @@ fn http(
     headers: &[(&str, String)],
     body: Option<&[u8]>,
     timeout_secs: u64,
+    ca: Option<&str>,
 ) -> JniResult<(u16, Vec<u8>)> {
     env.with_local_frame(32, |env| -> JniResult<(u16, Vec<u8>)> {
+        let https = url.starts_with("https://");
         let url = env.new_string(url)?;
         let url = env.new_object(
             jni_str!("java/net/URL"),
@@ -1908,6 +2035,19 @@ fn http(
                 &[],
             )?
             .l()?;
+        if let Some(ca) = ca
+            && https
+        {
+            // The Hub's own authority, for this connection only; Android's
+            // store isn't touched.
+            let factory = pinned_socket_factory(env, ca)?;
+            env.call_method(
+                &conn,
+                jni_str!("setSSLSocketFactory"),
+                jni_sig!("(Ljavax/net/ssl/SSLSocketFactory;)V"),
+                &[JValue::Object(&factory)],
+            )?;
+        }
         let method = env.new_string(method)?;
         env.call_method(
             &conn,

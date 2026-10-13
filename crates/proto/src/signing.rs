@@ -86,6 +86,8 @@ pub enum Purpose {
     PairResponse,
     Command,
     Decision,
+    /// A [`crate::HubAddress`].
+    Move,
 }
 
 impl Purpose {
@@ -95,6 +97,7 @@ impl Purpose {
             Purpose::PairResponse => "pair-response",
             Purpose::Command => "command",
             Purpose::Decision => "decision",
+            Purpose::Move => "move",
         }
     }
 }

@@ -265,13 +265,6 @@ fn pair(
         link.key = fingerprint.map(|f| f.trim().to_uppercase());
     }
     let name = name.unwrap_or_else(freesize_agent::hostname);
-    if freesize_proto::pairing::plain_http_over_network(&link.hub) {
-        eprintln!(
-            "warning: {} is plain http, so what this machine reports (folder and file names) \
-             can be read on the network. Put HTTPS in front of the Hub.",
-            link.hub
-        );
-    }
     let transport = UreqTransport::new();
     let mut confirm = |hello: &freesize_proto::Hello| {
         println!("The Hub \"{}\" at {} has the key", hello.name, link.hub);
@@ -284,6 +277,19 @@ fn pair(
     state.save(path)?;
     println!("Paired with {} as \"{name}\".", state.hub_name);
     println!("This machine's key: {}", state.fingerprint());
+    if freesize_proto::pairing::plain_http_over_network(&state.hub) {
+        eprintln!(
+            "warning: {} is plain http, so what this machine reports (folder and file names) \
+             can be read on the network. Update the Hub to 0.8.7 or newer, or put HTTPS in \
+             front of it.",
+            state.hub
+        );
+    } else if state.ca.is_some() {
+        println!(
+            "Over HTTPS with the Hub's own certificate, trusted for {} only.",
+            state.hub
+        );
+    }
     println!();
     #[cfg(unix)]
     if freesize_unraid::System::real().is_unraid() {
@@ -650,6 +656,18 @@ pub fn handle(
 ) -> Outcome {
     let mut changed = false;
     let mut ran = false;
+    // The Hub serves HTTPS now: follow it there, once it answers there with
+    // the key this machine paired with.
+    if let Some(signed) = &response.move_to {
+        match freesize_agent::move_to(transport, state, signed) {
+            Ok(true) => {
+                log(&format!("the Hub is at {} now; reporting there", state.hub));
+                changed = true;
+            }
+            Ok(false) => {}
+            Err(err) => log(&format!("the Hub asked to move: {err}")),
+        }
+    }
     for id in &response.cancelled {
         if pending.remove(id).is_some() {
             log(&format!("request {id} was withdrawn"));

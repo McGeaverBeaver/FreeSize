@@ -33,15 +33,27 @@ pub async fn start_hub(name: &str) -> TestHub {
 
 /// A Hub with extra command-line settings.
 pub async fn start_hub_with(name: &str, extra: &[&str]) -> TestHub {
+    start_hub_full(name, extra, false).await
+}
+
+/// A Hub serving HTTPS with its own authority; `url` is `https://`.
+pub async fn start_hub_tls(name: &str) -> TestHub {
+    start_hub_full(name, &[], true).await
+}
+
+async fn start_hub_full(name: &str, extra: &[&str], tls: bool) -> TestHub {
     let idp = MockIdp::start().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let scheme = if tls { "https" } else { "http" };
+    let url = format!("{scheme}://{}", listener.local_addr().unwrap());
     let dir = std::env::temp_dir().join(format!("freesize-hub-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let mut args = vec![
         "freesize-hub",
         "--data",
         dir.to_str().unwrap(),
+        "--tls",
+        if tls { "auto" } else { "off" },
         "--url",
         &url,
         "--oidc-issuer",
@@ -91,14 +103,34 @@ pub struct Browser {
 
 impl Browser {
     pub fn new() -> Browser {
-        let agent = ureq::Agent::config_builder()
+        Browser::build(None)
+    }
+
+    /// A browser that has the Hub's own authority installed.
+    pub fn trusting(ca_pem: &str) -> Browser {
+        Browser::build(Some(ca_pem))
+    }
+
+    fn build(ca_pem: Option<&str>) -> Browser {
+        let mut config = ureq::Agent::config_builder()
             .max_redirects(0)
             .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(20)))
-            .build()
-            .into();
+            .timeout_global(Some(Duration::from_secs(20)));
+        if let Some(pem) = ca_pem {
+            let certs: Vec<_> = ureq::tls::parse_pem(pem.as_bytes())
+                .filter_map(|item| match item {
+                    Ok(ureq::tls::PemItem::Certificate(cert)) => Some(cert),
+                    _ => None,
+                })
+                .collect();
+            config = config.tls_config(
+                ureq::tls::TlsConfig::builder()
+                    .root_certs(ureq::tls::RootCerts::from(certs))
+                    .build(),
+            );
+        }
         Browser {
-            agent,
+            agent: config.build().into(),
             cookie: None,
             csrf: None,
         }
@@ -128,6 +160,12 @@ impl Browser {
             headers,
             body: response.body_mut().read_to_string().unwrap_or_default(),
         }
+    }
+
+    /// A GET that may fail to connect (a refused certificate).
+    pub fn get_result(&mut self, url: &str) -> Result<Response, String> {
+        let response = self.agent.get(url).call().map_err(|e| e.to_string())?;
+        Ok(self.finish(response))
     }
 
     pub fn get(&mut self, url: &str) -> Response {

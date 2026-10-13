@@ -157,6 +157,31 @@ else that can delete:
   pairing, settings, history and quarantine intact (the plugin's update
   through `disktree.plg` above all, since Unraid's update can't be run
   here).
+- 0.8.7: HTTPS by default. The Hub makes its own certificate authority on
+  first start (in the data folder next to its key) and a certificate for
+  the host in its address: SHA-256, the host in the subject alternative
+  names, server authentication, 825 days (Apple's limit), renewed a month
+  before it ends or when the address changes. Devices learn the authority
+  when they pair (the Hub's signed pairing answer names it, and the link
+  vouches for the Hub's key) and trust it for this Hub's address only:
+  ureq with exactly that root on desktops and servers, a trust manager
+  loaded with it through JNI on Android. `FREESIZE_TLS_CERT_FILE` and
+  `FREESIZE_TLS_KEY_FILE` take an administrator's certificate instead,
+  reloaded when the files change; `FREESIZE_TLS=off` keeps plain http for
+  a reverse proxy. Plain http is still answered on the same port: the
+  browser is sent to `https://`, devices paired before are told the new
+  address in a signed answer and move over once the Hub answers there with
+  the key they paired with, and the health check keeps working. The
+  dashboard's Settings shows the certificate and offers the authority to
+  install; pairing links and the Authentik redirect URI are `https://`.
+  Tests: the certificate meets Apple's rules; a device refuses another
+  certificate for its Hub's address and the system's roots refuse the
+  Hub's; the authority isn't trusted for another name; a move must carry
+  the Hub's signature and the Hub's key at the new address. Still to check
+  on real devices: the phone and the Unraid plugin pairing from the QR
+  code and the link, a 0.8.6 device moving over, an administrator's
+  certificate and a proxy setup. The Authentik redirect URI has to be
+  changed to `https://` by hand on a Hub that was `http://`.
 
 Left over and planned (the release it goes in is under Next releases):
 - **A quarantine on phones and desktops**, with one Put back for everything,
@@ -219,38 +244,10 @@ Parked, each with its reason:
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what
-"done" means. 0.8.6, the rename, is under Done. Trust and the quarantine come before any new way to delete;
+"done" means. 0.8.6 (the rename) and 0.8.7 (HTTPS) are under Done. Trust and the quarantine come before any new way to delete;
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
-- **0.8.7, HTTPS by default.** Over plain http anyone on the network can
-  read what devices report and the dashboard's sign-in cookie. The Hub makes
-  its own small certificate authority on first start (kept in the data
-  folder next to its key) and a certificate for the host or IP in its
-  address, signed by it: SHA-256, the address in the subject alternative
-  names, server authentication, 825 days at most (Apple's limit), renewed
-  a month before it ends or when the address changes. Devices learn that
-  authority when they pair: the Hub's signed hello names it, and the pairing
-  link already vouches for the Hub's key, so there's no new question to
-  answer. Each device trusts it for its Hub only, never system-wide: ureq
-  with exactly that root on desktops and servers, and on Android a
-  `TrustManagerFactory` loaded with it through JNI. An admin's own
-  certificate replaces the generated one with `DISKTREE_TLS_CERT_FILE` and
-  `DISKTREE_TLS_KEY_FILE` (PEM, with the chain), reloaded when the files
-  change; devices then check it against the system's certificates as
-  today. `DISKTREE_TLS=off` keeps plain http for a reverse proxy that does
-  TLS in front. Browsers warn on the first visit to a generated
-  certificate; the dashboard offers the authority to install on your own
-  computers, and the Authentik redirect URI becomes `https://`. Devices
-  paired over http move to https when the Hub tells them in a signed
-  answer; the Hub keeps answering them over http for one release. Done
-  when a new Hub serves HTTPS with no setup; Windows, the phone and the
-  Unraid plugin pair over it from the link or the QR code; a 0.8.6 device
-  moves over on its own; an admin's certificate and a proxy setup both
-  work. Tests: the generated certificate meets Apple's rules, a device
-  refuses another certificate for its Hub's address, the Hub's authority
-  isn't trusted for any other address, and a move to a new address must
-  carry the Hub's signature.
 - **0.8.8, the whole disk on every platform.** A scan already marks folders
   it couldn't open ("no access"), counts them, and on a whole drive says how
   much space no file accounts for. It doesn't offer a way to see the rest,

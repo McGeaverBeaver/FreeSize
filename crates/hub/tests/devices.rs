@@ -5,7 +5,7 @@ mod common;
 
 use common::idp::MockUser;
 use common::{Browser, blocking, start_hub};
-use freesize_agent::{Client, Transport, UreqTransport, pair};
+use freesize_agent::{Client, Transport, Trust, UreqTransport, pair};
 use freesize_core::{ScanOptions, ScanProgress, scan};
 use freesize_proto::signing::sign_request;
 use freesize_proto::{ActionKind, DeviceInfo, Disk, PairingLink, Platform, Report};
@@ -188,6 +188,7 @@ async fn signed_requests_cant_be_replayed_or_changed() {
                     &headers,
                     Some(body),
                     10,
+                    &Trust::System,
                 )
                 .unwrap()
         };
@@ -218,6 +219,7 @@ async fn signed_requests_cant_be_replayed_or_changed() {
                 &changed,
                 Some(br#"{"wait":1}"#),
                 10,
+                &Trust::System,
             )
             .unwrap();
         assert_eq!(status, 401);
@@ -244,6 +246,7 @@ async fn signed_requests_cant_be_replayed_or_changed() {
                 &stale,
                 Some(body),
                 10,
+                &Trust::System,
             )
             .unwrap();
         assert_eq!(status, 401);

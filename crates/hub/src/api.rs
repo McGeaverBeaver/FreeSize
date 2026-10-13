@@ -17,6 +17,7 @@ pub async fn status(State(state): State<AppState>) -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "sign_in": state.oidc.settings().is_ok(),
         "missing": state.oidc.settings().err(),
+        "https": state.tls.is_some(),
     }))
 }
 
@@ -36,6 +37,8 @@ pub struct HubInfo {
     pub version: &'static str,
     pub url: Option<String>,
     pub fingerprint: String,
+    /// The certificate; none with TLS off.
+    pub tls: Option<crate::tls::TlsInfo>,
 }
 
 /// `GET /api/me`: who is signed in, and about the Hub.
@@ -51,6 +54,7 @@ pub async fn me(State(state): State<AppState>, user: User) -> Json<Me> {
             version: env!("CARGO_PKG_VERSION"),
             url: state.config.public_url(),
             fingerprint: state.key.public().fingerprint(),
+            tls: state.tls.as_ref().map(|t| t.info()),
         },
     })
 }

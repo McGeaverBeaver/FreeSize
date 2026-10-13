@@ -10,11 +10,11 @@ pub mod report;
 pub mod state;
 pub mod transport;
 
-pub use client::{AgentError, AgentResult, Client, hello, pair};
+pub use client::{AgentError, AgentResult, Client, hello, move_to, pair};
 pub use state::{AgentState, Approver};
-pub use transport::Transport;
 #[cfg(feature = "ureq")]
 pub use transport::UreqTransport;
+pub use transport::{Transport, Trust};
 
 /// Seconds since 1970.
 pub fn now() -> i64 {

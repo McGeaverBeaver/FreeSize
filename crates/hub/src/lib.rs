@@ -15,12 +15,15 @@ pub mod error;
 pub mod history;
 pub mod metrics;
 pub mod reports;
+pub mod tls;
 pub mod web;
 
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::path::Path;
+use std::pin::pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -28,6 +31,12 @@ use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use freesize_proto::KeyPair;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
+use hyper_util::server::graceful::{GracefulShutdown, Watcher};
+use hyper_util::service::TowerToHyperService;
+use tokio::net::TcpStream;
+use tower::ServiceExt;
 
 pub use config::Config;
 pub use db::Db;
@@ -45,6 +54,8 @@ pub struct Shared {
     /// Wakes devices' waiting polls.
     pub wakers: devices::Wakers,
     pub pair_limiter: devices::PairLimiter,
+    /// HTTPS, unless `--tls off`.
+    pub tls: Option<Arc<tls::Tls>>,
 }
 
 impl Deref for AppState {
@@ -56,7 +67,7 @@ impl Deref for AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config, db: Db, key: KeyPair) -> AppState {
+    pub fn new(config: Config, db: Db, key: KeyPair, tls: Option<tls::Tls>) -> AppState {
         let oidc = auth::Oidc::new(config.oidc());
         AppState(Arc::new(Shared {
             config,
@@ -65,6 +76,7 @@ impl AppState {
             oidc,
             wakers: devices::Wakers::default(),
             pair_limiter: devices::PairLimiter::default(),
+            tls: tls.map(Arc::new),
         }))
     }
 
@@ -76,7 +88,8 @@ impl AppState {
         let db = Db::open(&config.data.join("hub.db"))
             .map_err(|e| format!("{}: {e}", config.data.join("hub.db").display()))?;
         let key = load_or_create_key(&config.data.join("hub-key"))?;
-        Ok(AppState::new(config, db, key))
+        let tls = tls::Tls::setup(&config)?;
+        Ok(AppState::new(config, db, key, tls))
     }
 }
 
@@ -123,6 +136,7 @@ pub fn router(state: AppState) -> Router {
         .route("/app.js", get(web::script))
         .route("/app.css", get(web::style))
         .route("/icon.svg", get(web::icon))
+        .route("/ca.pem", get(web::authority))
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
@@ -201,6 +215,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/commands/{id}", post(commands::update))
         .route("/api/v1/decisions", post(commands::decide))
         .layer(axum::middleware::from_fn(web::security_headers))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            web::https_only,
+        ))
         .with_state(state)
 }
 
@@ -211,6 +229,28 @@ pub async fn run(mut config: Config) -> Result<(), String> {
     let state = AppState::open(config)?;
     if let Err(missing) = state.oidc.settings() {
         tracing::warn!("sign-in isn't set up ({missing}); the dashboard can't be used yet");
+    }
+    match &state.tls {
+        Some(tls) => {
+            let info = tls.info();
+            tracing::info!(
+                "serving HTTPS for {} with {} certificate",
+                info.names.join(", "),
+                if info.own {
+                    "the Hub's own"
+                } else {
+                    "the administrator's"
+                }
+            );
+            if state.config.url_was_http() {
+                tracing::warn!(
+                    "the address was given as http://, but the Hub serves HTTPS: pairing links \
+                     and the sign-in redirect URI are {} now; set that redirect URI in Authentik",
+                    state.config.public_url().unwrap_or_default()
+                );
+            }
+        }
+        None => tracing::info!("TLS is off: plain http only, for a reverse proxy in front"),
     }
     tracing::info!(
         "FreeSize Hub {} listening on {listen}, key {}",
@@ -223,18 +263,107 @@ pub async fn run(mut config: Config) -> Result<(), String> {
     serve(listener, state).await
 }
 
-/// Serves on an open listener (tests use a random port).
+/// How a request came in, for handlers that care (plain http to a Hub that
+/// serves HTTPS is redirected, and devices on it are told to move).
+#[derive(Clone, Copy, Debug)]
+pub struct Via {
+    pub tls: bool,
+    pub peer: SocketAddr,
+}
+
+/// Serves on an open listener (tests use a random port): HTTPS and plain
+/// http on the same port, told apart by the first byte, until Ctrl+C or
+/// SIGTERM.
 pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result<(), String> {
     let checking = tokio::spawn(alerts::run(state.clone()));
-    let served = axum::serve(
-        listener,
-        router(state).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown())
-    .await
-    .map_err(|e| e.to_string());
+    let refreshing = tokio::spawn(tls::refresh_loop(state.clone()));
+    let app = router(state.clone());
+    let builder = auto::Builder::new(TokioExecutor::new());
+    let graceful = GracefulShutdown::new();
+    let mut shutdown = pin!(shutdown());
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, peer) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(err) => {
+                        tracing::warn!("accept: {err}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+                let app = app.clone();
+                let tls = state.tls.clone();
+                let builder = builder.clone();
+                let watcher = graceful.watcher();
+                tokio::spawn(connection(stream, peer, tls, app, builder, watcher));
+            }
+            () = &mut shutdown => break,
+        }
+    }
+    tokio::select! {
+        () = graceful.shutdown() => {}
+        () = tokio::time::sleep(Duration::from_secs(10)) => {}
+    }
     checking.abort();
-    served
+    refreshing.abort();
+    Ok(())
+}
+
+/// One connection: a TLS handshake starts with 0x16, anything else is
+/// plain http.
+async fn connection(
+    stream: TcpStream,
+    peer: SocketAddr,
+    tls: Option<Arc<tls::Tls>>,
+    app: Router,
+    builder: auto::Builder<TokioExecutor>,
+    watcher: Watcher,
+) {
+    let mut first = [0u8; 1];
+    let peeked = tokio::time::timeout(Duration::from_secs(10), stream.peek(&mut first)).await;
+    let is_tls = matches!(peeked, Ok(Ok(1))) && first[0] == 0x16;
+    let via = Via { tls: is_tls, peer };
+    let service = TowerToHyperService::new(app.map_request(
+        move |mut request: axum::extract::Request<hyper::body::Incoming>| {
+            request.extensions_mut().insert(via);
+            request
+        },
+    ));
+    let served = match (is_tls, tls) {
+        (true, Some(tls)) => match tls.acceptor().accept(stream).await {
+            Ok(stream) => {
+                watcher
+                    .watch(
+                        builder
+                            .serve_connection_with_upgrades(TokioIo::new(stream), service)
+                            .into_owned(),
+                    )
+                    .await
+            }
+            Err(err) => {
+                tracing::debug!("{peer}: TLS handshake: {err}");
+                return;
+            }
+        },
+        // TLS to a Hub without it: nothing sensible to answer.
+        (true, None) => {
+            tracing::debug!("{peer}: TLS to a plain-http Hub");
+            return;
+        }
+        (false, _) => {
+            watcher
+                .watch(
+                    builder
+                        .serve_connection_with_upgrades(TokioIo::new(stream), service)
+                        .into_owned(),
+                )
+                .await
+        }
+    };
+    if let Err(err) = served {
+        tracing::debug!("{peer}: {err}");
+    }
 }
 
 async fn shutdown() {

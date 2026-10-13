@@ -5,15 +5,16 @@ use freesize_proto::signing::{
     DEVICE_HEADER, NONCE_HEADER, SIGNATURE_HEADER, TIME_HEADER, sign_request,
 };
 use freesize_proto::{
-    CommandUpdate, Decision, DeviceInfo, DeviceKey, ErrorBody, Hello, KeyPair, PROTOCOL,
-    PairRequest, PairResponse, PairingLink, PollRequest, PollResponse, Purpose, Report, Signed,
+    CommandUpdate, Decision, DeviceInfo, DeviceKey, ErrorBody, Hello, HubAddress, KeyPair,
+    PROTOCOL, PairRequest, PairResponse, PairingLink, PollRequest, PollResponse, Purpose, Report,
+    Signed,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::now;
 use crate::state::AgentState;
-use crate::transport::Transport;
+use crate::transport::{Transport, Trust};
 
 /// Why something sent to the Hub didn't work.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,7 +71,7 @@ fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> AgentResult<T> {
 }
 
 /// The Hub at `hub` (an address like `https://hub.home.lan`).
-pub fn hello(transport: &dyn Transport, hub: &str) -> AgentResult<Hello> {
+pub fn hello(transport: &dyn Transport, hub: &str, trust: &Trust) -> AgentResult<Hello> {
     let (status, body) = transport
         .request(
             "GET",
@@ -78,6 +79,7 @@ pub fn hello(transport: &dyn Transport, hub: &str) -> AgentResult<Hello> {
             &[("Accept", "application/json".into())],
             None,
             TIMEOUT,
+            trust,
         )
         .map_err(|e| AgentError::new(format!("can't reach {hub}: {e}")))?;
     let hello: Hello = decode(status, &body)?;
@@ -90,16 +92,46 @@ pub fn hello(transport: &dyn Transport, hub: &str) -> AgentResult<Hello> {
     Ok(hello)
 }
 
+/// What trusting the Hub's own authority means for a request.
+fn trust_for(ca: Option<&str>) -> Trust {
+    ca.map_or(Trust::System, |ca| Trust::Authority(ca.to_string()))
+}
+
+/// The same address over plain `http://`, where the Hub also answers.
+fn plain(hub: &str) -> Option<String> {
+    hub.strip_prefix("https://")
+        .map(|rest| format!("http://{rest}"))
+}
+
+/// The Hub's hello before pairing, when nothing about its certificate is
+/// known yet. A Hub with its own authority answers plain http on the same
+/// port and names the authority there; the signed pairing answer repeats it,
+/// so a wrong one is caught. A Hub with an administrator's certificate or
+/// behind a reverse proxy answers over https with a certificate the system
+/// already trusts.
+fn first_hello(transport: &dyn Transport, hub: &str) -> AgentResult<Hello> {
+    let over_https = hello(transport, hub, &Trust::System);
+    if over_https.is_ok() {
+        return over_https;
+    }
+    match plain(hub) {
+        Some(plain) => hello(transport, &plain, &Trust::System).or(over_https),
+        None => over_https,
+    }
+}
+
 /// Pairs with a Hub using a link from its dashboard, checking the Hub has
 /// the key the link names. Without a key in the link, `confirm` is shown the
-/// Hub's fingerprint and decides.
+/// Hub's fingerprint and decides. A Hub serving HTTPS with its own authority
+/// is paired over it, whatever the link says, and the device keeps that
+/// authority for this Hub's address.
 pub fn pair(
     transport: &dyn Transport,
     link: &PairingLink,
     info: DeviceInfo,
     confirm: &mut dyn FnMut(&Hello) -> bool,
 ) -> AgentResult<AgentState> {
-    let hello = hello(transport, &link.hub)?;
+    let hello = first_hello(transport, &link.hub)?;
     match &link.key {
         Some(expected) if hello.key.fingerprint() != expected.to_uppercase() => {
             return Err(AgentError::new(format!(
@@ -116,6 +148,13 @@ pub fn pair(
             }
         }
     }
+    // With its own authority the Hub speaks HTTPS: pair over it, even from
+    // a link written before the Hub did.
+    let hub = match (&hello.ca, link.hub.strip_prefix("http://")) {
+        (Some(_), Some(rest)) => format!("https://{rest}"),
+        _ => link.hub.clone(),
+    };
+    let trust = trust_for(hello.ca.as_deref());
     let key = KeyPair::generate();
     let name = info.name.clone();
     let request = Signed::sign(
@@ -132,12 +171,13 @@ pub fn pair(
     let (status, answer) = transport
         .request(
             "POST",
-            &format!("{}/api/v1/pair", link.hub),
+            &format!("{hub}/api/v1/pair"),
             &[("Content-Type", "application/json".into())],
             Some(&body),
             TIMEOUT,
+            &trust,
         )
-        .map_err(|e| AgentError::new(format!("can't reach {}: {e}", link.hub)))?;
+        .map_err(|e| AgentError::new(format!("can't reach {hub}: {e}")))?;
     let signed: Signed<PairResponse> = decode(status, &answer)?;
     let response = signed
         .open(&hello.key, Purpose::PairResponse)
@@ -147,15 +187,45 @@ pub fn pair(
             "the Hub's answer was meant for another device",
         ));
     }
-    let mut state = AgentState::new(
-        link.hub.clone(),
-        hello.name,
-        hello.key,
-        response.device,
-        &key,
-    );
+    if response.hub.ca != hello.ca {
+        return Err(AgentError::new(
+            "the Hub's signed answer names another certificate authority than it first said. \
+             Something between this device and the Hub may be pretending to be it.",
+        ));
+    }
+    let mut state = AgentState::new(hub, hello.name, hello.key, response.device, &key);
+    state.ca = hello.ca;
     state.name = name;
     Ok(state)
+}
+
+/// Acts on the Hub saying it's reached at another address now (it serves
+/// HTTPS since the device paired over plain http). Only a Hub that signs
+/// with the key the device paired with, and answers at the new address with
+/// that key, is followed. `Ok(true)` when the state changed and should be
+/// saved.
+pub fn move_to(
+    transport: &dyn Transport,
+    state: &mut AgentState,
+    signed: &Signed<HubAddress>,
+) -> AgentResult<bool> {
+    let address = signed
+        .open(&state.hub_key, Purpose::Move)
+        .map_err(|e| AgentError::new(format!("the Hub's new address: {e}")))?;
+    let hub = freesize_proto::pairing::normalize_hub(&address.url)
+        .ok_or_else(|| AgentError::new(format!("the Hub's new address: {}", address.url)))?;
+    if hub == state.hub && address.ca == state.ca {
+        return Ok(false);
+    }
+    let there = hello(transport, &hub, &trust_for(address.ca.as_deref()))?;
+    if there.key != state.hub_key {
+        return Err(AgentError::new(format!(
+            "{hub} answers with another key than the Hub this device paired with"
+        )));
+    }
+    state.hub = hub;
+    state.ca = address.ca;
+    Ok(true)
 }
 
 /// A paired device's connection to its Hub.
@@ -201,6 +271,7 @@ impl<'a> Client<'a> {
                 &headers,
                 (method != "GET").then_some(bytes.as_slice()),
                 timeout,
+                &self.state.trust(),
             )
             .map_err(|e| AgentError::new(format!("can't reach the Hub: {e}")))?;
         decode(status, &answer)
@@ -271,5 +342,100 @@ impl<'a> Client<'a> {
             ));
         }
         Ok(found)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use freesize_proto::{Hello, HubAddress, KeyPair, PROTOCOL, Purpose, Signed};
+
+    use super::*;
+
+    /// Answers every hello with one Hub's key, and remembers what was asked.
+    struct FakeHub {
+        key: KeyPair,
+        asked: RefCell<Vec<(String, Trust)>>,
+    }
+
+    impl Transport for FakeHub {
+        fn request(
+            &self,
+            _method: &str,
+            url: &str,
+            _headers: &[(&str, String)],
+            _body: Option<&[u8]>,
+            _timeout_secs: u64,
+            trust: &Trust,
+        ) -> Result<(u16, Vec<u8>), String> {
+            self.asked
+                .borrow_mut()
+                .push((url.to_string(), trust.clone()));
+            let hello = Hello {
+                name: "Hub".into(),
+                version: "test".into(),
+                protocol: PROTOCOL,
+                key: self.key.public(),
+                ca: None,
+            };
+            Ok((200, serde_json::to_vec(&hello).unwrap()))
+        }
+    }
+
+    fn paired(hub_key: &KeyPair) -> AgentState {
+        AgentState::new(
+            "http://hub.lan:9090".into(),
+            "Hub".into(),
+            hub_key.public(),
+            "d1".into(),
+            &KeyPair::generate(),
+        )
+    }
+
+    #[test]
+    fn a_move_needs_the_hubs_signature_and_its_key_at_the_new_address() {
+        let hub_key = KeyPair::generate();
+        let transport = FakeHub {
+            key: KeyPair::from_seed(hub_key.seed()),
+            asked: RefCell::new(Vec::new()),
+        };
+        let address = HubAddress {
+            url: "https://hub.lan:9090".into(),
+            ca: Some("-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n".into()),
+            time: 1,
+        };
+
+        // Signed by someone else: refused without a word to anyone.
+        let mut state = paired(&hub_key);
+        let forged = Signed::sign(&address, &KeyPair::generate(), Purpose::Move);
+        assert!(move_to(&transport, &mut state, &forged).is_err());
+        assert_eq!(state.hub, "http://hub.lan:9090");
+        assert!(transport.asked.borrow().is_empty());
+
+        // Signed by the Hub: followed once the new address answers with the
+        // Hub's key, over its authority.
+        let signed = Signed::sign(&address, &hub_key, Purpose::Move);
+        assert_eq!(move_to(&transport, &mut state, &signed), Ok(true));
+        assert_eq!(state.hub, "https://hub.lan:9090");
+        assert_eq!(state.ca, address.ca);
+        assert_eq!(
+            transport.asked.borrow().as_slice(),
+            [(
+                "https://hub.lan:9090/api/v1/hello".to_string(),
+                Trust::Authority(address.ca.clone().unwrap())
+            )]
+        );
+        // The same again changes nothing.
+        assert_eq!(move_to(&transport, &mut state, &signed), Ok(false));
+
+        // A Hub with another key at the new address isn't followed.
+        let other = FakeHub {
+            key: KeyPair::generate(),
+            asked: RefCell::new(Vec::new()),
+        };
+        let mut state = paired(&hub_key);
+        assert!(move_to(&other, &mut state, &signed).is_err());
+        assert_eq!(state.hub, "http://hub.lan:9090");
     }
 }

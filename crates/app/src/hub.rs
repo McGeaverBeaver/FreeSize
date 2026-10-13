@@ -186,13 +186,6 @@ impl Hub {
         let transport = self.transport.clone();
         let path = self.path.clone();
         let state = self.state.clone();
-        if freesize_proto::pairing::plain_http_over_network(&link.hub) {
-            let _ = events.send(Event::Status(format!(
-                "{} is plain http: what this device reports (folder and file names) can be read \
-                 on the network. Put HTTPS in front of the Hub.",
-                link.hub
-            )));
-        }
         std::thread::spawn(move || {
             let mut asked = false;
             let mut confirm = |hello: &Hello| match &confirmed {
@@ -206,6 +199,14 @@ impl Hub {
             match freesize_agent::pair(&*transport, &link, info, &mut confirm) {
                 Ok(paired) => {
                     let name = paired.hub_name.clone();
+                    if freesize_proto::pairing::plain_http_over_network(&paired.hub) {
+                        let _ = events.send(Event::Status(format!(
+                            "{} is plain http: what this device reports (folder and file names) \
+                             can be read on the network. Update the Hub to 0.8.7 or newer, or \
+                             put HTTPS in front of it.",
+                            paired.hub
+                        )));
+                    }
                     let saved = paired.save(&path);
                     *state.lock().unwrap_or_else(|e| e.into_inner()) = Some(paired);
                     let _ = events.send(Event::Paired(saved.map(|()| name)));
@@ -422,7 +423,28 @@ impl Worker {
         }
     }
 
+    /// The Hub serves HTTPS now: follow it there, once it answers there
+    /// with the key this device paired with.
+    fn follow(&mut self, signed: &freesize_proto::Signed<freesize_proto::HubAddress>) {
+        let Some(mut state) = self.snapshot() else {
+            return;
+        };
+        match freesize_agent::move_to(&*self.transport, &mut state, signed) {
+            Ok(true) => {
+                let hub = state.hub.clone();
+                *self.state.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
+                self.save();
+                self.tell(Event::Status(format!("Connected to {hub} over HTTPS")));
+            }
+            Ok(false) => {}
+            Err(err) => self.tell(Event::Status(format!("The Hub asked to move: {err}"))),
+        }
+    }
+
     fn handle(&mut self, response: PollResponse) {
+        if let Some(signed) = &response.move_to {
+            self.follow(signed);
+        }
         let Some(state) = self.snapshot() else { return };
         for id in response.cancelled {
             self.asked.remove(&id);
