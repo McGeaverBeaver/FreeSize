@@ -117,6 +117,24 @@ reset_root();
 [$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'junk_clean', 'rule' => '../x'], true);
 check($status === 400 && !file_exists("$root/args"), 'a rule id with other characters is refused before the command runs');
 
+// A preset is asked for by kind; its names are checked before the command runs.
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'move_preset', 'kind' => 'empty-disk', 'disk' => 'disk1'], true);
+check($status === 200, 'emptying a disk is planned');
+$args = explode("\n", trim((string)@file_get_contents("$root/args")));
+check($args[0] === 'unraid' && array_slice($args, -5) === ['move', 'preset', '--json', 'empty-disk', 'disk1'], 'the command gets the disk');
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'move_preset', 'kind' => 'gather', 'share' => 'Movies', 'to' => 'disk2'], true);
+$args = explode("\n", trim((string)@file_get_contents("$root/args")));
+check($status === 200 && array_slice($args, -5) === ['gather', '--to', 'disk2', '--', 'Movies'], 'gathering gets the share and the disk');
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'move_preset', 'kind' => 'gather', 'share' => '../x'], true);
+check($status === 400 && !file_exists("$root/args"), 'a share with a slash is refused before the command runs');
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'move_start', 'share' => 'Movies', 'folder' => 'Old', 'from' => ['disk1'], 'to' => 'disk2', 'empty' => '1'], true);
+$args = explode("\n", trim((string)@file_get_contents("$root/args")));
+check($status === 200 && end($args) === '--empty-after', 'the tick to delete the originals reaches the command');
+
 // Without Unraid's prelude the page checks the token itself.
 reset_root();
 [$status, $reply] = post(['action' => 'keep', 'paths' => ''], false);

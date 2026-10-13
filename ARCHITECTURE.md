@@ -311,8 +311,11 @@ data is measured through Usage access instead.
   scan of a whole drive (`is_drive_root`: a different device than the
   parent on Unix, `C:\` on Windows). It asks the system's tools and stays
   quiet when one is missing: `zfs list` for the snapshots of the dataset
-  mounted there, `vssadmin list shadowstorage` for shadow copies, `tmutil
-  listlocalsnapshots` for Time Machine. `filecleanup.rs` shows the gap only
+  mounted there, `btrfs subvolume list -s` and `btrfs qgroup show` (the
+  snapshots' exclusive bytes, with quotas on) for btrfs, `vssadmin list
+  shadowstorage` for shadow copies, `tmutil listlocalsnapshots` for Time
+  Machine, `diskutil apfs listSnapshots` for other APFS snapshots and
+  `diskutil info` for purgeable space. `filecleanup.rs` shows the gap only
   when it's at least 1 GB and 2% of the used space.
 - `moves.rs` moves basket items: the target keeps the path below the
   scanned folder, `rename` within a drive, else copy, compare sizes and
@@ -668,7 +671,10 @@ line), and the server (`hub`).
   category, size, items, safety and whether it refills or is running), `PollResponse` (commands, approval
   requests for another device, decisions, withdrawals), `Command` with its
   `Action` (`delete`, `uninstall`, `clean_junk`, `restore`,
-  `empty_quarantine`, `docker_cleanup`) and `CommandUpdate`. Each action
+  `empty_quarantine`, `docker_cleanup`) and `CommandUpdate`. `unraid.rs`
+  holds what an Unraid server reports (the array, shares, Docker, VMs,
+  activity, permissions, moves with the file being copied, Nextcloud's
+  data folders and the round's peak memory). Each action
   has an `ActionKind`, which is what a grant covers; emptying the
   quarantine and removing images are kinds of their own that no grant
   covers, so they are asked for every time.
@@ -908,14 +914,45 @@ server's root (`/`, or a folder laid out like a server in the tests).
 - `mover.rs`: a plan (room with a margin of 1 GiB or 1%, files in the way,
   hard links that would be split, the in-use rules), then file by file:
   copy to a hidden `.name.disktree-part`, compare the xxh3-128 hashes of
-  both, keep owner, mode and times, rename into place. The originals go to
-  the source disk's quarantine. Cancelling stops between files. Also the
-  folders in a share's folder per disk, for the page's picker (sleeping
-  disks only when asked), and the files that are in more than one of
-  several source disks, which stop a move from all of them.
+  both, keep owner, mode, times and extended attributes (`llistxattr`,
+  `lgetxattr`, `lsetxattr`), rename into place. A sparse original (less
+  on disk than its length) is written with its holes: 64 KB runs of zeros
+  are seeked over and the length set at the end. Partial copies an
+  interrupted move left on the target are removed first. The job carries
+  the file being copied (`current`). The originals go to the source
+  disk's quarantine, or, with `empty` ticked when the move was planned,
+  are deleted once every copy checked out. Cancelling stops between
+  files. Also the folders in a share's folder per disk, for the page's
+  picker (sleeping disks only when asked), the files that are in more
+  than one of several source disks, which stop a move from all of them,
+  and the presets: `empty_disk` places each share on the disk with its
+  files on the roomiest disk the share's include and exclude settings
+  allow (a margin of 1 GiB or 1% kept, earlier steps' bytes counted),
+  folder by folder when the whole share fits nowhere; `gather_share`
+  moves a share's parts on awake disks to the disk holding most of it or
+  the one named. Both are plans of `Step`s the daemon runs as ordinary
+  queued moves.
+- `scans.rs`: this round's scans, to answer questions about any server
+  path without touching the disks again. A disk's tree is dropped as soon
+  as it's scanned: `DiskScan::compact` keeps an index (a `BTreeMap` of
+  relative paths) of every folder, plus the files under the places later
+  steps look at file by file (`Keep`: ISOs, VM folders and disk images,
+  the direct entries of appdata, Nextcloud's versions and trash, with `*`
+  for one name), so a big array's files never sit in memory at once. The
+  round reports its peak memory (`VmHWM`) and the daemon logs it.
+- `nextcloud.rs`: Nextcloud's data folders, found by `.ncdata` or
+  `.ocdata` down to three levels on each awake disk (a share, or
+  `appdata/<app>/data`), with `config.php` beside them or in the same
+  appdata folder. The report sizes each user's `files`, `files_versions`,
+  `files_trashbin`, `uploads` and `cache`, `appdata_*/preview` and the
+  rest of `appdata_*`, and group folders, from the scans; the retention
+  settings (`versions_retention_obligation`, `trashbin_retention_obligation`,
+  `auto` by default) give a latest day where they name one, and the
+  versions and trash older than it are counted as expired. Nothing is
+  offered for deletion.
 - `round.rs`: one look at the server: scan the disks that are awake (and
-  one that slept for `WAKE_DAYS`), then shares, Docker, VMs, permissions
-  and the rules.
+  one that slept for `WAKE_DAYS`), then shares, Docker, VMs, Nextcloud,
+  permissions and the rules.
 - The junk cleaner's Unraid rules (`freesize_core::junk`, `$SHARES` as
   `/mnt/user`): the Recycle Bin plugin's `.Recycle.bin` folders and the
   `.Trash-*` folders clients leave. `freesize unraid junk list|clean` and

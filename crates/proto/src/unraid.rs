@@ -25,6 +25,52 @@ pub struct UnraidReport {
     pub permissions: Vec<PermissionIssue>,
     #[serde(default)]
     pub moves: Vec<MoveJob>,
+    /// Nextcloud's data folders on the server, one report each.
+    #[serde(default)]
+    pub nextcloud: Vec<NextcloudReport>,
+    /// The most memory the last round used, in bytes, where Linux says.
+    #[serde(default)]
+    pub peak_memory: Option<u64>,
+}
+
+/// Nextcloud's data folder: the people's files against previews, old
+/// versions, the trash and uploads in progress, with the settings that
+/// would have cleared them. Nothing in it is offered for deletion.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NextcloudReport {
+    /// The data folder, as a `/mnt/user` path.
+    pub data: String,
+    /// `config.php`, where it was found.
+    #[serde(default)]
+    pub config: String,
+    #[serde(default)]
+    pub version: String,
+    /// The whole data folder, on disk.
+    pub total: u64,
+    pub users: Vec<NextcloudUser>,
+    /// `appdata_*/preview`, and the rest of `appdata_*`.
+    pub previews: u64,
+    pub appdata: u64,
+    /// Every user's uploads in progress.
+    pub uploads: u64,
+    /// `versions_retention_obligation` and `trashbin_retention_obligation`.
+    pub versions_setting: String,
+    pub trash_setting: String,
+    /// Older than the settings' latest day, which the background job
+    /// should have removed.
+    pub versions_expired: u64,
+    pub trash_expired: u64,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NextcloudUser {
+    pub name: String,
+    pub files: u64,
+    pub versions: u64,
+    pub trash: u64,
+    pub uploads: u64,
+    pub cache: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,4 +289,11 @@ pub struct MoveJob {
     pub started: i64,
     #[serde(default)]
     pub finished: Option<i64>,
+    /// The file being copied, below the moved folder.
+    #[serde(default)]
+    pub current: String,
+    /// Delete the originals once every copy checked out, rather than
+    /// leaving them in the source disk's quarantine.
+    #[serde(default)]
+    pub empty: bool,
 }

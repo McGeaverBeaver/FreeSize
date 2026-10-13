@@ -19,6 +19,19 @@ pub struct ShareConfig {
     pub comment: String,
     /// How it uses pools, in words: "array", "cache only", "cache → array", …
     pub cache: String,
+    /// The disks its files may go on (empty for all), and those they may
+    /// not, from Unraid's settings.
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+}
+
+fn disk_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 /// The shares Unraid has settings for.
@@ -48,6 +61,8 @@ pub fn read(system: &System) -> Vec<ShareConfig> {
                 name: map.get("name").cloned().unwrap_or(section),
                 comment: get("comment"),
                 cache,
+                include: disk_list(&get("include")),
+                exclude: disk_list(&get("exclude")),
             }
         })
         .collect()

@@ -41,7 +41,23 @@ function dt_move_args() {
     if (!preg_match('/^[a-z][a-z0-9_]{0,30}$/', (string)$from)) dt_fail('choose a disk');
     array_push($args, '--from', (string)$from);
   }
-  return array_merge($args, ['--to', dt_disk('to')]);
+  $args = array_merge($args, ['--to', dt_disk('to')]);
+  if (($_POST['empty'] ?? '') === '1') $args[] = '--empty-after';
+  return $args;
+}
+
+/** A preset's kind and what it works on: empty-disk DISK, or gather SHARE [--to DISK]. */
+function dt_preset_args() {
+  $kind = (string)($_POST['kind'] ?? '');
+  if ($kind === 'empty-disk') return ['empty-disk', dt_disk('disk')];
+  if ($kind === 'gather') {
+    $share = dt_text('share', 100);
+    if ($share === '' || str_contains($share, '/') || $share[0] === '.') dt_fail('choose a share');
+    $args = ['gather', "--", $share];
+    if (($_POST['to'] ?? '') !== '') array_splice($args, 1, 0, ['--to', dt_disk('to')]);
+    return $args;
+  }
+  dt_fail('choose a preset');
 }
 
 switch ($_POST['action'] ?? '') {
@@ -95,6 +111,9 @@ case 'folders':
 
 case 'move_cancel':
   dt_reply(dt_run(['unraid', 'move', 'cancel', dt_id('id')]));
+
+case 'move_preset':
+  dt_json(dt_run(array_merge(['unraid', 'move', 'preset', '--json'], dt_preset_args())));
 
 case 'settings':
   $hours = (int)($_POST['scan_hours'] ?? 24);

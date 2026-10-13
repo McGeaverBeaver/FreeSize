@@ -30,6 +30,9 @@ what was tried in the release's draft notes, and say what wasn't.
       (compare the drive's free space before and after) and the result
       names what was skipped; a "check first" rule lands in the
       quarantine and Put back restores it; `freesize junk` lists the same.
+- [ ] Scanning a whole drive on btrfs (Linux) or APFS (macOS): the Clean
+      up tab's "Not in any file" names the snapshots and, on a Mac, the
+      purgeable space.
 - [ ] Opens a saved scan; Export writes one that opens again.
 - [ ] Hub: pairs from a link, shows up online, a delete request is approved
       on the device and lands in the quarantine.
@@ -74,3 +77,14 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] Quarantine tab: a `.Recycle.bin` with files in it shows under Trash
       folders in the shares with its paths; Empty for good removes it and
       `freesize unraid junk list` agrees.
+- [ ] Shares tab, Nextcloud: the per-user numbers match `du -sh` of
+      `files`, `files_versions` and `files_trashbin` within 1%, and the
+      retention lines match `config.php`.
+- [ ] A stopped VM's sparse vdisk moves between disks with its holes kept
+      (`du -h` of the copy stays well under `ls -l`'s size) and the VM
+      starts from it; the move's row shows the file being copied.
+- [ ] Empty a disk plans every share on the disk and runs the moves one
+      after another; with the tick, the originals are gone once each move
+      says every copy checked out.
+- [ ] After a round on the whole array, `/var/log/freesize.log` gives the
+      peak memory, and it stays well under the server's free memory.

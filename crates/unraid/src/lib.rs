@@ -15,6 +15,7 @@ pub mod array;
 pub mod docker;
 pub mod ini;
 pub mod mover;
+pub mod nextcloud;
 pub mod perms;
 pub mod protect;
 pub mod round;
@@ -81,6 +82,15 @@ pub fn allocated(meta: &std::fs::Metadata) -> u64 {
     {
         meta.len()
     }
+}
+
+/// The most memory this process has used, in bytes, from Linux's
+/// `VmHWM`; none elsewhere.
+pub fn peak_memory() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
 }
 
 /// Seconds since 1970.

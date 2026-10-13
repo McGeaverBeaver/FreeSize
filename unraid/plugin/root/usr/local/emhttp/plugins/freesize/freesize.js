@@ -312,8 +312,10 @@
         table: h("div"),
         form: h("div"),
         plan: h("div", { class: "dt-plan" }),
+        presets: h("div"),
         moves: h("div"),
         look: h("div"),
+        nextcloud: h("div"),
       };
       built.shares.asOf = h("p", { class: "dt-muted" });
       fill(root,
@@ -321,10 +323,12 @@
         h("h3", {}, "Shares and their disks"),
         built.shares.asOf,
         built.shares.table,
+        built.shares.nextcloud,
         h("h3", {}, "Move between disks"),
-        h("p", { class: "dt-muted" }, "Moves a share, or a folder in it, from one disk to another. Each file is copied, the copy checked against the original, and only then the original moved into the source disk's quarantine, where it stays until you empty it. The share's path in /mnt/user stays the same."),
+        h("p", { class: "dt-muted" }, "Moves a share, or a folder in it, from one disk to another. Each file is copied, the copy checked against the original, and only then the original moved into the source disk's quarantine, where it stays until you empty it. The share's path in /mnt/user stays the same. Sparse files (VM disks) keep their holes."),
         built.shares.form,
         built.shares.plan,
+        built.shares.presets,
         built.shares.moves);
     }
     const r = report();
@@ -347,8 +351,107 @@
               h("button", { type: "button", onclick: () => pickShare(s.name) }, "Move…")));
         })))
         : h("p", { class: "dt-muted" }, "No shares found yet; they show after the first look."));
+    renderNextcloud();
     buildMoveForm();
+    renderPresets();
     renderMoves();
+  }
+
+  // Nextcloud's data folder: the people's files against previews, old
+  // versions, the trash and uploads, which Nextcloud itself clears by its
+  // settings. Nothing here is offered for deletion.
+  function renderNextcloud() {
+    const instances = report().nextcloud || [];
+    if (!instances.length) {
+      fill(built.shares.nextcloud);
+      return;
+    }
+    fill(built.shares.nextcloud,
+      h("h3", {}, "Nextcloud"),
+      instances.map((nc) => {
+        const extra = nc.previews + nc.appdata + nc.uploads + nc.users.reduce((n, u) => n + u.versions + u.trash + u.cache, 0);
+        return h("div", { class: "dt-note" },
+          h("p", {}, h("b", {}, nc.data), nc.version ? ` · Nextcloud ${nc.version}` : "", ` · ${size(nc.total)} on disk, ${size(extra)} of it not the people's files`),
+          h("table", { class: "dt-table" },
+            h("thead", {}, h("tr", {}, h("th", {}, "User"), h("th", { class: "dt-num" }, "Files"), h("th", { class: "dt-num" }, "Old versions"), h("th", { class: "dt-num" }, "Trash"), h("th", { class: "dt-num" }, "Uploads"), h("th", { class: "dt-num" }, "Cache"))),
+            h("tbody", {}, nc.users.map((u) => h("tr", {},
+              h("td", {}, u.name), h("td", { class: "dt-num" }, size(u.files)), h("td", { class: "dt-num" }, size(u.versions)),
+              h("td", { class: "dt-num" }, size(u.trash)), h("td", { class: "dt-num" }, size(u.uploads)), h("td", { class: "dt-num" }, size(u.cache)))),
+              h("tr", {}, h("td", {}, "Previews"), h("td", { class: "dt-num", colspan: 5 }, size(nc.previews))),
+              h("tr", {}, h("td", {}, "Other app data"), h("td", { class: "dt-num", colspan: 5 }, size(nc.appdata))))),
+          h("ul", { class: "dt-list" }, nc.notes.map((n) => h("li", {}, n))));
+      }));
+  }
+
+  // ----- Presets: empty a disk, gather a share --------------------------
+
+  function renderPresets() {
+    if (built.presetsBuilt) return;
+    built.presetsBuilt = true;
+    const out = h("div", { class: "dt-plan" });
+    fill(built.shares.presets,
+      h("h3", {}, "Presets"),
+      h("p", { class: "dt-muted" }, "A plan of moves worked out for you, each run like a move above: to empty a disk before pulling it, or to gather a share that's spread over several disks onto one."),
+      h("div", { class: "dt-form" },
+        h("button", { type: "button", onclick: (e) => showPreset(e.target, out, { kind: "empty-disk", disk: built.move.to.value }, "Empty a disk") }, "Empty a disk…"),
+        h("button", { type: "button", onclick: (e) => showPreset(e.target, out, { kind: "gather", share: built.move.share.value }, "Gather a share") }, "Gather a share…")),
+      out);
+  }
+
+  async function showPreset(button, out, args, what) {
+    const disks = moveDisks().map((d) => d.name);
+    const shares = (report().shares || []).map((s) => s.name);
+    const pick = args.kind === "empty-disk"
+      ? h("select", {}, disks.map((d) => h("option", { value: d, selected: d === args.disk }, d)))
+      : h("select", {}, shares.map((s) => h("option", { value: s, selected: s === args.share }, s)));
+    const to = args.kind === "gather" ? h("select", {}, h("option", { value: "" }, "the disk holding most of it"), disks.map((d) => h("option", { value: d }, d))) : null;
+    const ui = dialog(what,
+      h("div", {},
+        h("label", { class: "dt-tick" }, args.kind === "empty-disk" ? "Disk to empty" : "Share to gather", pick),
+        to ? h("label", { class: "dt-tick" }, "Onto", to) : null,
+        h("p", { class: "dt-muted" }, "Nothing moves yet: the plan is shown first, with what can't be moved and why.")),
+      [{ label: "Plan", kind: "primary", onclick: async (close, b) => {
+        const query = args.kind === "empty-disk" ? { kind: "empty-disk", disk: pick.value } : { kind: "gather", share: pick.value, to: to.value };
+        const reply = await busy(b, () => post("move_preset", query));
+        if (!reply.ok) return toast(reply.output, "bad");
+        close();
+        renderPreset(out, reply.result);
+      } }]);
+    void ui;
+  }
+
+  function renderPreset(out, p) {
+    const bytes = p.steps.reduce((n, s) => n + s.bytes, 0);
+    const empty = h("input", { type: "checkbox" });
+    fill(out,
+      h("div", { class: `dt-note ${p.steps.length ? "" : "dt-bad"}` },
+        h("p", {}, h("b", {}, p.title), p.steps.length ? `: ${count(p.steps.length, "move")}, ${size(bytes)}, one after another.` : ": nothing can be moved."),
+        p.steps.length ? h("ul", { class: "dt-list" }, p.steps.map((s) => h("li", {}, `${s.share}${s.folder ? "/" + s.folder : ""}: ${s.from} → ${s.to}, ${size(s.bytes)}`))) : null,
+        p.problems.length ? h("ul", {}, p.problems.map((m) => h("li", {}, m))) : null,
+        p.warnings.length ? h("ul", { class: "dt-warn" }, p.warnings.map((m) => h("li", {}, m))) : null,
+        p.steps.length ? h("label", { class: "dt-chip" }, empty, "Delete each move's originals once every copy checked out, instead of leaving them in the quarantine") : null,
+        p.steps.length ? h("p", {}, h("button", { type: "button", class: "dt-primary", onclick: (e) => startPreset(e.target, out, p, empty.checked) }, `Start ${count(p.steps.length, "move")}…`)) : null));
+  }
+
+  async function startPreset(button, out, p, empty) {
+    dialog(p.title,
+      h("div", {},
+        h("p", {}, `Queue ${count(p.steps.length, "move")} (${size(p.steps.reduce((n, s) => n + s.bytes, 0))})?`),
+        h("p", {}, empty
+          ? "Each move copies its files, checks every copy against its original, and then deletes the originals, as you ticked. Nothing is deleted before its copy checked out."
+          : "Each copy is checked against its original. Then the originals go to their disk's quarantine; nothing is deleted. Once you've checked the copies, empty the quarantine yourself."),
+        h("p", { class: "dt-muted" }, "The moves run one at a time, each planned again just before it starts; what no longer fits is skipped and says so.")),
+      [{ label: "Start", kind: "primary", onclick: async (close, b) => {
+        let failed = 0;
+        for (const s of p.steps) {
+          const reply = await busy(b, () => post("move_start", { share: s.share, folder: s.folder, from: [s.from], to: s.to, empty: empty ? "1" : "0" }));
+          if (!reply.ok) { failed++; toast(`${s.share}: ${reply.output}`, "bad"); }
+        }
+        close();
+        fill(out);
+        toast(failed ? `${p.steps.length - failed} of ${p.steps.length} moves queued.` : "The moves are queued; they show below.", failed ? "bad" : "good");
+        refreshSoon();
+      } }]);
   }
 
   function moveDisks() {
@@ -571,15 +674,17 @@
   }
 
   function confirmMove(args, plans) {
+    const empty = h("input", { type: "checkbox" });
     dialog("Move between disks",
       h("div", {},
         h("p", {}, `Copy to ${movePath(args.to, args)}:`),
         h("ul", { class: "dt-list" }, plans.map((x) => h("li", {}, `${movePath(x.job.from, args)}: ${count(x.job.files, "file")}, ${size(x.job.bytes)}`))),
         h("p", {}, "Each copy is checked against its original. Then the originals go to their disk's quarantine; nothing is deleted. Once you've checked the copies, empty the quarantine yourself."),
+        h("label", { class: "dt-chip" }, empty, "Delete the originals once every copy checked out, instead of leaving them in the quarantine"),
         plans.length > 1 ? h("p", { class: "dt-muted" }, "The moves run one at a time, each planned again just before it starts.") : null,
         h("p", { class: "dt-muted" }, "Stopping a move stops it between files; copies made so far stay, the originals are untouched.")),
       [{ label: "Start", kind: "primary", onclick: async (close, button) => {
-        const reply = await busy(button, () => post("move_start", args));
+        const reply = await busy(button, () => post("move_start", { ...args, empty: empty.checked ? "1" : "0" }));
         if (!reply.ok) return toast(reply.output, "bad");
         close();
         fill(built.shares.plan);
@@ -604,7 +709,7 @@
           h("td", {}, badge(m.state, kinds[m.state])),
           h("td", { class: "dt-wide" },
             h("div", { class: "dt-bar" }, h("span", { style: `width:${pct}%` })),
-            h("div", { class: "dt-muted" }, m.state === "queued" ? "waits for the move before it" : `${m.done_files} of ${m.files} files, ${size(m.done_bytes)} of ${size(m.bytes)}`, m.detail ? ` · ${m.detail}` : "")),
+            h("div", { class: "dt-muted" }, m.state === "queued" ? "waits for the move before it" : `${m.done_files} of ${m.files} files, ${size(m.done_bytes)} of ${size(m.bytes)}`, m.current ? ` · copying ${m.current}` : "", m.detail ? ` · ${m.detail}` : "")),
           h("td", { class: "dt-actions" }, m.state === "running" || m.state === "queued" ? h("button", { type: "button", onclick: async (e) => {
             const reply = await busy(e.target, () => post("move_cancel", { id: m.id }));
             toast(reply.ok ? (m.state === "queued" ? "It won't start." : "It stops after the file it's on.") : reply.output, reply.ok ? "good" : "bad");

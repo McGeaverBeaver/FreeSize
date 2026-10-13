@@ -1,5 +1,6 @@
-//! Space on a drive that no file accounts for: snapshots, shadow copies,
-//! the file system itself, files that couldn't be read.
+//! Space on a drive that no file accounts for: ZFS, btrfs and APFS
+//! snapshots, shadow copies, purgeable space, the file system itself, files
+//! that couldn't be read.
 //!
 //! Only meaningful when the whole drive was scanned. The probes ask the
 //! system's own tools and say nothing when a tool is missing or needs more
@@ -51,6 +52,37 @@ pub fn probe(root: &Path) -> Vec<String> {
             format_size(bytes)
         ));
     }
+    if cfg!(target_os = "linux")
+        && let Some(out) = run(
+            "btrfs",
+            &["subvolume", "list", "-s", &root.to_string_lossy()],
+        )
+    {
+        let ids = parse_btrfs_snapshots(&out);
+        if !ids.is_empty() {
+            let exclusive = run(
+                "btrfs",
+                &["qgroup", "show", "--raw", &root.to_string_lossy()],
+            )
+            .map(|q| parse_btrfs_qgroups(&q, &ids));
+            notes.push(match exclusive {
+                Some(bytes) if bytes > 0 => format!(
+                    "{} btrfs snapshot{} hold {} that nothing else uses. Deleting files they \
+                     still contain frees nothing until those snapshots are deleted (btrfs \
+                     subvolume delete, or the tool that makes them).",
+                    ids.len(),
+                    if ids.len() == 1 { "" } else { "s" },
+                    format_size(bytes)
+                ),
+                _ => format!(
+                    "{} btrfs snapshot{} hold some of it; with quotas on (btrfs quota enable) \
+                     FreeSize can say how much.",
+                    ids.len(),
+                    if ids.len() == 1 { "" } else { "s" }
+                ),
+            });
+        }
+    }
     if cfg!(windows) {
         let drive = root.to_string_lossy().trim_end_matches('\\').to_string();
         match run(
@@ -72,19 +104,88 @@ pub fn probe(root: &Path) -> Vec<String> {
             ),
         }
     }
-    if cfg!(target_os = "macos")
-        && let Some(out) = run("tmutil", &["listlocalsnapshots", &root.to_string_lossy()])
-    {
-        let count = parse_tmutil(&out);
-        if count > 0 {
+    if cfg!(target_os = "macos") {
+        let time_machine = run("tmutil", &["listlocalsnapshots", &root.to_string_lossy()])
+            .map_or(0, |out| parse_tmutil(&out));
+        if time_machine > 0 {
             notes.push(format!(
-                "{count} local Time Machine snapshot{} hold some of it; macOS removes them as \
-                 space runs low.",
-                if count == 1 { "" } else { "s" }
+                "{time_machine} local Time Machine snapshot{} hold some of it; macOS removes \
+                 them as space runs low.",
+                if time_machine == 1 { "" } else { "s" }
             ));
+        }
+        let others = run(
+            "diskutil",
+            &["apfs", "listSnapshots", &root.to_string_lossy()],
+        )
+        .map_or(0, |out| {
+            parse_apfs_snapshots(&out).saturating_sub(time_machine)
+        });
+        if others > 0 {
+            notes.push(format!(
+                "{others} other APFS snapshot{} (a backup tool's, or the system's before an \
+                 update) hold some of it until they're deleted.",
+                if others == 1 { "" } else { "s" }
+            ));
+        }
+        match run("diskutil", &["info", &root.to_string_lossy()])
+            .and_then(|out| parse_purgeable(&out))
+        {
+            Some(bytes) if bytes > 0 => notes.push(format!(
+                "{} is purgeable: caches, local snapshots and other things macOS drops by \
+                 itself when space runs low. The Finder and About This Mac → Storage count it \
+                 as available.",
+                format_size(bytes)
+            )),
+            _ => notes.push(
+                "macOS keeps purgeable space (caches, local snapshots, downloaded updates) \
+                 that it drops when space runs low; About This Mac → Storage shows how much, \
+                 as System Data."
+                    .into(),
+            ),
         }
     }
     notes
+}
+
+/// The subvolume ids `btrfs subvolume list -s` lists (snapshots only).
+fn parse_btrfs_snapshots(output: &str) -> Vec<u64> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            (words.next()? == "ID").then(|| words.next()?.parse().ok())?
+        })
+        .collect()
+}
+
+/// The exclusive bytes of the given subvolumes' qgroups (`0/<id>`), from
+/// `btrfs qgroup show --raw`: "qgroupid  rfer  excl".
+fn parse_btrfs_qgroups(output: &str, ids: &[u64]) -> u64 {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let id: u64 = words.next()?.strip_prefix("0/")?.parse().ok()?;
+            let _referenced = words.next()?;
+            let exclusive: u64 = words.next()?.parse().ok()?;
+            ids.contains(&id).then_some(exclusive)
+        })
+        .sum()
+}
+
+/// How many snapshots `diskutil apfs listSnapshots` lists: one `Name:`
+/// line each.
+fn parse_apfs_snapshots(output: &str) -> usize {
+    output.lines().filter(|l| l.contains("Name:")).count()
+}
+
+/// The purgeable bytes a `diskutil info` listing names, when it does.
+fn parse_purgeable(output: &str) -> Option<u64> {
+    let line = output.lines().find(|l| l.contains("Purgeable"))?;
+    let (_, rest) = line.split_once('(')?;
+    let number: u64 = rest.split_whitespace().next()?.parse().ok()?;
+    Some(number)
 }
 
 fn run(program: &str, args: &[&str]) -> Option<String> {
@@ -159,6 +260,33 @@ mod tests {
         let tm = "Snapshots for disk /:\ncom.apple.TimeMachine.2026-10-11-101010.local\n\
                   com.apple.TimeMachine.2026-10-12-090909.local\n";
         assert_eq!(parse_tmutil(tm), 2);
+
+        let subvolumes = "ID 257 gen 100 cgen 90 top level 5 otime 2026-10-01 10:00:00 path \
+                          .snapshots/1/snapshot\nID 260 gen 120 cgen 110 top level 5 otime \
+                          2026-10-08 10:00:00 path .snapshots/2/snapshot\n";
+        let ids = parse_btrfs_snapshots(subvolumes);
+        assert_eq!(ids, [257, 260]);
+        let qgroups = "qgroupid   rfer        excl\n--------   ----        ----\n0/5        \
+                       5000000000  1000000000\n0/257      4000000000  300000000\n0/260      \
+                       4100000000  200000000\n";
+        assert_eq!(parse_btrfs_qgroups(qgroups, &ids), 500_000_000);
+        assert_eq!(
+            parse_btrfs_qgroups("ERROR: can't list qgroups: quotas not enabled", &ids),
+            0
+        );
+
+        let apfs = "Snapshots for disk1s1 (2 found)\n|\n+-- 1A2B\n|   Name:        \
+                    com.apple.TimeMachine.2026-10-11-101010.local\n|   XID:         100\n|\n\
+                    +-- 3C4D\n    Name:        com.bombich.ccc.safetynet\n    XID:         120\n";
+        assert_eq!(parse_apfs_snapshots(apfs), 2);
+        assert_eq!(parse_apfs_snapshots("No snapshots for disk1s1\n"), 0);
+
+        let info = "   Volume Name:               Macintosh HD\n   Container Total Space:     \
+                    494.4 GB (494384795648 Bytes)\n   Volume Free Space:         120.0 GB \
+                    (120000000000 Bytes) (exactly 234375000 512-Byte-Units)\n   Purgeable \
+                    Space:           30.0 GB (30000000000 Bytes)\n";
+        assert_eq!(parse_purgeable(info), Some(30_000_000_000));
+        assert_eq!(parse_purgeable("   Volume Name: X\n"), None);
     }
 
     #[cfg(unix)]

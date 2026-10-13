@@ -10,7 +10,7 @@
 //! destroy the very files being copied.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -28,6 +28,11 @@ use crate::protect::{Rule, check};
 const MAX_LISTED: usize = 20;
 /// Folders listed at most, for picking one.
 const MAX_FOLDERS: usize = 2000;
+/// What a copy of a sparse file skips: a run of zeros this long makes a
+/// hole in the copy, as `cp --sparse=auto` would.
+const HOLE: usize = 64 * 1024;
+/// The suffix of a file while it's being copied.
+const PARTIAL: &str = ".disktree-part";
 
 /// A move worked out, before anything is copied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -349,17 +354,58 @@ pub fn duplicates(plans: &[Plan]) -> (Vec<String>, usize) {
     (shown, total)
 }
 
-/// Copies one file to a temporary name beside its target, checks the copy
-/// against the original, then gives it its name. Returns the bytes.
-fn copy_file(source: &Path, target: &Path, meta: &std::fs::Metadata) -> Result<u64, String> {
+/// The temporary name of a file while it's copied.
+fn partial_name(target: &Path) -> PathBuf {
     let name = target
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let partial = target.with_file_name(format!(".{name}.disktree-part"));
+    target.with_file_name(format!(".{name}{PARTIAL}"))
+}
+
+/// Removes what an interrupted move left in `folder` and below: files
+/// still named as partial copies, which no finished move leaves behind.
+/// Returns how many.
+pub fn clean_partials(folder: &Path) -> usize {
+    let mut removed = 0;
+    let mut stack = vec![folder.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                if path.file_name().is_some_and(|n| n == QUARANTINE_DIR) {
+                    continue;
+                }
+                stack.push(path);
+            } else if meta.is_file()
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().ends_with(PARTIAL))
+                && std::fs::remove_file(&path).is_ok()
+            {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
+/// Copies one file to a temporary name beside its target, checks the copy
+/// against the original, then gives it its name. A sparse original (less
+/// on disk than its length) is copied with its holes: runs of zeros are
+/// skipped rather than written. Returns the bytes.
+fn copy_file(source: &Path, target: &Path, meta: &std::fs::Metadata) -> Result<u64, String> {
+    let partial = partial_name(target);
     let fail = |what: &str, err: std::io::Error| format!("{}: {what}: {err}", source.display());
     let mut input = std::fs::File::open(source).map_err(|e| fail("reading", e))?;
     let mut output = std::fs::File::create(&partial).map_err(|e| fail("writing", e))?;
+    let sparse = crate::allocated(meta) < meta.len();
     let mut hash = Xxh3::new();
     let mut buffer = vec![0u8; 1 << 20];
     let mut copied = 0u64;
@@ -369,10 +415,27 @@ fn copy_file(source: &Path, target: &Path, meta: &std::fs::Metadata) -> Result<u
             break;
         }
         hash.update(&buffer[..n]);
-        output
-            .write_all(&buffer[..n])
-            .map_err(|e| fail("writing", e))?;
+        if sparse {
+            // Write the data, seek over the zeros; the length is set at
+            // the end so a trailing hole counts too.
+            for chunk in buffer[..n].chunks(HOLE) {
+                if chunk.iter().all(|&b| b == 0) {
+                    output
+                        .seek(SeekFrom::Current(chunk.len() as i64))
+                        .map_err(|e| fail("writing", e))?;
+                } else {
+                    output.write_all(chunk).map_err(|e| fail("writing", e))?;
+                }
+            }
+        } else {
+            output
+                .write_all(&buffer[..n])
+                .map_err(|e| fail("writing", e))?;
+        }
         copied += n as u64;
+    }
+    if sparse {
+        output.set_len(copied).map_err(|e| fail("writing", e))?;
     }
     output.sync_all().map_err(|e| fail("writing", e))?;
     drop(output);
@@ -394,8 +457,92 @@ fn copy_file(source: &Path, target: &Path, meta: &std::fs::Metadata) -> Result<u
         ));
     }
     keep_attributes(&partial, meta);
+    copy_xattrs(source, &partial);
     std::fs::rename(&partial, target).map_err(|e| fail("naming the copy", e))?;
     Ok(copied)
+}
+
+/// The extended attributes of a file or folder, as name and value pairs.
+#[cfg(target_os = "linux")]
+pub fn xattrs(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(cpath) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return Vec::new();
+    };
+    // SAFETY: a valid C string and a buffer of the size passed; a null
+    // buffer with size 0 only asks for the size.
+    let size = unsafe { libc::llistxattr(cpath.as_ptr(), std::ptr::null_mut(), 0) };
+    if size <= 0 {
+        return Vec::new();
+    }
+    let mut names = vec![0u8; size as usize];
+    let size = unsafe { libc::llistxattr(cpath.as_ptr(), names.as_mut_ptr().cast(), names.len()) };
+    if size <= 0 {
+        return Vec::new();
+    }
+    names.truncate(size as usize);
+    names
+        .split(|&b| b == 0)
+        .filter(|n| !n.is_empty())
+        .filter_map(|name| {
+            let cname = std::ffi::CString::new(name).ok()?;
+            let size =
+                unsafe { libc::lgetxattr(cpath.as_ptr(), cname.as_ptr(), std::ptr::null_mut(), 0) };
+            if size < 0 {
+                return None;
+            }
+            let mut value = vec![0u8; size as usize];
+            let size = unsafe {
+                libc::lgetxattr(
+                    cpath.as_ptr(),
+                    cname.as_ptr(),
+                    value.as_mut_ptr().cast(),
+                    value.len(),
+                )
+            };
+            if size < 0 {
+                return None;
+            }
+            value.truncate(size as usize);
+            Some((name.to_vec(), value))
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn xattrs(_path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
+    Vec::new()
+}
+
+/// Copies the extended attributes (Samba's DOS attributes, ACLs, labels)
+/// from the original; ones the target file system refuses are skipped.
+fn copy_xattrs(source: &Path, target: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(ctarget) = std::ffi::CString::new(target.as_os_str().as_bytes()) else {
+            return;
+        };
+        for (name, value) in xattrs(source) {
+            let Ok(cname) = std::ffi::CString::new(name) else {
+                continue;
+            };
+            // SAFETY: valid C strings and a buffer of the length given.
+            unsafe {
+                libc::lsetxattr(
+                    ctarget.as_ptr(),
+                    cname.as_ptr(),
+                    value.as_ptr().cast(),
+                    value.len(),
+                    0,
+                );
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (source, target);
+    }
 }
 
 /// Owner, mode and times from the original.
@@ -436,6 +583,13 @@ pub fn run(
     };
     if !plan.ok() {
         return finish(job, "failed", plan.problems.join("; "));
+    }
+    // What an earlier, interrupted move left behind.
+    if plan.target.is_dir() {
+        let stale = clean_partials(&plan.target);
+        if stale > 0 {
+            job.detail = format!("removed {stale} partial copies an earlier move left");
+        }
     }
     // Folders first (deepest last), files after; folder times are set at
     // the end, since adding files changes them.
@@ -487,6 +641,11 @@ pub fn run(
             if let Some(parent) = target.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
+            job.current = relative.to_string_lossy().into_owned();
+            if last_report.elapsed().as_secs() >= 1 {
+                progress(&job);
+                last_report = std::time::Instant::now();
+            }
             copy_file(&path, &target, &meta).inspect(|_| job.done_files += 1)
         } else {
             Ok(0)
@@ -511,6 +670,7 @@ pub fn run(
     for (folder, meta) in folders.iter().rev() {
         keep_attributes(folder, meta);
     }
+    job.current.clear();
     // All copied and checked: the originals go to their disk's quarantine.
     let moved = quarantine.move_in(
         &job.id,
@@ -526,6 +686,26 @@ pub fn run(
     );
     let shown_bytes = format_size(job.done_bytes);
     match moved.results.first() {
+        Some(Ok(_)) if job.empty => {
+            // Asked for when the move was planned: every copy checked out,
+            // so the originals go now rather than waiting in the quarantine.
+            let detail = match quarantine.empty(std::slice::from_ref(&job.id)) {
+                Ok(freed) => format!(
+                    "copied and checked {} files ({shown_bytes}) to {}, then deleted the \
+                     originals on {} as asked, freeing {}",
+                    job.done_files,
+                    job.to,
+                    job.from,
+                    format_size(freed)
+                ),
+                Err(err) => format!(
+                    "copied and checked {} files ({shown_bytes}) to {}; the originals are in {}'s \
+                     quarantine, which couldn't be emptied ({err}): empty it to free the space",
+                    job.done_files, job.to, job.from
+                ),
+            };
+            finish(job, "done", detail)
+        }
         Some(Ok(_)) => {
             let detail = format!(
                 "copied and checked {} files ({shown_bytes}) to {}; the originals are in {}'s \
@@ -553,6 +733,321 @@ fn plan_label(job: &MoveJob) -> String {
     } else {
         format!("{}/{}", job.share, job.folder)
     }
+}
+
+/// One move of a preset: a share's folder from one disk to another, with
+/// the bytes it holds on that disk.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Step {
+    pub share: String,
+    pub folder: String,
+    pub from: String,
+    pub to: String,
+    pub bytes: u64,
+}
+
+/// A preset worked out: the moves in order, and what can't be moved.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Preset {
+    pub title: String,
+    pub steps: Vec<Step>,
+    pub problems: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// The disks a share may use, from its settings: Unraid's include list,
+/// else every data disk, minus the exclude list. Pools aren't chosen for
+/// a share's files; they're the share's cache.
+fn allowed_disks<'a>(
+    array: &'a Array,
+    configs: &[crate::shares::ShareConfig],
+    share: &str,
+) -> Vec<&'a freesize_proto::unraid::ArrayDisk> {
+    let config = configs.iter().find(|c| c.name == share);
+    array
+        .disks
+        .iter()
+        .filter(|d| d.kind == DiskKind::Data && d.path.is_some())
+        .filter(|d| match config {
+            Some(c) => {
+                (c.include.is_empty() || c.include.contains(&d.name))
+                    && !c.exclude.contains(&d.name)
+            }
+            None => true,
+        })
+        .collect()
+}
+
+/// The top-level folders of a share on a disk, with their size on disk.
+fn share_folders(system: &System, mount: &str, share: &str) -> Vec<(String, u64)> {
+    let dir = system.file(&format!("{mount}/{share}"));
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<(String, u64)> = entries
+        .flatten()
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            (name, folder_size(&e.path()))
+        })
+        .collect();
+    folders.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    folders
+}
+
+/// Space on disk below a path.
+fn folder_size(path: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        let Ok(meta) = std::fs::symlink_metadata(&p) else {
+            continue;
+        };
+        if meta.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&p) {
+                stack.extend(entries.flatten().map(|e| e.path()));
+            }
+        } else {
+            total += crate::allocated(&meta);
+        }
+    }
+    total
+}
+
+/// Places `bytes` of `share` from `from` on the roomiest allowed disk,
+/// keeping track of what earlier steps already planned onto each.
+fn place(
+    array: &Array,
+    configs: &[crate::shares::ShareConfig],
+    planned: &mut HashMap<String, u64>,
+    share: &str,
+    from: &str,
+    bytes: u64,
+) -> Option<String> {
+    let mut best: Option<(&str, u64)> = None;
+    for disk in allowed_disks(array, configs, share) {
+        if disk.name == from {
+            continue;
+        }
+        let margin = (disk.size / 100).max(1 << 30);
+        let room = disk
+            .free
+            .saturating_sub(planned.get(&disk.name).copied().unwrap_or(0))
+            .saturating_sub(margin);
+        if room >= bytes && best.is_none_or(|(_, r)| room > r) {
+            best = Some((disk.name.as_str(), room));
+        }
+    }
+    let (to, _) = best?;
+    *planned.entry(to.to_string()).or_default() += bytes;
+    Some(to.to_string())
+}
+
+/// Empty a disk: every share's folders on it, each to the roomiest disk
+/// the share may use. A share too big for one disk goes folder by folder.
+pub fn empty_disk(
+    system: &System,
+    array: &Array,
+    configs: &[crate::shares::ShareConfig],
+    rules: &[Rule],
+    disk: &str,
+) -> Preset {
+    let mut preset = Preset {
+        title: format!("Empty {disk}"),
+        ..Preset::default()
+    };
+    let Some(source) = array
+        .disk(disk)
+        .filter(|d| d.kind == DiskKind::Data && d.path.is_some())
+    else {
+        preset
+            .problems
+            .push(format!("{disk} isn't a mounted array disk"));
+        return preset;
+    };
+    let mount = source.path.clone().unwrap_or_default();
+    let Ok(entries) = std::fs::read_dir(system.file(&mount)) else {
+        preset.problems.push(format!("{disk} can't be read"));
+        return preset;
+    };
+    let mut shares: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    shares.sort();
+    let mut planned: HashMap<String, u64> = HashMap::new();
+    let in_use: Vec<Rule> = rules.iter().filter(|r| !r.whole).cloned().collect();
+    for share in shares {
+        let share_path = format!("/mnt/user/{share}");
+        if let Some(why) = check(&in_use, &share_path) {
+            preset
+                .problems
+                .push(format!("{share} stays on {disk}: {why}"));
+            continue;
+        }
+        let whole = folder_size(&system.file(&format!("{mount}/{share}")));
+        if let Some(to) = place(array, configs, &mut planned, &share, disk, whole) {
+            preset.steps.push(Step {
+                share: share.clone(),
+                folder: String::new(),
+                from: disk.to_string(),
+                to,
+                bytes: whole,
+            });
+            continue;
+        }
+        // Folder by folder, then.
+        let mut left = Vec::new();
+        for (folder, bytes) in share_folders(system, &mount, &share) {
+            let folder_path = format!("{share_path}/{folder}");
+            if let Some(why) = check(&in_use, &folder_path) {
+                preset
+                    .problems
+                    .push(format!("{share}/{folder} stays on {disk}: {why}"));
+                continue;
+            }
+            match place(array, configs, &mut planned, &share, disk, bytes) {
+                Some(to) => preset.steps.push(Step {
+                    share: share.clone(),
+                    folder: folder.clone(),
+                    from: disk.to_string(),
+                    to,
+                    bytes,
+                }),
+                None => left.push(format!("{share}/{folder} ({})", format_size(bytes))),
+            }
+        }
+        if !left.is_empty() {
+            preset.problems.push(format!(
+                "no disk the share may use has room for {}{}",
+                left.iter()
+                    .take(MAX_LISTED)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if left.len() > MAX_LISTED { ", …" } else { "" }
+            ));
+        }
+    }
+    if preset.steps.is_empty() && preset.problems.is_empty() {
+        preset.problems.push(format!("nothing on {disk} to move"));
+    }
+    preset.warnings.push(
+        "The originals go to the disk's quarantine as each move finishes; empty it once \
+         you've looked, or tick \"delete the originals once every copy checked out\"."
+            .into(),
+    );
+    preset
+}
+
+/// Gather a share: everything of it on other disks moves to one disk,
+/// the one holding most of it unless `to` says which.
+pub fn gather_share(
+    system: &System,
+    array: &Array,
+    configs: &[crate::shares::ShareConfig],
+    rules: &[Rule],
+    share: &str,
+    to: Option<&str>,
+) -> Preset {
+    let mut preset = Preset {
+        title: format!("Gather {share}"),
+        ..Preset::default()
+    };
+    if share.is_empty() || !plain(share) || share.contains('/') {
+        preset.problems.push("choose a share".into());
+        return preset;
+    }
+    let share_path = format!("/mnt/user/{share}");
+    let in_use: Vec<Rule> = rules.iter().filter(|r| !r.whole).cloned().collect();
+    if let Some(why) = check(&in_use, &share_path) {
+        preset
+            .problems
+            .push(format!("{share} can't be moved: {why}"));
+        return preset;
+    }
+    // Where it is now, awake disks only: a sleeping disk's part is left
+    // for another time rather than spinning it up.
+    let mut holdings: Vec<(String, u64)> = array
+        .roots(false)
+        .iter()
+        .filter(|d| d.kind == DiskKind::Data)
+        .filter_map(|d| {
+            let mount = d.path.as_deref()?;
+            let dir = system.file(&format!("{mount}/{share}"));
+            dir.is_dir().then(|| (d.name.clone(), folder_size(&dir)))
+        })
+        .collect();
+    holdings.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let allowed = allowed_disks(array, configs, share);
+    let target = match to {
+        Some(name) => name.to_string(),
+        None => match holdings
+            .iter()
+            .find(|(d, _)| allowed.iter().any(|a| &a.name == d))
+        {
+            Some((d, _)) => d.clone(),
+            None => {
+                preset.problems.push(format!(
+                    "{share} isn't on any awake disk it may use; name the disk to gather it on"
+                ));
+                return preset;
+            }
+        },
+    };
+    let Some(target_disk) = allowed.iter().find(|d| d.name == target) else {
+        preset.problems.push(format!(
+            "{target} isn't an array disk {share} may use (its settings include or exclude disks)"
+        ));
+        return preset;
+    };
+    let margin = (target_disk.size / 100).max(1 << 30);
+    let mut room = target_disk.free.saturating_sub(margin);
+    for (disk, bytes) in holdings {
+        if disk == target {
+            continue;
+        }
+        if bytes > room {
+            preset.problems.push(format!(
+                "{target} has room for {} more; {share} on {disk} is {}",
+                format_size(room),
+                format_size(bytes)
+            ));
+            continue;
+        }
+        room -= bytes;
+        preset.steps.push(Step {
+            share: share.to_string(),
+            folder: String::new(),
+            from: disk,
+            to: target.clone(),
+            bytes,
+        });
+    }
+    let asleep: Vec<String> = array
+        .roots(true)
+        .iter()
+        .filter(|d| d.asleep && d.kind == DiskKind::Data)
+        .map(|d| d.name.clone())
+        .collect();
+    if !asleep.is_empty() {
+        preset.warnings.push(format!(
+            "{} sleeping; what's there isn't counted. Run this again once they're awake.",
+            match asleep.len() {
+                1 => format!("{} is", asleep[0]),
+                _ => format!("{} are", asleep.join(", ")),
+            }
+        ));
+    }
+    if preset.steps.is_empty() && preset.problems.is_empty() {
+        preset
+            .problems
+            .push(format!("{share} is already all on {target}"));
+    }
+    preset
 }
 
 #[cfg(test)]
@@ -727,6 +1222,196 @@ mod tests {
         let file = system.file(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, b"x").unwrap();
+    }
+
+    #[test]
+    fn sparse_files_keep_their_holes_and_partials_are_cleaned() {
+        let (_dir, system, array) = setup();
+        // A 4 MB vdisk with 64 KB of data at its start and its end.
+        let vdisk = system.file("/mnt/disk1/Movies/Old/vdisk.img");
+        {
+            let file = std::fs::File::create(&vdisk).unwrap();
+            file.set_len(4 << 20).unwrap();
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&vdisk)
+                .unwrap();
+            file.write_all(&[9u8; HOLE]).unwrap();
+            file.seek(SeekFrom::Start((4 << 20) - HOLE as u64)).unwrap();
+            file.write_all(&[8u8; HOLE]).unwrap();
+        }
+        let meta = std::fs::metadata(&vdisk).unwrap();
+        if crate::allocated(&meta) >= meta.len() {
+            // This file system doesn't make holes; nothing to check here.
+            return;
+        }
+        // What an interrupted move would have left on the target.
+        let stale = system.file("/mnt/disk2/Movies/Old/.a.mkv.disktree-part");
+        std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+        std::fs::write(&stale, b"half").unwrap();
+        let plan = plan(
+            &system,
+            &array,
+            &[],
+            "Movies",
+            "Old",
+            "disk1",
+            "disk2",
+            1000,
+        );
+        assert!(plan.ok(), "{:?}", plan.problems);
+        let quarantine = Quarantine::new(Box::new(UnraidPlaces {
+            system: system.clone(),
+            array: array.clone(),
+        }));
+        let mut seen_current = false;
+        let done = run(
+            &system,
+            &plan,
+            &quarantine,
+            &mut |job| seen_current |= !job.current.is_empty(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done.state, "done", "{}", done.detail);
+        assert!(done.current.is_empty());
+        let _ = seen_current; // reported only once a second; may be none here
+        assert!(!stale.exists());
+        let copy = std::fs::metadata(system.file("/mnt/disk2/Movies/Old/vdisk.img")).unwrap();
+        assert_eq!(copy.len(), 4 << 20);
+        assert!(
+            crate::allocated(&copy) < copy.len(),
+            "the copy lost its holes"
+        );
+        let bytes = std::fs::read(system.file("/mnt/disk2/Movies/Old/vdisk.img")).unwrap();
+        assert!(bytes[..HOLE].iter().all(|&b| b == 9));
+        assert!(bytes[HOLE..(4 << 20) - HOLE].iter().all(|&b| b == 0));
+        assert!(bytes[(4 << 20) - HOLE..].iter().all(|&b| b == 8));
+    }
+
+    #[test]
+    fn emptying_after_the_move_deletes_the_originals() {
+        let (_dir, system, array) = setup();
+        let mut plan = plan(
+            &system,
+            &array,
+            &[],
+            "Movies",
+            "Old",
+            "disk1",
+            "disk2",
+            1000,
+        );
+        plan.job.empty = true;
+        let quarantine = Quarantine::new(Box::new(UnraidPlaces {
+            system: system.clone(),
+            array: array.clone(),
+        }));
+        let done = run(
+            &system,
+            &plan,
+            &quarantine,
+            &mut |_| {},
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done.state, "done", "{}", done.detail);
+        assert!(
+            done.detail.contains("deleted the originals"),
+            "{}",
+            done.detail
+        );
+        assert!(quarantine.list().is_empty());
+        assert!(!system.file("/mnt/disk1/Movies/Old").exists());
+        assert!(system.file("/mnt/disk2/Movies/Old/a.mkv").exists());
+    }
+
+    #[test]
+    fn presets_plan_whole_shares_then_folders() {
+        let (_dir, system, mut array) = setup();
+        write(&system, "/mnt/disk1/TV/Show/e1.mkv");
+        write(&system, "/mnt/disk2/Movies/Old/x.mkv");
+        for disk in &mut array.disks {
+            if disk.name == "disk2" {
+                disk.asleep = false;
+            }
+        }
+        // disk2 is the only other array disk; TV's settings keep it off
+        // there, so TV has nowhere to go.
+        let configs = vec![crate::shares::ShareConfig {
+            name: "TV".into(),
+            exclude: vec!["disk2".into()],
+            ..Default::default()
+        }];
+        let preset = empty_disk(&system, &array, &configs, &[], "disk1");
+        let steps: Vec<(&str, &str, &str)> = preset
+            .steps
+            .iter()
+            .map(|s| (s.share.as_str(), s.folder.as_str(), s.to.as_str()))
+            .collect();
+        assert_eq!(steps, [("Movies", "", "disk2")]);
+        assert!(preset.steps[0].bytes >= 303_000);
+        assert!(
+            preset.problems[0].contains("TV/Show"),
+            "{:?}",
+            preset.problems
+        );
+        // Without that setting both shares go; a share in use stays.
+        let preset = empty_disk(&system, &array, &[], &[], "disk1");
+        assert!(preset.problems.is_empty(), "{:?}", preset.problems);
+        assert_eq!(preset.steps.len(), 2);
+        let rules = vec![Rule {
+            path: "/mnt/user/TV".into(),
+            why: "mounted into plex".into(),
+            all: false,
+            whole: false,
+        }];
+        let preset = empty_disk(&system, &array, &[], &rules, "disk1");
+        assert_eq!(preset.steps.len(), 1);
+        assert!(preset.problems[0].contains("mounted into plex"));
+        // Gathering goes to the disk with most of it.
+        let gathered = gather_share(&system, &array, &[], &[], "Movies", None);
+        assert!(gathered.problems.is_empty(), "{:?}", gathered.problems);
+        assert_eq!(gathered.steps.len(), 1);
+        assert_eq!(
+            (
+                gathered.steps[0].from.as_str(),
+                gathered.steps[0].to.as_str()
+            ),
+            ("disk2", "disk1")
+        );
+        let gathered = gather_share(&system, &array, &[], &[], "Movies", Some("disk2"));
+        assert_eq!(gathered.steps[0].from, "disk1");
+        assert!(
+            !gather_share(&system, &array, &[], &[], "Movies", Some("cache"))
+                .problems
+                .is_empty()
+        );
+        assert!(
+            !gather_share(&system, &array, &[], &[], "../x", None)
+                .problems
+                .is_empty()
+        );
+
+        // Too big for the disk as a whole: folder by folder, the biggest
+        // first, and what doesn't fit is named.
+        for disk in &mut array.disks {
+            if disk.name == "disk2" {
+                disk.free = (1 << 30) + 310_000;
+                disk.size = 1 << 30;
+            }
+        }
+        let preset = empty_disk(&system, &array, &[], &[], "disk1");
+        let steps: Vec<(&str, &str)> = preset
+            .steps
+            .iter()
+            .map(|s| (s.share.as_str(), s.folder.as_str()))
+            .collect();
+        assert!(steps.contains(&("Movies", "Old")), "{steps:?}");
+        assert!(!preset.problems.is_empty(), "{steps:?}");
+        assert!(
+            !empty_disk(&system, &array, &[], &[], "parity")
+                .problems
+                .is_empty()
+        );
     }
 
     #[test]

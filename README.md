@@ -244,9 +244,11 @@ After a scan, the **Clean up** tab (**Clean** on phones) lists:
   for `Windows.old` and update files, the power settings for
   `hiberfil.sys`).
 - **Not in any file**: after scanning a whole drive, how much of the used
-  space no file accounts for, and why: ZFS snapshots, Windows restore points
-  and shadow copies, local Time Machine snapshots, space the file system
-  reserves, and folders FreeSize couldn't read (listed above it).
+  space no file accounts for, and why: ZFS and btrfs snapshots (how much
+  they hold that nothing else uses, with btrfs quotas on), Windows restore
+  points and shadow copies, local Time Machine and other APFS snapshots,
+  macOS's purgeable space, space the file system reserves, and folders
+  FreeSize couldn't read (listed above it).
 - **Similar photos**: press *Find similar photos* to group photos that look
   alike, such as bursts, retakes and the same picture saved at another size.
   Each photo gets a small fingerprint of its brightness pattern; most camera
@@ -946,6 +948,15 @@ What it shows:
   and which files are open on each disk, by which app or container.
 - **Permissions**: files in shares that SMB may not reach. Only reported;
   Tools → New Permissions fixes them.
+- **Nextcloud**: when a Nextcloud data folder is on the server (found by
+  its `.ncdata` file, in a share or in appdata), how much of it is each
+  person's files against their old versions, trash, uploads in progress
+  and cache, plus previews and the rest of Nextcloud's app data, with the
+  retention settings from `config.php` and how much is older than they
+  allow, which Nextcloud's background job should have removed. Only
+  reported: Nextcloud's database lists these files, so they're removed
+  through Nextcloud (`occ versions:cleanup`, `occ trashbin:cleanup`, the
+  settings), never from the file system.
 
 Until its first look after starting is done, which takes a few minutes on
 a big array, the page says what it's looking at (which disk, of how many)
@@ -968,7 +979,20 @@ What it does, only when asked:
   (sleeping disks only when you ask, since listing them spins them up),
   and ticks the disks the chosen folder is on. A folder spread over
   several disks moves from each of them, one disk after another; a file
-  on two of them stops the plan, since the share shows only one.
+  on two of them stops the plan, since the share shows only one. Sparse
+  files (a VM's disk image) keep their holes, extended attributes come
+  along, a partial copy an interrupted move left is cleaned up first, and
+  the page shows the file being copied. A tick on the confirmation deletes
+  the originals once every copy checked out, instead of leaving them in
+  the quarantine.
+- **Presets**: *Empty a disk* plans a move of every share's folders on a
+  disk to the roomiest disk each share may use (by its include and
+  exclude settings), folder by folder when a share is too big for one
+  disk; *Gather a share* moves a share spread over several disks onto one.
+  The plan shows first, with what can't be moved and why; the moves then
+  run one after another. Also `freesize unraid move preset empty-disk
+  disk3` and `… gather Movies --to disk1` on the terminal, with `--start`
+  and `--empty-after`.
 - **Removing Docker images** nobody uses, and the build cache.
 - **Emptying the trash folders in the shares** for good, from the
   Quarantine tab: the Recycle Bin plugin's `.Recycle.bin` folders and the

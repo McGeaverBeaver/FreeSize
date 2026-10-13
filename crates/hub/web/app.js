@@ -843,6 +843,18 @@ function deviceUnraid(device) {
       v.findings.some((f) => f.safety !== "protected") ? [h("h3", { style: "margin-top:14px" }, "Files no VM uses"),
         findingsTable(device, v.findings.filter((f) => f.safety !== "protected"))] : null));
   }
+  for (const nc of u.nextcloud || []) {
+    const extra = nc.previews + nc.appdata + nc.uploads + nc.users.reduce((n, x) => n + x.versions + x.trash + x.cache, 0);
+    sections.push(h("div", { class: "card table-wrap" }, h("h2", {}, "Nextcloud"),
+      h("p", { class: "dim small" }, nc.data, nc.version ? ` · Nextcloud ${nc.version}` : "", ` · ${size(nc.total)} on disk, ${size(extra)} of it not the people's files`),
+      h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "User"), h("th", { class: "num" }, "Files"), h("th", { class: "num" }, "Old versions"),
+        h("th", { class: "num" }, "Trash"), h("th", { class: "num hide-narrow" }, "Uploads"), h("th", { class: "num hide-narrow" }, "Cache"))),
+        h("tbody", {}, nc.users.map((x) => h("tr", {}, h("td", {}, x.name), h("td", { class: "num" }, size(x.files)), h("td", { class: "num" }, size(x.versions)),
+          h("td", { class: "num" }, size(x.trash)), h("td", { class: "num hide-narrow" }, size(x.uploads)), h("td", { class: "num hide-narrow" }, size(x.cache)))),
+          h("tr", {}, h("td", {}, "Previews"), h("td", { class: "num", colspan: 5 }, size(nc.previews))),
+          h("tr", {}, h("td", {}, "Other app data"), h("td", { class: "num", colspan: 5 }, size(nc.appdata))))),
+      nc.notes.map((n) => h("p", { class: "hint" }, n))));
+  }
   if (u.activity.length) {
     sections.push(h("div", { class: "card table-wrap" }, h("h2", {}, "What keeps disks awake"),
       h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Disk"), h("th", { class: "num" }, "Spin-ups"), h("th", { class: "num hide-narrow" }, "Awake"),
@@ -868,7 +880,7 @@ function deviceUnraid(device) {
         h("td", {}, m.folder ? `${m.share}/${m.folder}` : m.share, h("div", { class: "sub" }, `${m.from} → ${m.to}`)),
         h("td", {}, h("span", { class: `badge ${m.state === "done" ? "ok" : m.state === "failed" ? "danger" : "accent"}` }, m.state)),
         h("td", { class: "num" }, `${size(m.done_bytes)} of ${size(m.bytes)}`),
-        h("td", { class: "small dim" }, m.detail))))),
+        h("td", { class: "small dim" }, m.current ? `copying ${m.current}` : m.detail))))),
       h("p", { class: "hint" }, "Moves are started on the server, in FreeSize's page under Tools.")));
   }
   return h("div", { class: "stack" }, sections);

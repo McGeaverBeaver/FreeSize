@@ -13,7 +13,7 @@ use crate::docker::{self, Inventory};
 use crate::protect::{self, Rule};
 use crate::scans::{DiskScan, Scans};
 use crate::shares::{self, DiskTops};
-use crate::{System, perms, vms};
+use crate::{System, nextcloud, perms, vms};
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -112,6 +112,21 @@ pub fn round(
         return out;
     }
 
+    // What the later steps look at file by file; every other file is let
+    // go with its disk's tree, so a big array's files never sit in memory
+    // all at once.
+    let definitions = vms::definitions(system);
+    let instances = nextcloud::find(system, &array);
+    let mut keep = nextcloud::keep(&instances);
+    keep.under.push(format!("/mnt/user/{}", vm_cfg.isos));
+    keep.under.push(format!("/mnt/user/{}", vm_cfg.domains));
+    keep.in_folder
+        .push(format!("/mnt/user/{}", docker_cfg.appdata));
+    for def in definitions.iter().flatten() {
+        keep.files
+            .extend(def.disks.iter().chain(&def.isos).map(|p| vms::user_path(p)));
+    }
+
     // Scan.
     let mut scans = Scans::default();
     let chosen = choose(&array, tops, settings, now);
@@ -145,12 +160,10 @@ pub fn round(
                     freesize_agent::report::scan_report(&tree, &name, now, result.errors, true);
                 report.root = mount.clone();
                 out.scans.push(report);
-                scans.disks.push(DiskScan {
-                    disk: name,
-                    mount,
-                    tree,
-                    taken: now,
-                });
+                scans
+                    .disks
+                    .push(DiskScan::compact(&name, &mount, &tree, now, &keep));
+                drop(tree);
             }
             Err(err) => out.errors.push(format!("{name}: {err}")),
         }
@@ -200,9 +213,15 @@ pub fn round(
             &scans,
         ));
     }
-    let definitions = vms::definitions(system);
     if vm_cfg.enabled || definitions.is_some() {
         out.report.vms = Some(vms::report(system, &vm_cfg, &array, &scans));
+    }
+    if !instances.is_empty() {
+        progress("looking at Nextcloud");
+        out.report.nextcloud = instances
+            .iter()
+            .filter_map(|instance| nextcloud::report(system, &array, &scans, instance, now))
+            .collect();
     }
 
     // Permissions, while the scan's details are still in memory.
@@ -218,6 +237,7 @@ pub fn round(
         (&docker_cfg, out.inventory.as_ref()),
         (&vm_cfg, definitions.as_deref()),
     );
+    out.report.peak_memory = crate::peak_memory();
     out
 }
 

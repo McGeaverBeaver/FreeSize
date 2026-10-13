@@ -214,8 +214,6 @@ Left over and planned (the release it goes in is under Next releases):
   `Android/data` through an unrooted phone's helper) needs the same Java part
   and follows it. Sideloaded builds only; Play restricts it (0.14).
 - **Community Applications** for the plugin and the Hub template (0.9.1).
-- **btrfs snapshots, APFS snapshots and purgeable space** in the hidden space
-  explanation, and Nextcloud's own data folder (phase 8, 0.11).
 - From 2b/2c: **leftovers of uninstalled programs** in AppData and
   `~/Library` once matching folders to programs is reliable enough to call
   one abandoned (old downloads and screen recordings are junk cleaner
@@ -309,6 +307,25 @@ Parked, each with its reason:
   forum if CA asks for one (then put its address in the entry and the
   `.plg`), and check both appear in the Apps tab on a clean Unraid 7.3 and
   install from there.
+- 0.11: where the space goes, and balancing (phase 8 and Unraid). The
+  plugin finds Nextcloud's data folder (`.ncdata`, in a share or in
+  appdata) and reports, per user, files against old versions, trash,
+  uploads and cache, plus previews and app data, with the retention
+  settings from `config.php` and how much is older than they allow;
+  nothing in it is offered for deletion. The mover keeps sparse files
+  sparse, copies extended attributes, cleans partial copies an interrupted
+  move left, shows the file being copied, and takes a tick to delete the
+  originals once every copy checked out. Presets: Empty a disk (each
+  share to the roomiest disk its settings allow, folder by folder when it
+  must) and Gather a share, as plans of moves run one after another, on
+  the page and as `freesize unraid move preset`. A round indexes each
+  disk's scan (folders, plus the files the later steps look at) and drops
+  the tree, and logs its peak memory. The hidden space explanation adds
+  btrfs snapshots (exclusive bytes with quotas on), other APFS snapshots
+  and macOS's purgeable space. Still to do by hand: compare the Nextcloud
+  numbers with `du` on a real server, move a stopped VM's sparse vdisk and
+  check its holes stayed, and read the peak memory in the log after a
+  round on a big array (TESTING.md).
 - 0.10: the junk cleaner (phase 6). `freesize_core::junk`: rules per
   platform (38 on Windows, 34 on macOS, 28 on Linux, 4 on Android, 2 on
   Unraid) in six categories, each with a blurb, a refills flag, a safety
@@ -333,7 +350,7 @@ Parked, each with its reason:
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what
-"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk), 0.9 (trust and updates), 0.9.1 (Community Applications) and 0.10 (the junk cleaner) are under Done. Trust and the quarantine come before any new way to delete;
+"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk), 0.9 (trust and updates), 0.9.1 (Community Applications), 0.10 (the junk cleaner) and 0.11 (where the space goes) are under Done. Trust and the quarantine come before any new way to delete;
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
@@ -369,7 +386,7 @@ half ships even if an action stalls on a device nobody has.
   frees what it says within a few percent, and the result screen shows
   what was skipped.
 - **0.11, where the space goes, and balancing (phase 8 and Unraid).**
-  Nextcloud's data folder read on the server (previews, versions, trash,
+  Under Done. Nextcloud's data folder read on the server (previews, versions, trash,
   appdata, per user, with the retention settings that would have cleared
   them); docker.img writers named per container; the mover keeps sparse
   files sparse and copies extended attributes, cleans stale partial files,
@@ -752,15 +769,14 @@ The question every tool's users ask and none answers in full: used space
 that no file in the scan accounts for, on every platform.
 
 - Done: ZFS snapshots, Windows shadow copies and restore points, Time
-  Machine's local snapshots, docker.img on Unraid.
-- **Nextcloud's own data folder**, read on the server by the plugin:
-  previews (`appdata_*/preview`), versions, trash and appdata, per user,
-  with the retention settings that would have cleared them and whether the
-  background job that clears them is running.
-- **docker.img writers:** which container writes inside its own layer and
-  fills the image.
-- **macOS:** purgeable space and System Data, and APFS snapshots.
-- **btrfs snapshots.**
+  Machine's local snapshots, docker.img on Unraid; in 0.11, Nextcloud's
+  own data folder read on the server by the plugin (previews, versions,
+  trash, uploads and appdata per user, with the retention settings that
+  would have cleared them; whether the background job runs isn't in any
+  file, so the report says what's past the settings and where to check),
+  docker.img writers (which container writes inside its own layer and
+  fills the image), macOS's purgeable space and other APFS snapshots, and
+  btrfs snapshots (their exclusive size with quotas on, else a count).
 
 ## Traps to remember
 

@@ -163,6 +163,24 @@ pub struct MoveArgs {
     from: Vec<String>,
     #[arg(long)]
     to: String,
+    /// Delete the originals once every copy checked out, instead of
+    /// leaving them in the source disk's quarantine.
+    #[arg(long = "empty-after")]
+    #[serde(default)]
+    empty: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PresetKind {
+    /// Everything on a disk to the other disks each share may use.
+    EmptyDisk { disk: String },
+    /// A share spread over several disks onto one.
+    Gather {
+        share: String,
+        /// The disk to gather it on; the one holding most of it otherwise.
+        #[arg(long)]
+        to: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -181,6 +199,19 @@ pub enum MoveAction {
     },
     /// Stop a move between files.
     Cancel { id: String },
+    /// A plan of moves for emptying a disk or gathering a share; `--start`
+    /// hands them to the background part, one after another.
+    Preset {
+        #[command(subcommand)]
+        kind: PresetKind,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        start: bool,
+        /// Delete each move's originals once its copies checked out.
+        #[arg(long = "empty-after")]
+        empty: bool,
+    },
 }
 
 struct Dirs {
@@ -588,6 +619,91 @@ fn moves(dirs: &Dirs, action: MoveAction) -> Result<(), String> {
             }
             dirs.request(&format!("cancel-{id}"), "")
         }
+        MoveAction::Preset {
+            kind,
+            json,
+            start,
+            empty,
+        } => {
+            let system = &dirs.system;
+            let array = array::read(system);
+            let (rules, _) = current_rules(dirs, &array);
+            let configs = freesize_unraid::shares::read(system);
+            let preset = match &kind {
+                PresetKind::EmptyDisk { disk } => {
+                    mover::empty_disk(system, &array, &configs, &rules, disk)
+                }
+                PresetKind::Gather { share, to } => {
+                    mover::gather_share(system, &array, &configs, &rules, share, to.as_deref())
+                }
+            };
+            if start {
+                if !preset.problems.is_empty() && preset.steps.is_empty() {
+                    return Err(preset.problems.join("; "));
+                }
+                let base = now();
+                for (i, step) in preset.steps.iter().enumerate() {
+                    let args = MoveArgs {
+                        share: step.share.clone(),
+                        folder: step.folder.clone(),
+                        from: vec![step.from.clone()],
+                        to: step.to.clone(),
+                        empty,
+                    };
+                    dirs.request(
+                        &format!("move-m{base}p{}.json", i + 1),
+                        &serde_json::to_string(&args).unwrap_or_default(),
+                    )?;
+                }
+                println!(
+                    "{} queued{}",
+                    match preset.steps.len() {
+                        1 => "1 move".to_string(),
+                        n => format!("{n} moves"),
+                    },
+                    if preset.problems.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; left out: {}", preset.problems.join("; "))
+                    }
+                );
+                return Ok(());
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&preset).map_err(|e| e.to_string())?
+                );
+                return Ok(());
+            }
+            println!("{}", preset.title);
+            for step in &preset.steps {
+                println!(
+                    "  {}{} from {} to {} ({})",
+                    step.share,
+                    if step.folder.is_empty() {
+                        String::new()
+                    } else {
+                        format!("/{}", step.folder)
+                    },
+                    step.from,
+                    step.to,
+                    format_size(step.bytes)
+                );
+            }
+            for line in &preset.problems {
+                println!("  can't: {line}");
+            }
+            for line in &preset.warnings {
+                println!("  {line}");
+            }
+            if !preset.steps.is_empty() {
+                println!(
+                    "`--start` queues them; `--empty-after` deletes each move's originals once its copies checked out."
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -982,6 +1098,7 @@ impl Daemon {
                 to: args.to.clone(),
                 state: "queued".into(),
                 started: now(),
+                empty: args.empty,
                 ..MoveJob::default()
             });
         }
@@ -1004,11 +1121,13 @@ impl Daemon {
                 folder: job.folder.clone(),
                 from: vec![job.from.clone()],
                 to: job.to.clone(),
+                empty: job.empty,
             };
             let Some(mut plan) = make_plans(&self.dirs, &args).pop() else {
                 return;
             };
             plan.job.id = job.id.clone();
+            plan.job.empty = job.empty;
             if !plan.ok() {
                 let failed = &mut self.moves[index];
                 failed.state = "failed".into();
@@ -1388,7 +1507,14 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
                 }
                 log(&match &found.skipped {
                     Some(why) => format!("not scanning: {why}"),
-                    None => format!("scanned {} disks", found.scans.len()),
+                    None => format!(
+                        "scanned {} disks{}",
+                        found.scans.len(),
+                        match found.report.peak_memory {
+                            Some(bytes) => format!("; peak memory {}", format_size(bytes)),
+                            None => String::new(),
+                        }
+                    ),
                 });
                 daemon.round = Some(found);
                 daemon.doing = "idle".into();
