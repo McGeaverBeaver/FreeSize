@@ -376,6 +376,12 @@ Parked, each with its reason:
   `/storage/emulated`, where apps can't write. It now goes at the top of
   the storage root the item is in (`/storage/emulated/0`, or an SD card's
   own top), as was always meant.
+- 0.16.2: CI had never passed since it was added in 0.9: tests assumed
+  Linux paths (Windows separators, macOS's temporary folder under
+  `/private`, which deletes refuse). Fixed, and it runs on master pushes
+  only, no longer again for each release tag. Found by it: on a desktop
+  where FreeSize hadn't saved anything yet, the first delete went to the
+  top of the disk and failed; the data folder is now made first.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

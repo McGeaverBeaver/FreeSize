@@ -565,37 +565,38 @@ mod tests {
 
     #[test]
     fn media_is_grouped_by_owner_and_folder() {
-        let root = PathBuf::from("/storage/emulated/0");
+        // Android paths, written whole: Windows would join with its own separator.
+        let at = |rest: &str| PathBuf::from(format!("/storage/emulated/0/{rest}"));
         let rows = vec![
             (
                 "com.instagram".to_string(),
                 300,
-                root.join("Pictures/Instagram/a.jpg"),
+                at("Pictures/Instagram/a.jpg"),
             ),
             (
                 "com.instagram".to_string(),
                 100,
-                root.join("Movies/Instagram/b.mp4"),
+                at("Movies/Instagram/b.mp4"),
             ),
             (
                 "com.whatsapp".to_string(),
                 500,
-                root.join("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/c.jpg"),
+                at("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/c.jpg"),
             ),
             (
                 "com.whatsapp".to_string(),
                 400,
-                root.join("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Video/d.mp4"),
+                at("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Video/d.mp4"),
             ),
         ];
         let media = media_by_owner(rows);
         assert_eq!(media[0].package, "com.whatsapp");
         assert_eq!(media[0].bytes, 900);
         assert_eq!(media[0].files, 2);
-        assert_eq!(media[0].folder, root.join("Android/media/com.whatsapp"));
+        assert_eq!(media[0].folder, at("Android/media/com.whatsapp"));
         assert!(media[0].in_app_data);
         assert_eq!(media[1].package, "com.instagram");
-        assert_eq!(media[1].folder, root.join("Pictures/Instagram"));
+        assert_eq!(media[1].folder, at("Pictures/Instagram"));
         assert!(!media[1].in_app_data);
     }
 

@@ -108,6 +108,9 @@ fn store() -> &'static Quarantine {
             .then(crate::growth::data_dir)
             .flatten()
             .and_then(|data| {
+                // Made now, or a first delete before FreeSize saved anything
+                // would go to the top of the disk, which people can't write.
+                let _ = std::fs::create_dir_all(&data);
                 let disk = freesize_agent::quarantine::filesystem_root(&data).ok()?;
                 Some((data.join("quarantine"), disk))
             });

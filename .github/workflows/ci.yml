@@ -1,11 +1,13 @@
 name: CI
 
-# Formatting, clippy and the tests run on every push and pull request, on
+# Formatting, clippy and the tests run on every push to master (not the
+# release tags, which would run them twice) and on pull requests, on
 # Windows, macOS and Linux. The APK and the Unraid plugin are built when
 # started by hand (Actions → CI → Run workflow); releases are built locally
 # by scripts/release.sh (see "Releases" in docs/DEVELOPING.md).
 on:
   push:
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -35,7 +37,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
 
   unraid:
     name: Unraid plugin

@@ -1607,7 +1607,12 @@ mod tests {
 
         let sheet = review_sheet(&report.reviews[1], &["a", "b", "c", "d"]);
         assert_eq!(sheet.subtitle, "600 MB in 4,500 files");
-        let labels: Vec<&str> = sheet.actions.iter().map(|a| a.1.as_str()).collect();
+        // Windows shows its own separator.
+        let labels: Vec<String> = sheet
+            .actions
+            .iter()
+            .map(|a| a.1.replace('\\', "/"))
+            .collect();
         assert_eq!(
             labels,
             [

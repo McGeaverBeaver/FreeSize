@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(titles[0], "Rebuildable folders");
         assert_eq!(titles[1], "node_modules · npm packages");
         assert_eq!(
-            before[1].subtitle,
+            before[1].subtitle.replace('\\', "/"),
             "web/node_modules · npm install puts them back"
         );
         assert_eq!(before.last().unwrap().action, "Find duplicates");

@@ -231,8 +231,8 @@ mod tests {
     #[test]
     fn writes_html_and_csv() {
         let dir = tempfile_dir();
-        fs::create_dir_all(dir.join("a <b>")).unwrap();
-        fs::write(dir.join("a <b>/big, file.bin"), vec![1u8; 2 * 1024 * 1024]).unwrap();
+        fs::create_dir_all(dir.join("a &b")).unwrap();
+        fs::write(dir.join("a &b/big, file.bin"), vec![1u8; 2 * 1024 * 1024]).unwrap();
         fs::write(dir.join("small.txt"), b"hi").unwrap();
         let tree = scan(&dir, &ScanOptions::default(), &ScanProgress::new())
             .unwrap()
@@ -245,9 +245,9 @@ mod tests {
         };
         let page = html(&tree, tree.root(), SizeMode::Logical, &extras);
         assert!(page.contains("<h1>Test &amp; co</h1>"));
-        assert!(page.contains("a &lt;b&gt;/"));
+        assert!(page.contains("a &amp;b/"));
         assert!(page.contains("scanned 2026-10-12"));
-        assert!(page.contains("<div class=\"sub\">a &lt;b&gt;</div>"));
+        assert!(page.contains("<div class=\"sub\">a &amp;b</div>"));
         let table = csv(&tree, tree.root());
         let lines: Vec<&str> = table.lines().collect();
         assert_eq!(lines[0], "path,kind,size,size_on_disk,files,modified");

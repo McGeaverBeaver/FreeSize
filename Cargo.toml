@@ -8,7 +8,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.16.1"
+version = "0.16.2"
 edition = "2024"
 rust-version = "1.92"
 repository = "https://github.com/McGeaverBeaver/FreeSize"

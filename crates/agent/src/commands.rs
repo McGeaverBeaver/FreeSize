@@ -785,8 +785,11 @@ mod tests {
     }
 
     fn setup(name: &str, attended: bool) -> Setup {
-        let dir =
-            std::env::temp_dir().join(format!("freesize-agent-cmd-{name}-{}", std::process::id()));
+        // Not in the temporary folder: on macOS that's under /private, which
+        // deletes refuse as a system folder.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-files")
+            .join(format!("freesize-agent-cmd-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("share/movies")).unwrap();
         fs::write(dir.join("share/movies/a.mkv"), vec![1u8; 5000]).unwrap();
