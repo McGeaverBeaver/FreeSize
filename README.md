@@ -404,7 +404,9 @@ scripts/android/build-apk.sh      # -> target/release/apk/FreeSize.apk
 ```
 
 The first build takes several minutes; later ones only rebuild what changed.
-It also creates the signing key that every later build reuses (see
+Since 0.14 the script also compiles the app's one Java class with the JDK's
+`javac` and the build tools' `d8`, and puts the APK together with the
+manifest in `crates/app/android`. It also creates the signing key that every later build reuses (see
 [Android signing key](docs/DEVELOPING.md#android-signing-key)), so new builds install over the
 old one and keep FreeSize's permissions. Releases up to 0.1.3 were signed
 with a different key, so uninstall such a copy once first.
@@ -702,9 +704,20 @@ on the device itself:
 
 ![An approval on the desktop app](docs/screenshots/hub-approval.png)
 
-The FreeSize app on a phone only hears from the Hub while it's open. Turn on
-the request alert (Alerts → When to alert) and add ntfy or Pushover, and
-you'll get a notification to open it.
+Since 0.14 the FreeSize app on a phone hears from the Hub in the background
+too: once paired, Android runs a small FreeSize job about every 15 minutes
+(in its own batches, so the battery screen never lists FreeSize above the
+usual apps) that sends what the app couldn't while it was closed, reports
+the phone's disks, quarantine and Nextcloud folder, every six hours its apps
+and junk, and asks the Hub for news. A request for the phone, or an approval
+for a server the phone approves for, shows as a notification; tapping it
+opens FreeSize, where the request is shown with every path and allowed or
+denied as always. Nothing is deleted or cleaned from the background, not
+even under a running grant: that waits for the app to open, and the
+notification says so. Android 13 and newer ask once whether FreeSize may
+show notifications; without them the requests wait in the app. The
+request alert (Alerts → When to alert, with ntfy or Pushover) still works
+for phones on older builds.
 
 ### What a device sends
 

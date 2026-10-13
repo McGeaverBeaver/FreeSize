@@ -207,12 +207,13 @@ Left over and planned (the release it goes in is under Next releases):
 - **A quarantine on phones and desktops**, with one Put back for everything,
   the basket's own undo folded in (0.9). Shrinking photos (SD Maid SE's
   Squeezer) waits for it, since it rewrites people's photos.
-- **The phone in the background**: the Android app only reports and gets
-  prompts while it's open (an alert nudges you to open it). One small Java
-  Worker class, compiled by `build-apk.sh`, scheduled every 15 minutes and
-  calling into Rust, fixes that; **Shizuku mode** (batch cache clearing and
-  `Android/data` through an unrooted phone's helper) needs the same Java part
-  and follows it. Sideloaded builds only; Play restricts it (0.14).
+- **Shizuku mode** on Android: batch cache clearing and `Android/data`
+  through an unrooted phone's helper. The Java side the APK gained in 0.14
+  (the background job) is the foothold; Shizuku's client library (an AAR
+  with its AIDL, fetched by `build-apk.sh`), its provider in the manifest,
+  the permission flow and a user service running as shell are still to
+  write, and need a phone with Shizuku to try. Sideloaded builds only; Play
+  restricts it.
 - **Community Applications** for the plugin and the Hub template (0.9.1).
 - From 2b/2c: **leftovers of uninstalled programs** in AppData and
   `~/Library` once matching folders to programs is reliable enough to call
@@ -306,6 +307,23 @@ Parked, each with its reason:
   forum if CA asks for one (then put its address in the entry and the
   `.plg`), and check both appear in the Apps tab on a clean Unraid 7.3 and
   install from there.
+- 0.14: the phone in the background. The APK holds one Java class,
+  `HubJob`, a `JobService` Android runs about every 15 minutes once the app
+  is paired (persisted across reboots, needing a network, scheduled through
+  JNI). It calls into Rust (`crates/app/src/background.rs`), which sends the
+  reports the app couldn't (kept in `hub-pending/`), a fresh report (disks,
+  quarantine, the Nextcloud folder; apps and junk every six hours) and
+  polls once; requests for the phone are marked shown and come back as
+  notifications that open the app, where they're approved with the paths
+  shown as always; approvals for other devices too. Nothing runs from the
+  background, not even under a grant. `build-apk.sh` compiles the Java and
+  repacks cargo-apk's APK with it and the hand-written manifest
+  (`crates/app/android/AndroidManifest.xml`). Not done: Shizuku mode
+  (batch cache clearing and `Android/data` through Shizuku's helper) needs
+  Shizuku's client library in the APK and a phone with Shizuku to try it
+  on; it's listed under Left over. Still to do by hand: the day-long check
+  (reports within 15 minutes with the app closed, an approval notice within
+  15 minutes, the battery screen) in TESTING.md.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the
@@ -442,7 +460,7 @@ half ships even if an action stalls on a device nobody has.
   when a 10 GB folder on a Windows PC becomes online-only after the next
   sync with the files still listed, comes back on demand, and nothing is
   freed before the hash matches.
-- **0.14, the phone in the background.** The Java Worker, approvals as
+- **0.14, the phone in the background.** Under Done (Shizuku left over). The Java Worker, approvals as
   notifications, then Shizuku. Done when a phone with the app closed
   reports within 15 minutes of a scan and shows an approval within 15
   minutes of a request, over a day, without the battery screen listing
@@ -516,7 +534,7 @@ What is built today; the parked list has the rest.
 
 | Platform | Reports | Can do (after approval) |
 |---|---|---|
-| Android | Everything the app shows; only while open until 0.14 | Delete (permanently, until the phone's quarantine in 0.9); clean junk; uninstall (Android still shows its own confirmation) |
+| Android | Everything the app shows; in the background every 15 minutes since 0.14 | Delete (permanently, until the phone's quarantine in 0.9); clean junk; uninstall (Android still shows its own confirmation) |
 | Windows, macOS, Linux app | Disks and the folders the person scans | Delete to the Recycle Bin or Trash |
 | Linux server (`disktree agent`) | Disks and the folders given with `--scan` | Delete to a quarantine on the same file system; put back |
 | Unraid plugin | Disks, pools, shares per disk, Docker, VMs, activity, permissions, the quarantine | Delete to the disk's quarantine; put back; empty; remove unused images and the build cache |

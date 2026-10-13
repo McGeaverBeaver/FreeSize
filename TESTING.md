@@ -54,6 +54,13 @@ what was tried in the release's draft notes, and say what wasn't.
       quarantine.
 - [ ] Pairs from the QR code; a delete from the Hub is approved on the
       phone.
+- [ ] In the background (0.14): with the app closed for a day, the Hub
+      shows the phone seen within 15 minutes all day and its disks and
+      quarantine up to date; a scan made while the Hub was unreachable
+      arrives once it is; a request from the Hub, and an approval for a
+      server the phone approves for, show as a notification within 15
+      minutes, and tapping it opens the app on the request; the battery
+      screen doesn't list FreeSize above the usual apps.
 - [ ] Updates: a newer release is offered and opens for installing.
 
 ## Hub

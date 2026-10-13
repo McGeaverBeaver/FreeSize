@@ -51,6 +51,7 @@ impl Settings {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Installed {
     /// The program's files were swapped; start `exe` again.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     Swapped(PathBuf),
     /// Android: the APK was saved there and handed to the installer, or
     /// couldn't be, and the text says what to do.

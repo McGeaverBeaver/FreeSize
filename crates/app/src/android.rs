@@ -13,7 +13,7 @@ use std::ffi::{CString, c_char, c_int};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use jni::objects::{JObject, JObjectArray, JString, JValue};
+use jni::objects::{Global, JClass, JObject, JObjectArray, JString, JValue};
 use jni::{Env, JavaVM, jni_sig, jni_str};
 use slint::android::AndroidApp;
 
@@ -25,8 +25,25 @@ type JniResult<T> = jni::errors::Result<T>;
 
 static APP: OnceLock<AndroidApp> = OnceLock::new();
 
+/// The background job's context (0.14), when Android started the process
+/// for the job rather than for the activity: the Java VM and the
+/// application context, which every `Context` call here works on.
+static BACKGROUND: OnceLock<(JavaVM, Global<JObject<'static>>)> = OnceLock::new();
+
 pub fn init(app: AndroidApp) {
     let _ = APP.set(app);
+}
+
+/// Remembers the job's context, so the helpers below work without the
+/// activity. Called from the job's native method.
+pub fn init_background(env: &mut Env, context: &JObject) -> JniResult<()> {
+    if BACKGROUND.get().is_some() {
+        return Ok(());
+    }
+    let vm = env.get_java_vm()?;
+    let context = env.new_global_ref(context)?;
+    let _ = BACKGROUND.set((vm, context));
+    Ok(())
 }
 
 #[link(name = "log")]
@@ -59,23 +76,135 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// Runs `f` with the activity, or, in the background job's process, with
+/// the application context: the `Context` calls the helpers make work on
+/// either. The few that need the activity itself (starting activities,
+/// the launch intent, the window) aren't called from the job.
 fn with_activity<T>(f: impl FnOnce(&mut Env, &JObject) -> JniResult<T>) -> JniResult<T> {
-    let app = APP.get().expect("android::init not called");
-    // SAFETY: android-activity guarantees a valid JavaVM pointer for the
-    // lifetime of the process.
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    if let Some(app) = APP.get() {
+        // SAFETY: android-activity guarantees a valid JavaVM pointer for the
+        // lifetime of the process.
+        let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+        return vm.attach_current_thread(|env| {
+            // SAFETY: android-activity holds a global reference to the
+            // activity for the lifetime of the app; JObject never deletes it.
+            let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
+            let result = f(env, &activity);
+            // A failed call leaves its Java exception pending, which would
+            // make the next JNI call on this thread fail too.
+            if result.is_err() {
+                env.exception_clear();
+            }
+            result
+        });
+    }
+    let (vm, context) = BACKGROUND
+        .get()
+        .expect("android::init or init_background not called");
     vm.attach_current_thread(|env| {
-        // SAFETY: android-activity holds a global reference to the activity
-        // for the lifetime of the app; JObject never deletes it.
-        let activity = unsafe { JObject::from_raw(env, app.activity_as_ptr().cast()) };
-        let result = f(env, &activity);
-        // A failed call leaves its Java exception pending, which would make
-        // the next JNI call on this thread fail too.
+        let result = f(env, context.as_obj());
         if result.is_err() {
             env.exception_clear();
         }
         result
     })
+}
+
+/// A class of the app's own (in classes.dex), through the app's class
+/// loader: `FindClass` from a native thread only sees the system's.
+fn app_class<'l>(env: &mut Env<'l>, context: &JObject, name: &str) -> JniResult<JClass<'l>> {
+    let loader = env
+        .call_method(
+            context,
+            jni_str!("getClassLoader"),
+            jni_sig!("()Ljava/lang/ClassLoader;"),
+            &[],
+        )?
+        .l()?;
+    let name = env.new_string(name)?;
+    let class = env
+        .call_method(
+            &loader,
+            jni_str!("loadClass"),
+            jni_sig!("(Ljava/lang/String;)Ljava/lang/Class;"),
+            &[JValue::Object(&name)],
+        )?
+        .l()?;
+    env.cast_local::<JClass>(class)
+}
+
+const HUB_JOB: &str = "io.github.mcgeaverbeaver.freesize.HubJob";
+
+/// Has Android run the Hub job every 15 minutes (0.14), from now on and
+/// after reboots. Nothing happens if it's already scheduled.
+pub fn schedule_hub_job() {
+    let result = with_activity(|env, context| {
+        let class = app_class(env, context, HUB_JOB)?;
+        env.call_static_method(
+            &class,
+            jni_str!("schedule"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(context)],
+        )?;
+        Ok(())
+    });
+    if let Err(err) = result {
+        log(&format!("could not schedule the Hub job: {err}"));
+    }
+}
+
+/// Stops the Hub job, after disconnecting.
+pub fn cancel_hub_job() {
+    let result = with_activity(|env, context| {
+        let class = app_class(env, context, HUB_JOB)?;
+        env.call_static_method(
+            &class,
+            jni_str!("cancel"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(context)],
+        )?;
+        Ok(())
+    });
+    if let Err(err) = result {
+        log(&format!("could not cancel the Hub job: {err}"));
+    }
+}
+
+/// Asks for the notifications permission (Android 13+), so the job's
+/// notices show. Android asks once; a refusal is respected.
+pub fn request_notifications() {
+    if APP.get().is_none() {
+        return;
+    }
+    let result = with_activity(|env, activity| {
+        if sdk_int(env)? < 33 {
+            return Ok(());
+        }
+        let permission = env.new_string("android.permission.POST_NOTIFICATIONS")?;
+        let state = env
+            .call_method(
+                activity,
+                jni_str!("checkSelfPermission"),
+                jni_sig!("(Ljava/lang/String;)I"),
+                &[JValue::Object(&permission)],
+            )?
+            .i()?;
+        if state == 0 {
+            return Ok(());
+        }
+        let array = env.new_object_array(1, jni_str!("java/lang/String"), JObject::null())?;
+        array.set_element(env, 0, &permission)?;
+        env.call_method(
+            activity,
+            jni_str!("requestPermissions"),
+            jni_sig!("([Ljava/lang/String;I)V"),
+            &[JValue::Object(&array), JValue::Int(2)],
+        )?;
+        Ok(())
+    });
+    if let Err(err) = result {
+        log(&format!("could not ask for notifications: {err}"));
+    }
 }
 
 /// Runs a lookup that is allowed to fail, clearing any exception it leaves.
@@ -396,7 +525,29 @@ pub fn abilities() -> Abilities {
 
 /// FreeSize's private storage, which needs no permission.
 pub fn private_dir() -> Option<PathBuf> {
-    APP.get()?.internal_data_path()
+    if let Some(app) = APP.get() {
+        return app.internal_data_path();
+    }
+    with_activity(|env, context| {
+        let dir = env
+            .call_method(
+                context,
+                jni_str!("getFilesDir"),
+                jni_sig!("()Ljava/io/File;"),
+                &[],
+            )?
+            .l()?;
+        let path = env
+            .call_method(
+                &dir,
+                jni_str!("getAbsolutePath"),
+                jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )?
+            .l()?;
+        java_string(env, path).map(PathBuf::from)
+    })
+    .ok()
 }
 
 /// Whether FreeSize's window has focus. It loses it while a system screen
@@ -1932,7 +2083,7 @@ fn java_reason(env: &mut Env) -> String {
 /// with that certificate, a trust manager factory loaded with it, an
 /// `SSLContext` using those trust managers.
 fn pinned_socket_factory<'l>(env: &mut Env<'l>, ca_pem: &str) -> JniResult<JObject<'l>> {
-    env.with_local_frame_returning_local(24, |env| {
+    env.with_local_frame_returning_local::<_, JObject, jni::errors::Error>(24, |env| {
         let kind = env.new_string("X.509")?;
         let factory = env
             .call_static_method(

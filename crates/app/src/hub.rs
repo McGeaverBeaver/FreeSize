@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -91,6 +92,142 @@ impl Reporter {
 
 type SharedTransport = Arc<dyn Transport + Send + Sync>;
 type SharedExecutor = Arc<dyn Executor + Send + Sync>;
+
+/// The worker is running: the app is open and talking to the Hub itself,
+/// so the background job (Android, 0.14) stays out of its way.
+static WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn worker_active() -> bool {
+    WORKER_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// What this device lets the Hub ask for, given where its pairing is kept
+/// (`hub.json`, never deleted): the actions by platform, deletes inside the
+/// drives it lists and the home folder.
+pub fn policy(hub_path: &Path) -> Policy {
+    let mut roots: Vec<PathBuf> = crate::locations::list()
+        .into_iter()
+        .map(|l| l.path)
+        .collect();
+    if let Some(home) = std::env::home_dir() {
+        roots.push(home);
+    }
+    let platform = Platform::current();
+    Policy {
+        attended: true,
+        actions: if platform == Platform::Android {
+            vec![
+                ActionKind::Delete,
+                ActionKind::Uninstall,
+                ActionKind::Clean,
+                ActionKind::Restore,
+                ActionKind::Empty,
+            ]
+        } else {
+            let mut actions = vec![
+                ActionKind::Delete,
+                ActionKind::Clean,
+                ActionKind::Restore,
+                ActionKind::Empty,
+                ActionKind::MoveIn,
+            ];
+            if platform == Platform::Windows {
+                actions.push(ActionKind::OnlineOnly);
+            }
+            actions
+        },
+        roots,
+        keep: vec![hub_path.to_path_buf()],
+        guards: Default::default(),
+    }
+}
+
+// ----- Reports that couldn't be sent ----------------------------------------
+
+/// Most reports kept for later; older ones go first.
+const MAX_PENDING: usize = 20;
+
+/// Where reports the Hub couldn't be given wait: beside `hub.json`.
+pub fn pending_dir(hub_path: &Path) -> PathBuf {
+    hub_path
+        .parent()
+        .map_or_else(|| PathBuf::from("hub-pending"), |d| d.join("hub-pending"))
+}
+
+/// Keeps a report for the next chance: a scan, the apps, junk or sync
+/// report, or the quarantine. The device's info and disks aren't kept;
+/// they go out fresh with the next report anyway.
+pub fn save_pending(hub_path: &Path, report: &Report) {
+    let worth_keeping = report.scan.is_some()
+        || report.apps.is_some()
+        || report.junk.is_some()
+        || report.sync.is_some()
+        || report.quarantine.is_some();
+    if !worth_keeping {
+        return;
+    }
+    let dir = pending_dir(hub_path);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let kept = Report {
+        info: None,
+        disks: None,
+        ..report.clone()
+    };
+    let Ok(text) = serde_json::to_string(&kept) else {
+        return;
+    };
+    let name = format!(
+        "{}-{}.json",
+        now(),
+        std::process::id() as u64 * 7919 + text.len() as u64 % 7919
+    );
+    let _ = std::fs::write(dir.join(name), text);
+    // Keep the newest.
+    let mut files = pending_files(&dir);
+    while files.len() > MAX_PENDING {
+        let _ = std::fs::remove_file(files.remove(0));
+    }
+}
+
+fn pending_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == "json"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
+}
+
+/// Sends the kept reports, oldest first, and removes each one that got
+/// through. Stops at the first failure. Says how many went.
+pub fn send_pending(client: &Client, hub_path: &Path) -> usize {
+    let dir = pending_dir(hub_path);
+    let mut sent = 0;
+    for file in pending_files(&dir) {
+        let report: Option<Report> = std::fs::read_to_string(&file)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok());
+        let Some(report) = report else {
+            // Unreadable: not worth keeping.
+            let _ = std::fs::remove_file(&file);
+            continue;
+        };
+        if client.report(&report).is_err() {
+            break;
+        }
+        let _ = std::fs::remove_file(&file);
+        sent += 1;
+    }
+    sent
+}
 
 pub struct Hub {
     path: PathBuf,
@@ -382,6 +519,7 @@ impl Worker {
             self.tell(Event::Status("Couldn't start talking to the Hub".into()));
             return;
         }
+        WORKER_ACTIVE.store(true, Ordering::SeqCst);
         let mut connected = false;
         while let Ok(job) = inbox.recv() {
             match job {
@@ -403,6 +541,9 @@ impl Worker {
                         connected = true;
                         if let Some(state) = self.snapshot() {
                             self.tell(Event::Status(format!("Connected to {}", state.hub_name)));
+                            // What couldn't be sent while the Hub was out
+                            // of reach.
+                            send_pending(&Client::new(&state, &*self.transport), &self.path);
                         }
                     }
                     self.handle(response);
@@ -411,7 +552,7 @@ impl Worker {
                     connected = false;
                     if err.removed {
                         self.tell(Event::Removed);
-                        return;
+                        break;
                     }
                     if let Some(state) = self.snapshot() {
                         self.tell(Event::Status(format!(
@@ -420,15 +561,19 @@ impl Worker {
                         )));
                     }
                 }
-                Job::Stop => return,
+                Job::Stop => break,
             }
         }
+        WORKER_ACTIVE.store(false, Ordering::SeqCst);
     }
 
     fn send_report(&self, report: &Report) {
         if let Some(state) = self.snapshot()
             && let Err(err) = Client::new(&state, &*self.transport).report(report)
         {
+            if !err.removed {
+                save_pending(&self.path, report);
+            }
             self.tell(Event::Status(format!(
                 "Couldn't report to {}: {err}",
                 state.hub_name

@@ -375,38 +375,7 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>, transport: SharedTransport) ->
         .unwrap_or_else(std::env::temp_dir)
         .join("hub.json");
     let executor = Arc::new(hub::AppExecutor { junk: junk.clone() });
-    let mut roots: Vec<PathBuf> = locations::list().into_iter().map(|l| l.path).collect();
-    if let Some(home) = std::env::home_dir() {
-        roots.push(home);
-    }
-    let platform = freesize_proto::Platform::current();
-    let policy = freesize_agent::commands::Policy {
-        attended: true,
-        actions: if platform == freesize_proto::Platform::Android {
-            vec![
-                freesize_proto::ActionKind::Delete,
-                freesize_proto::ActionKind::Uninstall,
-                freesize_proto::ActionKind::Clean,
-                freesize_proto::ActionKind::Restore,
-                freesize_proto::ActionKind::Empty,
-            ]
-        } else {
-            let mut actions = vec![
-                freesize_proto::ActionKind::Delete,
-                freesize_proto::ActionKind::Clean,
-                freesize_proto::ActionKind::Restore,
-                freesize_proto::ActionKind::Empty,
-                freesize_proto::ActionKind::MoveIn,
-            ];
-            if platform == freesize_proto::Platform::Windows {
-                actions.push(freesize_proto::ActionKind::OnlineOnly);
-            }
-            actions
-        },
-        roots,
-        keep: vec![path.clone()],
-        guards: Default::default(),
-    };
+    let policy = hub::policy(&path);
     Hub::new(path, transport, executor, policy)
 }
 
@@ -1686,11 +1655,30 @@ impl Controller {
             });
     }
 
+    /// Android (0.14): with a Hub paired, the phone reports and hears of
+    /// requests every 15 minutes while the app is closed, through a job
+    /// Android runs; its notices need the notifications permission.
+    fn background_on(&self) {
+        #[cfg(target_os = "android")]
+        if self.hub.state().is_some() {
+            crate::android::schedule_hub_job();
+            crate::android::request_notifications();
+        }
+    }
+
+    fn background_off(&self) {
+        #[cfg(target_os = "android")]
+        crate::android::cancel_hub_job();
+    }
+
     fn hub_tick(&mut self) {
         let due = self
             .disks_reported
             .is_none_or(|at| at.elapsed() > Duration::from_secs(3600));
         if due && self.hub.state().is_some() {
+            if self.disks_reported.is_none() {
+                self.background_on();
+            }
             self.report_disks();
         }
         let mut home = false;
@@ -1727,6 +1715,7 @@ impl Controller {
                 }
                 hub::Event::Removed => {
                     self.hub.disconnect();
+                    self.background_off();
                     self.prompts.clear();
                     self.hub_status.clear();
                     self.set_status("The Hub removed this device. Connect again to pair anew.");
@@ -1745,6 +1734,7 @@ impl Controller {
                     self.hub_link = None;
                     self.hub_hello = None;
                     self.hub_status = format!("Connected to {name}");
+                    self.background_on();
                     if let Some(ui) = self.ui() {
                         ui.set_hub_busy(false);
                         ui.set_hub_connect_open(false);
@@ -2057,6 +2047,7 @@ impl Controller {
             }
             (sheet::HUB_DISCONNECT, SheetTarget::Hub) => {
                 self.hub.disconnect();
+                self.background_off();
                 self.hub_status.clear();
                 self.prompts.clear();
                 self.set_status("Disconnected. An admin can remove this device from the Hub.");

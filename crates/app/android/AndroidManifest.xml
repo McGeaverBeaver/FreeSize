@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+The app's manifest, used by scripts/android/build-apk.sh since 0.14, when
+the APK gained a Java class (HubJob, the background job) that cargo-apk's
+generated manifest can't declare. It says the same as the metadata in
+crates/app/Cargo.toml, which cargo-apk still reads to build the Rust side,
+plus the service and the permissions it needs. Keep the two in step.
+
+The version code and name are passed in by the build script (aapt2 link's
+version-code and version-name options), from the release and the version in the
+root Cargo.toml.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mcgeaverbeaver.freesize">
+
+    <!-- Android 16. Google Play requires API 36 for new apps and updates. -->
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+
+    <!-- Android 10 and older: classic storage permissions. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- Android 11+: "All files access", needed to see all of shared storage. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- Lets StorageStatsManager report other apps' storage ("Usage access"). -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <!-- Android 11+ only lists every installed app with this. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Talking to a FreeSize Hub, when one is connected. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lets the Uninstall button open Android's uninstall confirmation. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- Lets Update hand a verified release to Android's installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 0.14: the background job's notifications (Android 13+ asks the
+         person), and the job itself coming back after a reboot. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:label="FreeSize"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/AppTheme"
+        android:hasCode="true"
+        android:extractNativeLibs="false"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+
+        <!-- Handle these changes in place: Slint relayouts on its own, and
+             recreating a NativeActivity would restart the Rust side. -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:label="FreeSize"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|fontScale|keyboard|keyboardHidden|navigation|locale|layoutDirection|colorMode|touchscreen">
+            <meta-data android:name="android.app.lib_name" android:value="freesize_app" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Opens pairing links (freesize://pair?...) from a scanned QR
+                 code, and disktree://pair?... from a Hub not updated since
+                 the rename. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="freesize" android:host="pair" />
+                <data android:scheme="disktree" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- The background job (0.14): reports and asks the Hub for news
+             every 15 minutes while the app is closed. -->
+        <service
+            android:name=".HubJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+    </application>
+</manifest>

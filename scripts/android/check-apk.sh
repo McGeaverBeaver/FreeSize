@@ -59,6 +59,18 @@ for permission in MANAGE_EXTERNAL_STORAGE PACKAGE_USAGE_STATS QUERY_ALL_PACKAGES
 done
 if grep -q "^application-debuggable" <<<"$badging"; then fail "release APK is debuggable"; else pass "not debuggable"; fi
 
+# 0.14: the background job is a Java class in classes.dex, declared as a
+# service, with the permissions its notifications and reboots need.
+if unzip -l "$apk" | grep -q " classes.dex$"; then pass "has classes.dex"; else fail "no classes.dex: the background job is missing"; fi
+if grep -q "HubJob" <<<"$manifest"; then pass "declares the HubJob service"; else fail "the manifest doesn't declare HubJob"; fi
+for permission in POST_NOTIFICATIONS RECEIVE_BOOT_COMPLETED; do
+    if grep -q "^uses-permission: name='android.permission.$permission'" <<<"$badging"; then
+        pass "declares $permission"
+    else
+        fail "missing permission $permission"
+    fi
+done
+
 # Android 12+ refuses to install apps whose launcher activity doesn't say exported.
 if grep -Eq 'exported\(0x01010010\)=(true|\(type 0x12\)0xffffffff)' <<<"$manifest"; then
     pass "launcher activity is exported"

@@ -7,6 +7,8 @@ mod actions;
 mod android;
 mod appbubbles;
 mod apps;
+#[cfg(target_os = "android")]
+mod background;
 mod changes;
 mod cleanup;
 mod controller;
