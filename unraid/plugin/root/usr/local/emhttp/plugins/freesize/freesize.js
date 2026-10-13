@@ -787,7 +787,7 @@
     if (!built.quarantine) {
       const paths = h("textarea", { rows: 3, placeholder: "/mnt/user/Movies/Old Film (1999)\n/mnt/disk2/Backups/pc-2019.tar" });
       const reason = h("input", { type: "text", placeholder: "Why (optional), e.g. watched" });
-      built.quarantine = { list: h("div"), head: h("div") };
+      built.quarantine = { list: h("div"), head: h("div"), junk: h("div") };
       fill(root,
         built.quarantine.head,
         h("details", { class: "dt-details" },
@@ -803,7 +803,8 @@
                 reason.value = "";
               });
             } }, "Check…"))),
-        built.quarantine.list);
+        built.quarantine.list,
+        built.quarantine.junk);
     }
     const batches = (model.status && model.status.quarantine) || [];
     const total = batches.reduce((n, b) => n + b.bytes, 0);
@@ -824,6 +825,45 @@
             h("button", { type: "button", onclick: () => confirmRestore(b) }, "Put back…"),
             h("button", { type: "button", class: "dt-danger", onclick: () => confirmEmpty([b]) }, "Delete for good…"))),
         h("ul", { class: "dt-list" }, b.items.map((i) => h("li", {}, h("span", { class: "dt-path" }, i.original), ` · ${size(i.bytes)} `, browse(i.stored, true)))))));
+    renderJunk();
+  }
+
+  // Trash folders computers and the Recycle Bin plugin leave in the
+  // shares: the junk cleaner's findings on a server. Emptying one is for
+  // good, so the paths are listed first.
+  function renderJunk() {
+    const junk = (model.status && model.status.junk) || [];
+    const total = junk.reduce((n, j) => n + j.bytes, 0);
+    fill(built.quarantine.junk,
+      h("div", { class: "dt-head", style: "margin-top:16px" },
+        h("div", {},
+          h("p", {}, h("b", {}, junk.length ? `Trash folders in the shares: ${size(total)}` : "No trash folders with anything in them.")),
+          h("p", { class: "dt-muted" }, "What the Recycle Bin plugin and computers' own trash (.Trash-1000, .Trashes) keep in the shares. Emptying them is for good, so each lists what goes. The Hub can ask to empty them too, with your approval."))),
+      junk.map((j) => h("div", { class: "dt-card" },
+        h("div", { class: "dt-head" },
+          h("div", {}, h("b", {}, `${j.label}: ${size(j.bytes)}`), h("div", { class: "dt-muted" }, j.blurb)),
+          h("div", { class: "dt-actions" },
+            h("button", { type: "button", class: "dt-danger", onclick: () => confirmJunk(j) }, "Empty for good…"))),
+        h("ul", { class: "dt-list" }, (j.paths || []).slice(0, 20).map((p) => h("li", {}, h("span", { class: "dt-path" }, p), " ", browse(p, false))),
+          (j.paths || []).length > 20 ? h("li", { class: "dt-muted" }, `… and ${j.paths.length - 20} more`) : null))));
+  }
+
+  function confirmJunk(j) {
+    const tick = h("input", { type: "checkbox" });
+    const ui = dialog("Empty for good",
+      h("div", {},
+        h("p", {}, `${j.label}, ${count(j.items, "item")}, ${size(j.bytes)}, is deleted and can't be put back:`),
+        h("ul", { class: "dt-list dt-scroll" }, (j.paths || []).map((p) => h("li", {}, h("span", { class: "dt-path" }, p), " ", browse(p, false)))),
+        h("label", { class: "dt-tick" }, tick, " I've looked at these; delete them.")),
+      [{ label: `Delete ${size(j.bytes)}`, kind: "danger", disabled: true, onclick: async (close, button) => {
+        const reply = await busy(button, () => post("junk_clean", { rule: j.kind }));
+        if (!reply.ok) return toast(reply.output, "bad");
+        close();
+        toast(reply.output || "Deleted.", "good");
+        refreshSoon();
+      } }]);
+    const go = ui.buttons[ui.buttons.length - 1];
+    tick.addEventListener("change", () => (go.disabled = !tick.checked));
   }
 
   // Lists what would go, with what deleting it later would really free,

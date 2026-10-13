@@ -237,6 +237,14 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE scans ADD COLUMN unreadable TEXT NOT NULL DEFAULT '[]';
     ",
+    // 6: what each device's junk cleaner found (0.10).
+    "
+    CREATE TABLE junk (
+        device_id TEXT PRIMARY KEY,
+        taken INTEGER NOT NULL,
+        report TEXT NOT NULL
+    );
+    ",
 ];
 
 impl Db {

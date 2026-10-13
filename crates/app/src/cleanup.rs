@@ -22,23 +22,42 @@ pub enum JunkKind {
     Thumbnails,
     /// `Android/media/<package>` folders of apps that are gone.
     Leftovers,
+    /// Files in Download not changed for 3 months (the junk cleaner's rule).
+    OldDownloads,
+    /// Screen recordings older than a month (the junk cleaner's rule).
+    ScreenRecordings,
+    /// Folders with nothing in them (the junk cleaner's rule).
+    EmptyFolders,
 }
 
 impl JunkKind {
-    pub const ALL: [JunkKind; 4] = [
+    pub const ALL: [JunkKind; 7] = [
         JunkKind::Trash,
         JunkKind::Installers,
         JunkKind::Thumbnails,
         JunkKind::Leftovers,
+        JunkKind::OldDownloads,
+        JunkKind::ScreenRecordings,
+        JunkKind::EmptyFolders,
     ];
 
+    /// The ids of the junk cleaner's rules match `freesize_core::junk`'s,
+    /// so the Hub's Clean action names the same thing everywhere.
     pub fn id(self) -> &'static str {
         match self {
             JunkKind::Trash => "trash",
             JunkKind::Installers => "installers",
             JunkKind::Thumbnails => "thumbnails",
             JunkKind::Leftovers => "leftovers",
+            JunkKind::OldDownloads => "old-downloads",
+            JunkKind::ScreenRecordings => "screen-recordings",
+            JunkKind::EmptyFolders => "empty-folders",
         }
+    }
+
+    /// Whether it takes no space and is shown for its count instead.
+    pub fn counted(self) -> bool {
+        self == JunkKind::EmptyFolders
     }
 
     pub fn from_id(id: &str) -> Option<JunkKind> {
@@ -78,7 +97,28 @@ pub fn find(
     ]
     .into_iter()
     .flatten()
+    .chain(rules(root))
     .collect()
+}
+
+/// The junk cleaner's rules for phones: old downloads, screen recordings
+/// and empty folders, as cards.
+fn rules(root: &Path) -> Vec<Junk> {
+    use freesize_core::junk::{Env, Platform, find, now};
+    find(Platform::Android, &Env::android(root), &[], now())
+        .into_iter()
+        .filter_map(|finding| {
+            let kind = JunkKind::from_id(finding.rule.id)?;
+            let paths: Vec<PathBuf> = finding.items.iter().flat_map(|i| i.paths()).collect();
+            let names = paths.iter().map(|p| file_name(p)).collect();
+            Some(Junk {
+                kind,
+                bytes: finding.bytes,
+                paths,
+                names,
+            })
+        })
+        .collect()
 }
 
 fn installers(root: &Path) -> Option<Junk> {

@@ -18,11 +18,12 @@ use freesize_core::snapshot::FolderSize;
 use freesize_hub::{AppState, Config};
 use freesize_proto::{
     ActionKind, AppEntry, AppsReport, Breakdown, DeviceInfo, Disk, FileEntry, JunkEntry,
-    PairingLink, Platform, Report, ScanReport, TypeEntry,
+    JunkFinding, JunkReport, PairingLink, Platform, Report, ScanReport, TypeEntry,
 };
 use rusqlite::params;
 
 const GB: u64 = 1 << 30;
+const MB: u64 = 1 << 20;
 
 #[tokio::main]
 async fn main() {
@@ -313,6 +314,63 @@ fn seed(url: &str, state: &AppState) {
                         ("Users/Robert/Videos/clip.mp4", 9_000),
                     ]),
                 )),
+                junk: Some(JunkReport {
+                    taken: freesize_hub::db::now() - 1800,
+                    total: 7_900 * MB,
+                    safe: 4_200 * MB,
+                    entries: vec![
+                        junk_finding(
+                            "user-temp",
+                            "system",
+                            "Your temporary files",
+                            1_300 * MB,
+                            2_410,
+                            "safe",
+                            true,
+                            "",
+                        ),
+                        junk_finding(
+                            "windows-update",
+                            "system",
+                            "Windows Update downloads",
+                            2_100 * MB,
+                            38,
+                            "use_tool",
+                            true,
+                            "Settings → System → Storage → Temporary files → Windows Update Cleanup",
+                        ),
+                        junk_finding(
+                            "chrome-cache",
+                            "browsers",
+                            "Chrome's cache",
+                            900 * MB,
+                            3,
+                            "safe",
+                            true,
+                            "",
+                        ),
+                        junk_finding(
+                            "steam-shader-cache",
+                            "games",
+                            "Steam's shader cache",
+                            2_000 * MB,
+                            1,
+                            "safe",
+                            true,
+                            "",
+                        ),
+                        junk_finding(
+                            "old-installers",
+                            "trash",
+                            "Installers in Downloads",
+                            1_600 * MB,
+                            9,
+                            "check_first",
+                            false,
+                            "",
+                        ),
+                    ],
+                }),
                 ..Report::default()
             },
             vec![("C:\\", 931, 869), ("D:\\", 1_863, 763)],
@@ -538,6 +596,44 @@ fn approvals_and_requests(state: &AppState, agents: &[(DeviceInfo, freesize_agen
             .unwrap();
         }
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn junk_finding(
+    kind: &str,
+    category: &str,
+    label: &str,
+    bytes: u64,
+    items: u64,
+    safety: &str,
+    refills: bool,
+    tool: &str,
+) -> JunkFinding {
+    JunkFinding {
+        kind: kind.into(),
+        category: category.into(),
+        label: label.into(),
+        blurb: match kind {
+            "user-temp" => {
+                "Files programs left in your Temp folder; nothing from the last day is touched."
+            }
+            "chrome-cache" => {
+                "Pages load from the internet again the first time; you stay signed in."
+            }
+            "steam-shader-cache" => {
+                "Steam fetches or builds them again, so the first launch may stutter."
+            }
+            "old-installers" => "Setup programs you downloaded and probably ran already.",
+            _ => "Update files already installed. Windows cleans these itself.",
+        }
+        .into(),
+        bytes,
+        items,
+        safety: safety.into(),
+        refills,
+        running: false,
+        tool: tool.into(),
+    }
 }
 
 fn app(package: &str, label: &str, gb: u64, cache: u64, days: Option<i64>) -> AppEntry {

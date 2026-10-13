@@ -1,4 +1,4 @@
-import { Button, LineEdit, ComboBox, TabWidget, ListView, Palette, ScrollView, Spinner } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ComboBox, TabWidget, ListView, Palette, ScrollView, Spinner } from "std-widgets.slint";
 
 export struct TreeRow {
     id: int,
@@ -95,6 +95,26 @@ export struct CleanRow {
     /// A preview, for photos.
     has-image: bool,
     image: image,
+}
+
+/// One row of the Clean junk screen.
+export struct JunkRow {
+    /// 0 category heading, 1 rule, 2 item (a path), 3 note.
+    kind: int,
+    /// The rule's index for rules; the item's id for items, -1 for the
+    /// "and N more" line.
+    id: int,
+    title: string,
+    subtitle: string,
+    detail: string,
+    /// Rules: whether it's ticked, whether it can be, whether its items
+    /// are shown.
+    ticked: bool,
+    enabled: bool,
+    open: bool,
+    /// Button text: rules removed with their own tool get "Open settings"
+    /// or "Show command", items "Show"; empty for none.
+    action: string,
 }
 
 /// A button of the app sheet.
@@ -860,6 +880,254 @@ component CleanupPane inherits Rectangle {
 
             end := Rectangle {
                 height: 0px;
+            }
+        }
+    }
+}
+
+/// The Clean junk screen: what the known places hold, by category, ticked
+/// where it's safe. A rule opens to the paths that would go.
+component JunkPane inherits Rectangle {
+    in property <[JunkRow]> rows;
+    in property <string> summary;
+    in property <bool> busy;
+    in property <string> clean-label;
+    in property <bool> can-clean;
+    in property <length> top-inset;
+    in property <length> bottom-inset;
+    callback close();
+    callback toggle(int);
+    callback expand(int);
+    /// Shows an item's path in the file manager.
+    callback show(int);
+    /// Opens the settings page, or shows the command, of a rule that's
+    /// removed with its own tool.
+    callback tool(int);
+    callback clean();
+    callback again();
+    background: Palette.background;
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 12px;
+            padding-top: 12px + root.top-inset;
+            spacing: 8px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text {
+                    text: "Clean junk";
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: root.summary;
+                    font-size: 12px;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+            }
+
+            Button {
+                text: "Look again";
+                enabled: !root.busy;
+                clicked => {
+                    root.again();
+                }
+            }
+
+            Button {
+                text: "Close";
+                clicked => {
+                    root.close();
+                }
+            }
+        }
+
+        // Sized like the home screen's list; see HomePane.
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            content-height: max(column.preferred-height, end.y + 10px);
+            column := VerticalLayout {
+                y: 0;
+                width: scroll.visible-width;
+                height: self.preferred-height * 2 + 1000px;
+                alignment: start;
+                padding: 10px;
+                for row in root.rows: VerticalLayout {
+                    if row.kind == 0: VerticalLayout {
+                        padding-top: 12px;
+                        padding-bottom: 6px;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: row.title;
+                                font-size: 15px;
+                                font-weight: 600;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: row.detail;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if row.subtitle != "": Text {
+                            text: row.subtitle;
+                            font-size: 12px;
+                            color: Theme.dim;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if row.kind == 1: Rectangle {
+                        height: rule.preferred-height + 10px;
+                        border-radius: 6px;
+                        background: rule-touch.has-hover ? Palette.alternate-background : transparent;
+                        rule-touch := TouchArea {
+                            clicked => {
+                                root.expand(row.id);
+                            }
+                        }
+
+                        rule := HorizontalLayout {
+                            y: 5px;
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            CheckBox {
+                                checked: row.ticked;
+                                enabled: row.enabled;
+                                toggled => {
+                                    root.toggle(row.id);
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                Text {
+                                    text: row.title;
+                                    wrap: word-wrap;
+                                    color: row.enabled ? Palette.foreground : Theme.dim;
+                                }
+
+                                Text {
+                                    text: row.subtitle;
+                                    wrap: word-wrap;
+                                    font-size: 11px;
+                                    color: Theme.dim;
+                                }
+                            }
+
+                            Text {
+                                text: row.detail;
+                                vertical-alignment: center;
+                                font-size: 12px;
+                            }
+
+                            if row.action != "": Button {
+                                text: row.action;
+                                clicked => {
+                                    root.tool(row.id);
+                                }
+                            }
+                            Chevron {
+                                expanded: row.open;
+                                tint: Theme.dim;
+                            }
+                        }
+                    }
+
+                    if row.kind == 2: Rectangle {
+                        height: 30px;
+                        HorizontalLayout {
+                            padding-left: 44px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            Text {
+                                text: row.title;
+                                font-size: 12px;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                color: row.id < 0 ? Theme.dim : Palette.foreground;
+                            }
+
+                            Text {
+                                text: row.detail;
+                                font-size: 12px;
+                                color: Theme.dim;
+                                vertical-alignment: center;
+                            }
+
+                            if row.action != "": Button {
+                                text: row.action;
+                                clicked => {
+                                    root.show(row.id);
+                                }
+                            }
+                        }
+                    }
+
+                    if row.kind == 3: Rectangle {
+                        height: note.preferred-height + 16px;
+                        border-radius: 6px;
+                        background: Palette.alternate-background;
+                        note := VerticalLayout {
+                            y: 8px;
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 2px;
+                            Text {
+                                text: row.title;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                            }
+
+                            Text {
+                                text: row.subtitle;
+                                wrap: word-wrap;
+                                font-size: 12px;
+                                color: Theme.dim;
+                            }
+                        }
+                    }
+                }
+
+                end := Rectangle {
+                    height: 0px;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding: 12px;
+            padding-bottom: 12px + root.bottom-inset;
+            spacing: 8px;
+            Text {
+                text: "Safe rules are ticked. \"Check first\" rules go to the quarantine, where Put back restores them. Nothing is deleted until you confirm.";
+                font-size: 11px;
+                color: Theme.dim;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+
+            Button {
+                text: root.clean-label;
+                primary: true;
+                enabled: root.can-clean && !root.busy;
+                clicked => {
+                    root.clean();
+                }
             }
         }
     }
@@ -1638,6 +1906,13 @@ export component AppWindow inherits Window {
     in property <[string]> change-scans;
     in-out property <int> change-scan-index;
     in property <[CleanRow]> change-rows;
+    // The Clean junk screen.
+    in property <bool> junk-open;
+    in property <[JunkRow]> junk-rows;
+    in property <string> junk-summary;
+    in property <bool> junk-busy;
+    in property <string> junk-clean-label: "Clean";
+    in property <bool> junk-can-clean;
     /// The selected tab of each layout's tabs.
     in-out property <int> wide-tab;
     in-out property <int> compact-tab;
@@ -1727,6 +2002,13 @@ export component AppWindow inherits Window {
     callback grant-permission();
     callback sheet-action(string);
     callback cleanup-action(string);
+    callback junk-close();
+    callback junk-toggle(int);
+    callback junk-expand(int);
+    callback junk-show(int);
+    callback junk-tool(int);
+    callback junk-clean();
+    callback junk-again();
     callback hub-connect();
     callback hub-confirm();
     callback hub-connect-cancel();
@@ -1763,6 +2045,10 @@ export component AppWindow inherits Window {
             }
             if (root.confirm-open) {
                 root.delete-cancelled();
+                return accept;
+            }
+            if (root.junk-open) {
+                root.junk-close();
                 return accept;
             }
             if (root.scanning) {
@@ -2266,6 +2552,38 @@ export component AppWindow inherits Window {
     }
 
     // Delete confirmation
+    // The Clean junk screen, over the whole window.
+    if root.junk-open: JunkPane {
+        rows: root.junk-rows;
+        summary: root.junk-summary;
+        busy: root.junk-busy;
+        clean-label: root.junk-clean-label;
+        can-clean: root.junk-can-clean;
+        top-inset: root.safe-area-insets.top;
+        bottom-inset: root.safe-area-insets.bottom;
+        close => {
+            root.junk-close();
+        }
+        toggle(id) => {
+            root.junk-toggle(id);
+        }
+        expand(id) => {
+            root.junk-expand(id);
+        }
+        show(id) => {
+            root.junk-show(id);
+        }
+        tool(id) => {
+            root.junk-tool(id);
+        }
+        clean => {
+            root.junk-clean();
+        }
+        again => {
+            root.junk-again();
+        }
+    }
+
     if root.confirm-open: Rectangle {
         background: #00000088;
         TouchArea { }

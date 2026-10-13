@@ -107,6 +107,16 @@ check($status === 400 && str_contains($reply['output'] ?? '', 'paste the whole p
 check(!file_exists("$root/args"), 'the command never ran for it');
 check(str_contains(log_text(), 'isn\'t a whole pairing link'), 'the log says so');
 
+// Emptying a trash folder runs the junk command with the rule's id only.
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'junk_clean', 'rule' => 'recycle-bin'], true);
+check($status === 200 && ($reply['ok'] ?? false), 'emptying a trash folder works');
+$args = explode("\n", trim((string)@file_get_contents("$root/args")));
+check(array_slice($args, 0, 1) === ['unraid'] && array_slice($args, -3) === ['junk', 'clean', 'recycle-bin'], 'the command gets the rule id');
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'junk_clean', 'rule' => '../x'], true);
+check($status === 400 && !file_exists("$root/args"), 'a rule id with other characters is refused before the command runs');
+
 // Without Unraid's prelude the page checks the token itself.
 reset_root();
 [$status, $reply] = post(['action' => 'keep', 'paths' => ''], false);

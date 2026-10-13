@@ -17,6 +17,7 @@
 pub mod access;
 pub mod bubbles;
 mod format;
+pub mod junk;
 mod kinds;
 pub mod ncdu;
 mod platform;

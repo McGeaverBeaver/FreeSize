@@ -18,6 +18,7 @@ mod history;
 mod home;
 mod hub;
 mod insights;
+mod junk;
 mod locations;
 mod moves;
 mod owners;

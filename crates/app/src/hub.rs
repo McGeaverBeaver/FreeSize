@@ -279,7 +279,12 @@ pub fn device_info(name: &str, os: &str, state: Option<&AgentState>) -> DeviceIn
                 ActionKind::Empty,
             ]
         } else {
-            vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty]
+            vec![
+                ActionKind::Delete,
+                ActionKind::Clean,
+                ActionKind::Restore,
+                ActionKind::Empty,
+            ]
         },
         attended: true,
         approver: None,
@@ -671,22 +676,40 @@ impl Executor for AppExecutor {
         Ok("Android asked to confirm uninstalling".into())
     }
 
-    fn clean(&self, kind: &str) -> Result<u64, String> {
+    fn clean(&self, kind: &str) -> Result<freesize_agent::junk::Outcome, String> {
+        // The phone's cards (Biggest caches and the like) are found by the
+        // apps measurement; the rest are the junk cleaner's rules, found
+        // afresh so what goes is what's there now.
         let junk = self
             .junk
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .find(|j| j.kind.id() == kind)
-            .cloned()
-            .ok_or("nothing of that kind to clean any more")?;
-        let (freed, errors) = crate::apps::delete_junk(&junk);
-        if freed == 0
-            && let Some(err) = errors.into_iter().next()
-        {
-            return Err(err);
+            .cloned();
+        if let Some(junk) = junk {
+            let (freed, errors) = crate::apps::delete_junk(&junk);
+            if freed == 0
+                && let Some(err) = errors.into_iter().next()
+            {
+                return Err(err);
+            }
+            return Ok(freesize_agent::junk::Outcome {
+                freed,
+                ..Default::default()
+            });
         }
-        Ok(freed)
+        let finding =
+            freesize_agent::junk::find_rule(freesize_core::junk::Platform::current(), kind)?;
+        let title = finding.rule.title;
+        let aside = |paths: &[std::path::PathBuf]| -> Result<u64, String> {
+            let (bytes, errors) = crate::quarantine::delete_all(paths, title);
+            match errors.into_iter().next() {
+                Some(err) if bytes == 0 => Err(err),
+                _ => Ok(bytes),
+            }
+        };
+        freesize_agent::junk::clean(&finding, &aside)
     }
 }
 
@@ -753,6 +776,9 @@ pub fn apps_report(report: &crate::apps::AppReport) -> freesize_proto::AppsRepor
                     JunkKind::Installers => "Old app installers",
                     JunkKind::Thumbnails => "Thumbnail cache",
                     JunkKind::Leftovers => "Leftovers of removed apps",
+                    JunkKind::OldDownloads => "Old downloads",
+                    JunkKind::ScreenRecordings => "Screen recordings",
+                    JunkKind::EmptyFolders => "Empty folders",
                 }
                 .to_string(),
                 bytes: junk.bytes,

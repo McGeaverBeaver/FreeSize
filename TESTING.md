@@ -23,6 +23,13 @@ what was tried in the release's draft notes, and say what wasn't.
       result opens read-only with those folders now readable.
 - [ ] Delete moves to the quarantine; Put back restores the file byte for
       byte (compare the size and a checksum); Empty frees the space.
+- [ ] Clean junk: Find junk lists nothing the system's own tool would
+      refuse (compare with Settings → Storage → Temporary files on
+      Windows); a rule's paths open with Show; with Chrome open its cache
+      says it's skipped; Clean frees what it said within a few percent
+      (compare the drive's free space before and after) and the result
+      names what was skipped; a "check first" rule lands in the
+      quarantine and Put back restores it; `freesize junk` lists the same.
 - [ ] Opens a saved scan; Export writes one that opens again.
 - [ ] Hub: pairs from a link, shows up online, a delete request is approved
       on the device and lands in the quarantine.
@@ -36,6 +43,9 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] All files access and Usage access are asked for and, once granted,
       the home screen shows apps and the system breakdown.
 - [ ] A delete lands in the quarantine and Put back restores it.
+- [ ] Free up space: Old downloads, Screen recordings and Empty folders
+      show when there are any, say what they'd move, and land in the
+      quarantine.
 - [ ] Pairs from the QR code; a delete from the Hub is approved on the
       phone.
 - [ ] Updates: a newer release is offered and opens for installing.
@@ -49,6 +59,9 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] A device behind the Hub's version is flagged; the Hub says when a
       newer release exists (with the update check on).
 - [ ] Alerts reach a channel; the message carries the audit log's head.
+- [ ] A device's Junk tab shows what its cleaner found; Clean on a safe
+      rule is approved on the device and the tab updates; a junk alert
+      fires above the limit set on the Alerts page.
 - [ ] A wrong pairing code ten times from one address is refused for a
       minute; other addresses still pair.
 
@@ -58,3 +71,6 @@ what was tried in the release's draft notes, and say what wasn't.
       previous version with its settings, pairing and quarantine intact.
 - [ ] The page shows the array, shares, Docker's findings; a move between
       disks runs and the log is clean.
+- [ ] Quarantine tab: a `.Recycle.bin` with files in it shows under Trash
+      folders in the shares with its paths; Empty for good removes it and
+      `freesize unraid junk list` agrees.

@@ -77,6 +77,16 @@ Each part takes over what DiskTree kept, the first time it starts:
   year, a duplicate file finder and a finder for photos that look alike.
   Select one and use Delete; nothing is deleted without asking. See
   [Clean up tab](#clean-up-tab).
+- **Clean junk**, on the start screen: one button finds the junk in the
+  known places (temporary files, crash dumps, browser and app caches,
+  shader caches, build caches, the trash, old installers and downloads)
+  in seconds, without a scan. Everything is sorted by category with a
+  tick box, a line about what cleaning it means and whether it refills,
+  and opens to its exact paths. Safe items are ticked; "check first"
+  items aren't and go to the quarantine; what the system's own tool
+  should remove gets a button to that tool. An optional weekly or daily
+  check says when junk piles up; nothing is ever cleaned on its own. See
+  [Clean junk](#clean-junk).
 - **Changes** since an earlier scan of the same folder: what grew, what's
   new, what shrank or went away. Bubbles show how much a folder grew. See
   [Changes](#changes).
@@ -175,7 +185,16 @@ Run `freesize --help` for all options (`--apparent` for file sizes,
 `--cross-filesystems`, `--min-percent`, …). `--cleanup` adds rebuildable
 folders and files not changed in a year, and `--duplicates` finds duplicate
 files of 1 MB or more (it reads them, so it takes a while). Both only list;
-the command line tool never deletes anything.
+a scan never deletes anything.
+
+`freesize junk` is the junk cleaner (see [Clean junk](#clean-junk)) on the
+command line: it lists what the known places hold by category, with each
+rule's id, size and what cleaning it means, ticked where it's safe, and
+touches nothing. `freesize junk --clean` deletes what's ticked after
+showing it and asking; `--also RULE` adds a rule by its id ("check first"
+rules go to the quarantine on their disk, where `freesize agent` or the
+Hub can put them back), `--only RULE` limits the look, `-y` skips the
+question and `--json` prints the findings with every path.
 
 For scripts, spreadsheets and Home Assistant:
 
@@ -247,6 +266,56 @@ Delete or Collect. Delete moves it to the quarantine.
   storage, get a `.disktree-quarantine` folder at their top, as servers
   do. Deletes a Hub asks for land in the same quarantine, as a batch under
   the request, so the dashboard's Put back and Empty work on them too.
+
+### Clean junk
+
+On the start screen, **Find junk** looks in the known places on this
+platform, which takes seconds and needs no scan: temporary files, crash
+dumps and error reports, update leftovers, the thumbnail cache, browser
+caches (Chrome, Edge, Brave, Firefox, Safari, Chromium), the caches of
+well-known apps (Spotify, Discord, Slack, Teams, VS Code, Zoom's logs,
+Adobe's media cache), shader caches and Steam's finished downloads,
+developer caches (npm, pip, cargo, Gradle, NuGet, Yarn, Go, Homebrew,
+CocoaPods, Xcode's derived data, device support files, archives and
+simulators), the trash, old installers, downloads not changed for three
+months and old screen recordings. Linux adds the system journal, Flatpak
+app caches and the apt, dnf and pacman package caches; macOS old iPhone
+backups and downloaded macOS updates; Windows `Windows.old`, Windows
+Update's downloads, Delivery Optimization and the hibernation file.
+
+The screen lists what it found by category (System, Browsers, Apps, Games,
+Developer tools, Trash and downloads), each rule with its size, a line
+about what it is and what happens after cleaning ("pages load from the
+internet again the first time; you stay signed in"), and whether it
+refills within days, so the space won isn't oversold. A rule opens to its
+exact paths, each with **Show** to look at the files first.
+
+- **Safe** rules are ticked: caches and temporary files, which their apps
+  make again. They're deleted after the confirmation, which says so (in a
+  quarantine they'd free nothing).
+- **Check first** rules (old downloads, installers, the trash, Steam's
+  finished downloads) are never ticked by default. Ticked, they go to the
+  quarantine, where **Put back** restores them.
+- **Use the tool** rules (`Windows.old` and Windows Update's files, the
+  hibernation file, macOS updates, the apt cache, the journal) can't be
+  ticked: a button opens the system's settings page or shows the command.
+- A rule whose program is running (Chrome's cache while Chrome is open)
+  is skipped until it's closed, and says so.
+
+**Clean** asks once, then frees what it can and reports what was freed,
+what went to the quarantine, what was skipped because a file was in use
+and how much of it will refill. **Reminder** on the card checks once a
+week or once a day and says on the start screen how much junk there is
+to review ("2.4 GB of junk to review, 1.6 GB safe to clean"); it never
+cleans anything by itself. Registry cleaning, memory "boosters" and
+browser history, cookies and saved passwords are left out on purpose: they
+free nothing, or sign you out.
+
+On phones the same rules show as Free up space cards (see
+[Cleaning up apps](#cleaning-up-apps)); on an Unraid server the Quarantine
+tab lists the trash folders in the shares; and a paired device's junk is
+on the Hub's Junk tab, with an alert when it grows past a limit and a
+request to clean it that the device approves.
 
 ### Changes
 
@@ -464,8 +533,14 @@ files access:
 - **Clear the thumbnail cache**: `DCIM/.thumbnails`, which gallery apps
   rebuild.
 - **Delete leftovers of removed apps**: their folders in `Android/media`.
+- **Old downloads**: files in Download not changed for 3 months, and
+  **Screen recordings** older than a month, to look through first; some
+  may be the only copy.
+- **Empty folders**: folders with nothing in them, left by removed apps
+  and old downloads.
 
-FreeSize asks before deleting anything, then measures again.
+FreeSize asks before deleting anything, moves what goes to the quarantine,
+then measures again.
 
 Two more cards are for things that aren't junk, so they never delete
 anything themselves; **Review** opens the files to look through:
@@ -557,7 +632,10 @@ fills up.
 What it does:
 
 - **Devices**: disks with how they filled over time, scanned folders to browse, the
-  largest files, and Android's apps and junk.
+  largest files, Android's apps, and a **Junk** tab per device: what the
+  junk cleaner found there by category, how much is safe to clean, and a
+  button to ask the device to clean a rule (desktops, phones and the
+  command line's `freesize agent` report it every hour).
 - **Changes**: any two scans of a folder side by side: what grew, shrank,
   appeared and went. The Hub keeps every scan for a week, then one a day
   for three months, one a week for a year and one a month after that.
@@ -802,7 +880,8 @@ machines, run the agent instead.
 
 The Alerts page sets when to alert: a disk over a fill level (90%), growth
 of 5% of a disk in a week, a disk full within 30 days at the past month's
-rate, a server silent for 24 hours, and requests left waiting two minutes.
+rate, a server silent for 24 hours, requests left waiting two minutes, and
+a device's junk over a size (2 GB).
 Alerts are checked every minute and sent when they start, when they get
 worse and when they're over, to:
 
@@ -891,6 +970,10 @@ What it does, only when asked:
   several disks moves from each of them, one disk after another; a file
   on two of them stops the plan, since the share shows only one.
 - **Removing Docker images** nobody uses, and the build cache.
+- **Emptying the trash folders in the shares** for good, from the
+  Quarantine tab: the Recycle Bin plugin's `.Recycle.bin` folders and the
+  `.Trash-*` folders Linux computers leave over the network, each with its
+  paths listed and `freesize unraid junk list` on the terminal.
 
 Never offered, whoever asks: the flash drive, the system share
 (`docker.img`, `libvirt.img`), Docker's storage, the appdata of installed

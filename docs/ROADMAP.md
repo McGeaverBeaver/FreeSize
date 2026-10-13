@@ -216,10 +216,10 @@ Left over and planned (the release it goes in is under Next releases):
 - **Community Applications** for the plugin and the Hub template (0.9.1).
 - **btrfs snapshots, APFS snapshots and purgeable space** in the hidden space
   explanation, and Nextcloud's own data folder (phase 8, 0.11).
-- From 2b/2c: old downloads and screen recordings as their own groups, and
-  **leftovers of uninstalled programs** in AppData and `~/Library` once
-  matching folders to programs is reliable enough to call one abandoned
-  (phase 6, 0.10).
+- From 2b/2c: **leftovers of uninstalled programs** in AppData and
+  `~/Library` once matching folders to programs is reliable enough to call
+  one abandoned (old downloads and screen recordings are junk cleaner
+  rules since 0.10).
 - **Making Nextcloud files online-only** on Windows (phase 5, 0.13).
 
 Parked, each with its reason:
@@ -309,10 +309,31 @@ Parked, each with its reason:
   forum if CA asks for one (then put its address in the entry and the
   `.plg`), and check both appear in the Apps tab on a clean Unraid 7.3 and
   install from there.
+- 0.10: the junk cleaner (phase 6). `freesize_core::junk`: rules per
+  platform (38 on Windows, 34 on macOS, 28 on Linux, 4 on Android, 2 on
+  Unraid) in six categories, each with a blurb, a refills flag, a safety
+  (safe, check first, use the tool), the processes that mean its app is
+  running, and a fixture test; generic rules come last so nothing is
+  counted twice. The Clean junk screen on desktops (Find junk on the start
+  screen, categories with tick boxes, paths with Show, the tool's settings
+  page or command for what the system should remove itself, Clean after
+  the shared confirmation, the result with what was freed, quarantined,
+  skipped and will refill, a weekly or daily reminder that only says).
+  `freesize junk` with `--clean`, `--also`, `--only`, `-y` and `--json`.
+  `freesize agent` reports junk every hour and the Hub asks to clean a
+  rule like any request; the Hub stores each device's junk (migration 6),
+  shows a Junk tab per device and the total on its card, and alerts above
+  `junk_gb` (2 GB by default). The phone's Free up space cards gain old
+  downloads, screen recordings and empty folders. Unraid: `.Recycle.bin`
+  and `.Trash-*` in the shares on the Quarantine tab and `freesize unraid
+  junk list|clean`. Still to do by hand: on a Windows machine, a Linux
+  box and a phone, check the cleaner lists nothing the system's own tool
+  would refuse, frees what it says within a few percent, and the result
+  shows what was skipped (TESTING.md).
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what
-"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk), 0.9 (trust and updates) and 0.9.1 (Community Applications) are under Done. Trust and the quarantine come before any new way to delete;
+"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk), 0.9 (trust and updates), 0.9.1 (Community Applications) and 0.10 (the junk cleaner) are under Done. Trust and the quarantine come before any new way to delete;
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
@@ -340,7 +361,7 @@ half ships even if an action stalls on a device nobody has.
   the README split into a user page and a developer page. Done when both
   appear in the Apps tab on a clean Unraid 7.3 install and install from
   there.
-- **0.10, the junk cleaner (phase 6).** As described there, with three
+- **0.10, the junk cleaner (phase 6).** Under Done. As described there, with three
   constraints: a fixture test per rule, a blurb and a "refills" flag per
   item, running apps skipped; "check first" items go to the quarantine and
   are never ticked. Done when, on a Windows machine, a Linux box and a

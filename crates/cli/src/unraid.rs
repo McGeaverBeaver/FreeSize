@@ -113,6 +113,22 @@ pub enum UnraidAction {
     /// Remove unused Docker images or the build cache, by the ids the
     /// status lists.
     DockerCleanup { items: Vec<String> },
+    /// Trash folders in the shares (the Recycle Bin plugin's, computers'
+    /// .Trash-1000 and .Trashes): list them, or empty one for good.
+    Junk {
+        #[command(subcommand)]
+        action: JunkAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum JunkAction {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Empty one rule's folders for good, by the id the list shows.
+    Clean { rule: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -241,6 +257,10 @@ struct Status {
     hub: HubStatus,
     report: UnraidReport,
     quarantine: Vec<QuarantineBatch>,
+    /// Trash folders in the shares, as the junk cleaner reports them,
+    /// each with its paths.
+    #[serde(default)]
+    junk: Vec<serde_json::Value>,
     settings: serde_json::Value,
 }
 
@@ -277,6 +297,59 @@ pub fn main(action: UnraidAction, args: DirArgs) -> Result<(), String> {
             json,
         } => folders(&dirs, &share, &folder, wake, json),
         UnraidAction::DockerCleanup { items } => docker_cleanup(&dirs, &items),
+        UnraidAction::Junk { action } => junk(action),
+    }
+}
+
+/// The junk cleaner's findings on this server: trash folders in the
+/// shares. Looked for now, not read from the status, so they're current.
+fn junk_findings() -> Vec<freesize_core::junk::Finding> {
+    use freesize_core::junk::{Env, Platform, find, now};
+    find(Platform::Unraid, &Env::system(), &[], now())
+}
+
+fn junk(action: JunkAction) -> Result<(), String> {
+    use freesize_core::junk::Safety;
+    let findings = junk_findings();
+    match action {
+        JunkAction::List { json } => {
+            let report = freesize_agent::junk::report(&findings, now());
+            if json {
+                let value = freesize_agent::junk::report_json(&findings, now());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
+                );
+                return Ok(());
+            }
+            if report.entries.is_empty() {
+                println!("No trash folders with anything in them.");
+            }
+            for entry in &report.entries {
+                println!(
+                    "{:<30} {:>10}  {}",
+                    entry.label,
+                    format_size(entry.bytes),
+                    entry.kind
+                );
+                println!("    {}", entry.blurb);
+            }
+            Ok(())
+        }
+        JunkAction::Clean { rule } => {
+            let finding = findings
+                .iter()
+                .find(|f| f.rule.id == rule)
+                .ok_or_else(|| format!("nothing found for rule \"{rule}\""))?;
+            if finding.rule.safety != Safety::Safe {
+                return Err("only trash folders, which are safe, are emptied here".into());
+            }
+            let outcome = freesize_agent::junk::clean(finding, &|_| {
+                Err("not moved aside: trash is emptied for good".into())
+            })?;
+            println!("{}", outcome.detail());
+            Ok(())
+        }
     }
 }
 
@@ -698,6 +771,10 @@ impl Executor for UnraidExecutor {
         docker::cleanup(&self.engine, inventory, items)
     }
 
+    fn clean(&self, kind: &str) -> Result<freesize_agent::junk::Outcome, String> {
+        self.inner.clean(kind)
+    }
+
     fn note(&self, request: &Request) -> String {
         self.inner.note(request)
     }
@@ -791,6 +868,7 @@ impl Daemon {
             attended: false,
             actions: vec![
                 ActionKind::Delete,
+                ActionKind::Clean,
                 ActionKind::Restore,
                 ActionKind::Empty,
                 ActionKind::Docker,
@@ -861,6 +939,7 @@ impl Daemon {
             inner: QuarantineExecutor {
                 quarantine: quarantine_for(&self.dirs.system, &array),
                 device: state.name.clone(),
+                platform: freesize_core::junk::Platform::Unraid,
             },
             engine: Engine::new(&self.dirs.system),
             // What Docker has now; the last round's if it isn't answering.
@@ -1108,6 +1187,11 @@ impl Daemon {
                         .as_secs() as i64,
             ),
             skipped: self.round.as_ref().and_then(|r| r.skipped.clone()),
+            junk: freesize_agent::junk::report_json(&junk_findings(), now())
+                .get("entries")
+                .and_then(|e| e.as_array())
+                .cloned()
+                .unwrap_or_default(),
             errors: self
                 .round
                 .as_ref()
@@ -1281,6 +1365,7 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
             daemon.report(Report {
                 disks: Some(round::hub_disks(&array)),
                 unraid: Some(unraid),
+                junk: Some(freesize_agent::junk::report(&junk_findings(), now())),
                 ..Report::default()
             });
         }

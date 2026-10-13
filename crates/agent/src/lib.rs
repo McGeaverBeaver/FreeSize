@@ -7,6 +7,7 @@ pub mod estimate;
 pub mod guard;
 #[cfg(feature = "install")]
 pub mod install;
+pub mod junk;
 pub mod quarantine;
 pub mod report;
 pub mod state;

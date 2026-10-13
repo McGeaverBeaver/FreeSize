@@ -195,14 +195,34 @@ fn check_action(
             *label = app.label.clone();
         }
         Action::CleanJunk { kind, label, bytes } => {
-            let report = apps_report(c, device)?;
-            let junk = report
-                .junk
-                .iter()
-                .find(|j| &j.kind == kind)
-                .ok_or_else(|| ApiError::bad_request("the device didn't report that"))?;
-            *label = junk.label.clone();
-            *bytes = junk.bytes;
+            // A phone's junk is in its apps report; the cleaner's findings
+            // (0.10) in the junk report.
+            let from_apps = apps_report(c, device)
+                .ok()
+                .and_then(|r| r.junk.into_iter().find(|j| &j.kind == kind));
+            let from_junk = junk_report(c, device)?
+                .and_then(|r| r.entries.into_iter().find(|e| &e.kind == kind));
+            let (found_label, found_bytes) = match (from_apps, from_junk) {
+                (Some(j), _) => (j.label, j.bytes),
+                (None, Some(e)) => {
+                    if e.safety == "use_tool" {
+                        return Err(ApiError::bad_request(format!(
+                            "{} is removed with its own tool on the device: {}",
+                            e.label, e.tool
+                        )));
+                    }
+                    if e.running {
+                        return Err(ApiError::bad_request(format!(
+                            "{} is in use on the device; ask again once it's closed",
+                            e.label
+                        )));
+                    }
+                    (e.label, e.bytes)
+                }
+                (None, None) => return Err(ApiError::bad_request("the device didn't report that")),
+            };
+            *label = found_label;
+            *bytes = found_bytes;
         }
         Action::Restore { batch, label } => {
             let batches = quarantine(c, device)?;
@@ -332,6 +352,17 @@ fn unraid_report(c: &Connection, device: &str) -> ApiResult<UnraidReport> {
         .optional()?;
     text.and_then(|t| serde_json::from_str(&t).ok())
         .ok_or_else(|| ApiError::bad_request("the device hasn't reported as an Unraid server"))
+}
+
+fn junk_report(c: &Connection, device: &str) -> ApiResult<Option<freesize_proto::JunkReport>> {
+    let text: Option<String> = c
+        .query_row(
+            "SELECT report FROM junk WHERE device_id = ?1",
+            [device],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(text.and_then(|t| serde_json::from_str(&t).ok()))
 }
 
 fn apps_report(c: &Connection, device: &str) -> ApiResult<AppsReport> {

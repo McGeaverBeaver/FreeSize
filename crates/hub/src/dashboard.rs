@@ -118,6 +118,53 @@ pub struct DeviceSummary {
     pub version: String,
     /// Runs an older version than the Hub.
     pub behind: bool,
+    /// What its junk cleaner found, if it reported.
+    pub junk: Option<JunkSummary>,
+}
+
+/// A device's junk in one line.
+#[derive(Clone, Debug, Serialize)]
+pub struct JunkSummary {
+    pub total: u64,
+    /// Safe and not in use: what one clean would free.
+    pub safe: u64,
+    pub taken: i64,
+}
+
+/// What a device reported as junk: the cleaner's report, or for a phone
+/// without one, the junk in its apps report.
+pub(crate) fn junk_summary(c: &Connection, device: &str) -> rusqlite::Result<Option<JunkSummary>> {
+    let text: Option<String> = c
+        .query_row(
+            "SELECT report FROM junk WHERE device_id = ?1",
+            [device],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(report) =
+        text.and_then(|t| serde_json::from_str::<freesize_proto::JunkReport>(&t).ok())
+    {
+        return Ok(Some(JunkSummary {
+            total: report.total,
+            safe: report.safe,
+            taken: report.taken,
+        }));
+    }
+    let text: Option<String> = c
+        .query_row(
+            "SELECT report FROM apps WHERE device_id = ?1",
+            [device],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(text
+        .and_then(|t| serde_json::from_str::<AppsReport>(&t).ok())
+        .filter(|apps| !apps.junk.is_empty())
+        .map(|apps| JunkSummary {
+            total: apps.junk.iter().map(|j| j.bytes).sum(),
+            safe: 0,
+            taken: apps.taken,
+        }))
 }
 
 /// The version at the end of an app's name, as devices report it.
@@ -246,6 +293,7 @@ pub(crate) fn device_summaries(
                 alerts: r.get(11)?,
                 version: String::new(),
                 behind: false,
+                junk: None,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -258,6 +306,7 @@ pub(crate) fn device_summaries(
         device.behind = !device.agentless && older(&device.version, env!("CARGO_PKG_VERSION"));
         device.disks = disks(c, &device.id)?;
         device.scans = latest_scans(c, &device.id)?;
+        device.junk = junk_summary(c, &device.id)?;
         if let Some(approver) = &device.info.approver {
             device.approver_name = c
                 .query_row(
@@ -327,6 +376,8 @@ pub struct DeviceDetail {
     pub unraid: Option<Value>,
     /// What the device's quarantine holds.
     pub quarantine: Option<Value>,
+    /// What its junk cleaner found, rule by rule.
+    pub junk_report: Option<Value>,
 }
 
 /// `GET /api/devices/{id}`.
@@ -386,6 +437,7 @@ pub async fn detail(
             };
             let unraid = stored("SELECT report FROM unraid WHERE device_id = ?1")?;
             let quarantine = stored("SELECT batches FROM quarantine WHERE device_id = ?1")?;
+            let junk_report = stored("SELECT report FROM junk WHERE device_id = ?1")?;
             Ok(DeviceDetail {
                 summary,
                 history,
@@ -393,6 +445,7 @@ pub async fn detail(
                 apps: apps.map(|a| serde_json::to_value(a).unwrap_or(Value::Null)),
                 unraid,
                 quarantine,
+                junk_report,
             })
         })
         .await?;
@@ -478,6 +531,7 @@ pub async fn remove(
             tx.execute("DELETE FROM disks WHERE device_id = ?1", [&id])?;
             tx.execute("DELETE FROM disk_samples WHERE device_id = ?1", [&id])?;
             tx.execute("DELETE FROM apps WHERE device_id = ?1", [&id])?;
+            tx.execute("DELETE FROM junk WHERE device_id = ?1", [&id])?;
             // Its alerts end quietly.
             tx.execute(
                 "UPDATE alerts SET resolved = ?1 WHERE device_id = ?2 AND resolved IS NULL",

@@ -459,11 +459,9 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
         cards.push(cache_card(report, &options, cache));
     }
     for kind in JunkKind::ALL {
-        if let Some(junk) = report
-            .junk
-            .iter()
-            .find(|j| j.kind == kind && j.bytes >= WORTH_SHOWING)
-        {
+        if let Some(junk) = report.junk.iter().find(|j| {
+            j.kind == kind && (j.bytes >= WORTH_SHOWING || (kind.counted() && !j.paths.is_empty()))
+        }) {
             cards.push(junk_row(junk));
         }
     }
@@ -575,7 +573,7 @@ fn some_names(names: &[String]) -> String {
     }
 }
 
-fn count(n: usize, one: &str, many: &str) -> String {
+pub(crate) fn count(n: usize, one: &str, many: &str) -> String {
     format!(
         "{} {}",
         format_count(n as u64),
@@ -632,6 +630,34 @@ fn junk_row(junk: &Junk) -> HomeRow {
                 some_names(&junk.names)
             ),
             "Delete",
+        ),
+        JunkKind::OldDownloads => (
+            format!("Old downloads: {size}"),
+            format!(
+                "{} in Download not changed for 3 months: {}. Look through them first; some \
+                 may be the only copy.",
+                count(n, "file", "files"),
+                some_names(&junk.names)
+            ),
+            "Review",
+        ),
+        JunkKind::ScreenRecordings => (
+            format!("Screen recordings: {size}"),
+            format!(
+                "{} older than a month: {}. They add up fast; keep the ones you want.",
+                count(n, "recording", "recordings"),
+                some_names(&junk.names)
+            ),
+            "Review",
+        ),
+        JunkKind::EmptyFolders => (
+            format!("Empty folders: {}", count(n, "folder", "folders")),
+            format!(
+                "Left by removed apps and old downloads, such as {}. They take no space, \
+                 only clutter.",
+                some_names(&junk.names)
+            ),
+            "Remove",
         ),
     };
     let key = format!("{CLEAN_PREFIX}{}", junk.kind.id());
@@ -752,6 +778,19 @@ pub fn junk_confirm(junk: &Junk) -> String {
             "Move {} left by removed apps ({size}) to the quarantine? Put back restores them if \
              an app turns out to need them.",
             count(n, "folder", "folders")
+        ),
+        JunkKind::OldDownloads => format!(
+            "Move {} from Download to the quarantine ({size})? Put back restores them; the \
+             space is freed when you empty the quarantine.",
+            count(n, "old file", "old files")
+        ),
+        JunkKind::ScreenRecordings => format!(
+            "Move {} to the quarantine ({size})? Put back restores them.",
+            count(n, "screen recording", "screen recordings")
+        ),
+        JunkKind::EmptyFolders => format!(
+            "Move {} to the quarantine? They hold nothing; Put back restores them.",
+            count(n, "empty folder", "empty folders")
         ),
     }
 }

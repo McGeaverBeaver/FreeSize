@@ -266,7 +266,9 @@ function deviceCard(device) {
     (device.disks || []).slice(0, 4).map(diskRow),
     !device.disks.length && !device.agentless ? h("p", { class: "dim small", style: "margin-top:10px" }, "No disks reported yet.") : null,
     latest ? h("p", { class: "dim small", style: "margin:10px 0 0" },
-      `Last scan: ${latest.label || latest.root}, ${size(latest.allocated)}, ${ago(latest.taken)}`, incomplete(latest)) : null);
+      `Last scan: ${latest.label || latest.root}, ${size(latest.allocated)}, ${ago(latest.taken)}`, incomplete(latest)) : null,
+    device.junk && device.junk.total ? h("p", { class: "dim small", style: "margin:4px 0 0" },
+      `${size(device.junk.total)} of junk to review`, device.junk.safe ? `, ${size(device.junk.safe)} safe to clean` : "") : null);
 }
 
 PAGES.devices = async () => {
@@ -455,8 +457,8 @@ function uploadDialog(device) {
 
 const DEVICE_TABS = [
   ["overview", "Overview"], ["unraid", "Unraid"], ["folders", "Folders"], ["files", "Largest files"],
-  ["changes", "Changes"], ["apps", "Apps"], ["quarantine", "Quarantine"], ["requests", "Requests"],
-  ["activity", "Activity"],
+  ["changes", "Changes"], ["apps", "Apps"], ["junk", "Junk"], ["quarantine", "Quarantine"],
+  ["requests", "Requests"], ["activity", "Activity"],
 ];
 
 PAGES.device = async (id, tab = "overview", ...rest) => {
@@ -465,6 +467,7 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
   const tabs = DEVICE_TABS.filter(([key]) => (key !== "apps" || device.apps)
     && (key !== "requests" || !device.agentless)
     && (key !== "unraid" || device.unraid)
+    && (key !== "junk" || device.junk_report)
     && (key !== "quarantine" || device.quarantine));
   const link = (key) => `#/device/${encodeURIComponent(id)}/${key}`;
   const header = h("div", { class: "page-head" },
@@ -496,7 +499,7 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
     h("a", { href: link(key), class: key === tab ? "active" : "" }, label)));
   const views = {
     overview: deviceOverview, unraid: deviceUnraid, quarantine: deviceQuarantine,
-    folders: deviceFolders, files: deviceFiles, changes: deviceChanges, apps: deviceApps,
+    folders: deviceFolders, files: deviceFiles, changes: deviceChanges, apps: deviceApps, junk: deviceJunk,
     requests: deviceRequests, activity: deviceActivity,
   };
   const view = await (views[tab] || deviceOverview)(device, ...rest);
@@ -871,6 +874,45 @@ function deviceUnraid(device) {
   return h("div", { class: "stack" }, sections);
 }
 
+const JUNK_CATEGORIES = [
+  ["system", "System"], ["browsers", "Browsers"], ["apps", "Apps"], ["games", "Games"],
+  ["developer", "Developer tools"], ["trash", "Trash and downloads"],
+];
+
+/** What the device's junk cleaner found, by category, with a Clean request per rule. */
+function deviceJunk(device) {
+  const report = device.junk_report;
+  if (!report) return h("div", { class: "card empty" }, h("h2", {}, "No junk report"));
+  const entries = report.entries || [];
+  const head = h("div", { class: "card" },
+    h("h2", {}, "Junk"),
+    h("p", { class: "dim small" }, entries.length
+      ? `${size(report.total)} found ${ago(report.taken)}; ${size(report.safe)} is safe to clean now.`
+      : `Nothing found in the known places, ${ago(report.taken)}.`),
+    h("p", { class: "hint" }, "Each Clean… is a request the device approves. Safe items are deleted; \"check first\" items go to the device's quarantine, where Put back restores them; what the system should remove itself names its tool. An app that's running is skipped until it's closed."));
+  const cards = JUNK_CATEGORIES.map(([key, title]) => {
+    const rows = entries.filter((e) => e.category === key);
+    if (!rows.length) return null;
+    return h("div", { class: "card table-wrap" }, h("h2", {}, title),
+      h("table", {}, h("tbody", {}, rows.map((e) => {
+        const askable = canDo(device, "clean") && e.safety !== "use_tool" && !e.running;
+        const badge = e.running ? h("span", { class: "badge warn" }, "in use")
+          : e.safety === "safe" ? h("span", { class: "badge ok" }, "safe")
+          : e.safety === "check_first" ? h("span", { class: "badge warn" }, "check first")
+          : h("span", { class: "badge" }, "its own tool");
+        return h("tr", {},
+          h("td", {}, e.label, " ", badge, e.refills ? h("span", { class: "badge", style: "margin-left:4px" }, "refills") : null,
+            h("div", { class: "sub" }, e.blurb, e.safety === "use_tool" ? ` Tool: ${e.tool}` : "")),
+          h("td", { class: "num" }, size(e.bytes), h("div", { class: "sub" }, count(e.items, "item", "items"))),
+          h("td", { class: "num" }, askable ? h("button", { class: "small", onclick: () =>
+            requestDialog(device, { type: "clean_junk", kind: e.kind, label: e.label, bytes: e.bytes },
+              [`Clean up ${e.label}: ${count(e.items, "item", "items")}, ${size(e.bytes)}.`, e.blurb,
+               e.safety === "check_first" ? "These go to the device's quarantine, to put back or empty later." : "Deleted for good; the app makes it again if it needs it."]) }, "Clean…") : null));
+      }))));
+  });
+  return h("div", { class: "stack" }, head, cards);
+}
+
 function deviceQuarantine(device) {
   const batches = device.quarantine || [];
   const total = batches.reduce((sum, b) => sum + b.bytes, 0);
@@ -1136,6 +1178,7 @@ function rulesCard(rules) {
     growth_week_percent: number("growth_week_percent", 0, 100),
     forecast_days: number("forecast_days", 0, 365),
     offline_hours: number("offline_hours", 0, 720),
+    junk_gb: number("junk_gb", 0, 100000),
   };
   const requests = h("input", { type: "checkbox", id: "rule-requests", checked: rules.requests });
   const editable = state.me.admin;
@@ -1154,6 +1197,7 @@ function rulesCard(rules) {
     h("p", {}, "A disk grew by ", fields.growth_week_percent, " % of its size within a week."),
     h("p", {}, "A disk will be full within ", fields.forecast_days, " days at the past month's rate."),
     h("p", {}, "A server (a device nobody is at) hasn't reported for ", fields.offline_hours, " hours."),
+    h("p", {}, "A device's junk cleaner found at least ", fields.junk_gb, " GB to review."),
     h("p", {}, h("label", { class: "check", for: "rule-requests" }, requests,
       " A request has waited 2 minutes for its device or approver. The FreeSize app on a phone only hears from the Hub while it's open; this tells you to open it.")),
     h("p", { class: "hint" }, "0 turns a rule off."),

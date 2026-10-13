@@ -47,6 +47,9 @@ pub enum Command {
     },
     /// Check for a newer release, and install it over this program.
     Update(crate::update::UpdateArgs),
+    /// Find junk in the known places (temporary files, caches, the trash,
+    /// old downloads) and, if asked, clean what's safe.
+    Junk(crate::junk::JunkArgs),
     /// The Unraid plugin's background work, and the commands its page uses.
     #[cfg(unix)]
     Unraid {
@@ -168,6 +171,7 @@ pub fn main(command: Command) -> ExitCode {
         }
         Command::Release { action } => crate::release::main(action),
         Command::Update(args) => crate::update::main(args),
+        Command::Junk(args) => crate::junk::main(args),
         #[cfg(unix)]
         Command::Unraid { action, dirs } => crate::unraid::main(action, dirs),
     };
@@ -488,7 +492,12 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
     let keep = vec![path.canonicalize().unwrap_or_else(|_| path.to_path_buf())];
     let policy = Policy {
         attended: false,
-        actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty],
+        actions: vec![
+            ActionKind::Delete,
+            ActionKind::Clean,
+            ActionKind::Restore,
+            ActionKind::Empty,
+        ],
         roots: roots.clone(),
         keep,
         guards: Guards(vec![Arc::new(OpenFiles::default())]),
@@ -498,6 +507,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
     let executor = QuarantineExecutor {
         quarantine: Quarantine::new(Box::new(MountPlaces::new(&roots))),
         device: state.name.clone(),
+        platform: freesize_core::junk::Platform::current(),
     };
     log(&format!(
         "FreeSize agent {} reporting to {} ({})",
@@ -530,6 +540,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
                 info: Some(device_info(&state.name, Some(&state))),
                 disks: Some(freesize_agent::report::disks(&places)),
                 quarantine: Some(executor.quarantine.list()),
+                junk: Some(junk_report()),
                 ..Report::default()
             });
             if sent.is_ok() {
@@ -613,9 +624,11 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
             state.save(path)?;
         }
         if outcome.ran {
-            // The quarantine changed: say so, for the Hub's buttons.
+            // The quarantine and the junk changed: say so, for the Hub's
+            // buttons.
             let report = Report {
                 quarantine: Some(executor.quarantine.list()),
+                junk: Some(junk_report()),
                 ..Report::default()
             };
             if let Err(err) = Client::new(&state, &transport).report(&report) {
@@ -623,6 +636,12 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
             }
         }
     }
+}
+
+/// What the junk cleaner finds now; a few seconds of looking.
+fn junk_report() -> freesize_proto::JunkReport {
+    let findings = freesize_core::junk::find_here();
+    freesize_agent::junk::report(&findings, freesize_agent::now())
 }
 
 pub(crate) fn send(

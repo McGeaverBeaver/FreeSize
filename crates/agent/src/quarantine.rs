@@ -423,6 +423,8 @@ pub struct QuarantineExecutor {
     pub quarantine: Quarantine,
     /// This device's name, for notes to the approver.
     pub device: String,
+    /// Whose junk rules apply (an Unraid server's differ from Linux's).
+    pub platform: freesize_core::junk::Platform,
 }
 
 impl crate::commands::Executor for QuarantineExecutor {
@@ -469,6 +471,21 @@ impl crate::commands::Executor for QuarantineExecutor {
 
     fn empty_quarantine(&self, batches: &[String]) -> Result<u64, String> {
         self.quarantine.empty(batches)
+    }
+
+    fn clean(&self, kind: &str) -> Result<crate::junk::Outcome, String> {
+        let finding = crate::junk::find_rule(self.platform, kind)?;
+        let id = format!("j{}", crate::now());
+        crate::junk::clean(&finding, &|paths| {
+            let moved = self
+                .quarantine
+                .move_in(&id, "", finding.rule.title, paths, crate::now());
+            let bytes: u64 = moved.results.iter().flatten().sum();
+            match moved.results.iter().find_map(|r| r.as_ref().err()) {
+                Some(err) if bytes == 0 => Err(err.clone()),
+                _ => Ok(bytes),
+            }
+        })
     }
 
     fn note(&self, request: &crate::commands::Request) -> String {

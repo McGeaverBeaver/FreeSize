@@ -68,6 +68,12 @@ case 'quarantine_empty':
   }
   dt_reply(dt_run(array_merge(['unraid', 'quarantine', 'empty', '--'], $ids)));
 
+case 'junk_clean':
+  // A trash folder's rule id from the status (letters, digits, dashes).
+  $rule = (string)($_POST['rule'] ?? '');
+  if (!preg_match('/^[a-z0-9-]{1,40}$/', $rule)) dt_fail('no such rule');
+  dt_reply(dt_run(['unraid', 'junk', 'clean', $rule]));
+
 case 'docker_cleanup':
   $items = $_POST['items'] ?? [];
   if (!is_array($items) || !$items) dt_fail('choose what to remove');

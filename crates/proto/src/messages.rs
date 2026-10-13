@@ -212,6 +212,9 @@ pub struct Report {
     /// What the device's quarantine holds, to put back or empty.
     #[serde(default)]
     pub quarantine: Option<Vec<crate::unraid::QuarantineBatch>>,
+    /// What the junk cleaner found (0.10).
+    #[serde(default)]
+    pub junk: Option<JunkReport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +313,41 @@ pub struct AppEntry {
     /// Whether FreeSize would suggest it for removal at all.
     #[serde(default)]
     pub removable: bool,
+}
+
+/// What a device's junk cleaner found, rule by rule.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JunkReport {
+    pub taken: i64,
+    /// Everything found.
+    pub total: u64,
+    /// The part that's safe and not in use: what one Clean would free.
+    pub safe: u64,
+    pub entries: Vec<JunkFinding>,
+}
+
+/// One rule's findings on a device.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JunkFinding {
+    /// The rule's id, which [`Action::CleanJunk`] names.
+    pub kind: String,
+    /// `system`, `browsers`, `apps`, `games`, `developer` or `trash`.
+    pub category: String,
+    pub label: String,
+    /// What cleaning it means.
+    pub blurb: String,
+    pub bytes: u64,
+    pub items: u64,
+    /// `safe`, `check_first` or `use_tool`.
+    pub safety: String,
+    /// Comes back within days.
+    pub refills: bool,
+    /// Its program is running, so it's skipped until closed.
+    #[serde(default)]
+    pub running: bool,
+    /// For `use_tool`: the tool to use instead.
+    #[serde(default)]
+    pub tool: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

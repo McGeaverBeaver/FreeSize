@@ -44,6 +44,9 @@ pub struct Rules {
     pub offline_hours: u32,
     /// A nudge when a request waits for its device or approver.
     pub requests: bool,
+    /// A device whose junk cleaner found at least this much, in GB; 0
+    /// turns it off.
+    pub junk_gb: u32,
 }
 
 impl Default for Rules {
@@ -54,6 +57,7 @@ impl Default for Rules {
             forecast_days: 30,
             offline_hours: 24,
             requests: true,
+            junk_gb: 2,
         }
     }
 }
@@ -71,6 +75,9 @@ impl Rules {
         }
         if self.offline_hours > 24 * 30 {
             return Err(ApiError::bad_request("quiet servers: at most 720 hours"));
+        }
+        if self.junk_gb > 100_000 {
+            return Err(ApiError::bad_request("junk: at most 100000 GB"));
         }
         Ok(())
     }
@@ -312,6 +319,43 @@ pub fn evaluate(
                     title: format!("{name} hasn't reported for {hours} hours"),
                     message: "Check that the machine is on and the FreeSize agent is running."
                         .into(),
+                });
+            }
+        }
+    }
+
+    if rules.junk_gb > 0 {
+        let limit = u64::from(rules.junk_gb) * 1024 * 1024 * 1024;
+        let mut stmt = c.prepare("SELECT id, name FROM devices WHERE removed = 0")?;
+        let devices: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (id, name) in devices {
+            let Some(junk) = crate::dashboard::junk_summary(c, &id)? else {
+                continue;
+            };
+            let key = format!("junk:{id}");
+            // Once on, it stays on until well below the limit.
+            let limit = if active.contains(&key) {
+                limit / 10 * 9
+            } else {
+                limit
+            };
+            if junk.total >= limit {
+                firing.push(Firing {
+                    key,
+                    kind: "junk",
+                    device_id: Some(id),
+                    severity: "info",
+                    title: format!(
+                        "{name}: {} of junk to review",
+                        freesize_core::format_size(junk.total)
+                    ),
+                    message: format!(
+                        "{} of it is safe to clean. Open the device's Junk tab here, or FreeSize \
+                         on it; nothing is cleaned without approval on the device.",
+                        freesize_core::format_size(junk.safe)
+                    ),
                 });
             }
         }
@@ -1255,6 +1299,50 @@ mod tests {
         let notices = db.now(|c| sync(c, firing, now + 60).unwrap());
         assert!(notices[0].resolved);
         assert!(db.now(|c| active_alerts(c).unwrap()).is_empty());
+    }
+
+    #[test]
+    fn junk_above_the_limit() {
+        let db = setup();
+        let rules = Rules {
+            disk_full_percent: 0,
+            growth_week_percent: 0,
+            forecast_days: 0,
+            offline_hours: 0,
+            requests: false,
+            junk_gb: 2,
+        };
+        db.now(|c| {
+            c.execute(
+                "INSERT INTO junk (device_id, taken, report) VALUES ('nas', 0, ?1)",
+                [serde_json::json!({"taken": 0, "total": 2_500 * 1024 * 1024u64, "safe": 1024 * 1024 * 1024u64, "entries": []}).to_string()],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO apps (device_id, taken, report) VALUES ('phone', 0, ?1)",
+                [serde_json::json!({"taken": 0, "apps": [], "junk": [{"kind": "trash", "label": "Trash", "bytes": 500_000_000u64, "items": 3}]}).to_string()],
+            )
+            .unwrap();
+        });
+        let firing = db.now(|c| evaluate(c, &rules, &HashSet::new(), 0).unwrap());
+        assert_eq!(keys(&firing), ["junk:nas"]);
+        assert_eq!(firing[0].title, "NAS: 2.44 GB of junk to review");
+        assert!(firing[0].message.starts_with("1.00 GB of it is safe"));
+        // The phone's half gigabyte of trash stays under a 1 GB limit.
+        let low = Rules {
+            junk_gb: 1,
+            ..rules.clone()
+        };
+        let firing = db.now(|c| evaluate(c, &low, &HashSet::new(), 0).unwrap());
+        assert_eq!(keys(&firing), ["junk:nas"]);
+        let off = Rules {
+            junk_gb: 0,
+            ..rules
+        };
+        assert!(
+            db.now(|c| evaluate(c, &off, &HashSet::new(), 0).unwrap())
+                .is_empty()
+        );
     }
 
     #[test]

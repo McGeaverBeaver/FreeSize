@@ -11,6 +11,7 @@ use freesize_core::{
 };
 
 mod agent;
+mod junk;
 mod release;
 #[cfg(unix)]
 mod unraid;

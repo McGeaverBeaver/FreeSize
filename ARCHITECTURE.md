@@ -165,6 +165,30 @@ environment variables (`SystemDrive`, `windir`, `LOCALAPPDATA`, the home
 folder), so the rules match only where the scan covers those places.
 Matching ignores case on Windows and macOS.
 
+### Junk cleaner (`junk.rs`)
+
+The rules behind Clean junk, `freesize junk`, the Hub's Junk tab and the
+phone's cards: a static list per `Platform` (Windows, macOS, Linux,
+Android, Unraid) of `Rule`s, each with an id, a `Category`, a title and
+blurb, whether it `refills`, a `Safety` (safe, check first, use the
+tool), the app it belongs to and the process names that mean it's
+running, path patterns (templates over `~`, `$LOCAL`, `$ROAMING`,
+`$WINDIR`, `$DRIVE`, `$PROGRAMDATA`, `$PF86`, `$VAR`, `$STORAGE`, `$SHARES`
+and `$ROOT`, with `*` for one name or part of one), what to `Take`
+(the folder's contents, the folder itself, files by extension and age,
+or empty folders), names to keep, a minimum age, and a `fixture`: a
+made-up folder it must find and one it must not, which one test runs for
+every rule under a temporary root. `Env` holds the places for one machine
+(`system()` from the environment, `android(storage)`, `under(root)` for
+tests), and `find` expands the patterns, sizes what matches
+(`Item`: a path, its bytes and files, and whether it's the folder itself
+or its entries), skips what an earlier rule took so generic rules at the
+end of a list never double count, and marks a finding `running` when one
+of its processes is (`running_programs`: `/proc` on Linux, `ps` on macOS,
+`tasklist` on Windows). `Finding::ticked` is safe and not running;
+`delete` removes an item and reports what stayed in use. Nothing here
+decides to run: callers list, the person ticks.
+
 ### Snapshots (`snapshot.rs`)
 
 A `Snapshot` is the folder sizes of one scan: paths relative to the scanned
@@ -437,7 +461,9 @@ and merged.
 shared storage root: old `.apk` files in Download (except FreeSize's own
 `Download/FreeSize`), `DCIM/.thumbnails`, and `Android/media/<package>`
 folders of packages that aren't installed (only when the installed list looks
-complete). Android's trash comes from MediaStore's Files collection queried
+complete), plus the core junk cleaner's Android rules (old downloads,
+screen recordings, empty folders) as cards of their own, under the same
+ids the Hub uses. Android's trash comes from MediaStore's Files collection queried
 with `QUERY_ARG_MATCH_TRASHED`. The same collection's `owner_package_name`
 column says which app saved each file; `media_by_owner` adds those up per app
 and picks the folder holding most of them for the Browse button. Deleting
@@ -458,6 +484,20 @@ Empty all on the heading, each through the shared confirmation dialog
 listing the paths) and the home screen says what the quarantine holds;
 after every change the app reports the quarantine to the Hub. Nothing in
 it is emptied on a timer.
+
+`junk.rs` is the Clean junk screen on desktops, a full-window pane
+(`JunkPane`, rows of `JunkRow`: category headings, rules with a tick box
+and a chevron, the paths of an open rule with Show, and notes). Its
+`State` keeps the last look's findings, which are ticked and open, the
+last clean's `Outcome`, and `junk.json` (the reminder: off, weekly or
+daily; when it last looked and what it found). The look runs
+`freesize_core::junk::find` on a worker thread, as does cleaning: safe
+rules are deleted through the core, "check first" rules go through
+`quarantine::delete_all`, and the finding is reported to the Hub as a
+`JunkReport`. The reminder's look runs at start and on the timer when due
+and only changes the start screen's card, which says how much there is to
+review. The Hub's `clean_junk` request on a desktop finds the rule afresh
+and cleans it the same way (`hub::AppExecutor::clean`).
 
 `updater.rs` keeps `update.json` (`check`, off until turned on; `channel`;
 `checked`) and the Updates section's state machine: `Checking`, `Found`,
@@ -623,7 +663,9 @@ line), and the server (`hub`).
 - **Messages** (`messages.rs`): `DeviceInfo` (name, platform, what it can
   do, whether someone is at it, its approver and grants, and `rights`: whose
   eyes its scans see with), `Report` (info, disks, a scan summary with the
-  count and the first paths of folders it couldn't read, Android's apps), `PollResponse` (commands, approval
+  count and the first paths of folders it couldn't read, Android's apps,
+  the junk cleaner's findings as a `JunkReport`: per rule its id,
+  category, size, items, safety and whether it refills or is running), `PollResponse` (commands, approval
   requests for another device, decisions, withdrawals), `Command` with its
   `Action` (`delete`, `uninstall`, `clean_junk`, `restore`,
   `empty_quarantine`, `docker_cleanup`) and `CommandUpdate`. Each action
@@ -719,7 +761,7 @@ and their daily samples, scans (folders as gzipped JSON) and their files,
 apps, commands, approvals, the audit log, sessions and sign-ins; then
 devices without an agent and saved searches; then alerts and their
 channels; then what Unraid servers report and the quarantine; then the
-folders a scan couldn't read. The dashboard marks such a scan incomplete,
+folders a scan couldn't read; then each device's junk report. The dashboard marks such a scan incomplete,
 with the count, on the device card, the scans table and the folders page
 (which names them), as does the HTML report; a Windows agent's page says
 it scans as its user.
@@ -754,7 +796,9 @@ it scans as its user.
   `Notify`, woken when something arrives for it.
 - `commands.rs`: requests from the dashboard, checked against what the
   device reported (the folder must be one the device scanned, and the sizes
-  shown come from that scan; an Unraid finding, app, junk kind or
+  shown come from that scan; an Unraid finding, app, junk kind (from the
+  apps report or the junk report, never a rule that needs the system's
+  tool or whose program is running) or
   quarantine batch must be in its report; from 0.8.4 the paths of a delete
   must be in the scan too), signed and queued. The device checks every
   path again before asking anyone. States: queued, delivered,
@@ -872,6 +916,12 @@ server's root (`/`, or a folder laid out like a server in the tests).
 - `round.rs`: one look at the server: scan the disks that are awake (and
   one that slept for `WAKE_DAYS`), then shares, Docker, VMs, permissions
   and the rules.
+- The junk cleaner's Unraid rules (`freesize_core::junk`, `$SHARES` as
+  `/mnt/user`): the Recycle Bin plugin's `.Recycle.bin` folders and the
+  `.Trash-*` folders clients leave. `freesize unraid junk list|clean` and
+  the page's Quarantine tab ("Trash folders in the shares", with every
+  path and an Empty for good button) use them, and the hourly report to
+  the Hub carries them.
 
 The daemon (`crates/cli/src/unraid.rs`, `freesize unraid daemon`) runs a
 round every `SCAN_HOURS` on a thread (and as soon as a stopped array

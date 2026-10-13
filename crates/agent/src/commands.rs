@@ -453,7 +453,8 @@ pub trait Executor {
     fn uninstall(&self, _package: &str) -> Result<String, String> {
         Err("this device can't uninstall apps".into())
     }
-    fn clean(&self, _kind: &str) -> Result<u64, String> {
+    /// Cleans one kind of junk the device reported; says what it did.
+    fn clean(&self, _kind: &str) -> Result<crate::junk::Outcome, String> {
         Err("this device has no junk to clean".into())
     }
     /// Puts a quarantined batch back; says what happened.
@@ -563,9 +564,9 @@ pub fn run(request: &Request, executor: &dyn Executor, approval: Approval) -> Co
             }
         },
         Action::CleanJunk { kind, .. } => match executor.clean(kind) {
-            Ok(bytes) => {
-                update.freed = bytes;
-                update.detail = format!("freed {}", freesize_core::format_size(bytes));
+            Ok(outcome) => {
+                update.freed = outcome.freed;
+                update.detail = outcome.detail();
             }
             Err(err) => {
                 update.state = CommandState::Failed;
