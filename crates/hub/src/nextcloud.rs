@@ -469,7 +469,7 @@ fn propfind(
 /// already there is fine. Blocking.
 pub fn mkcol(creds: &Credentials, path: &str) -> Result<(), String> {
     let http = agent();
-    let user = percent_encode(&creds.user);
+    let user = percent_encode(&user_id(&http, creds));
     let base = format!("{}/remote.php/dav/files/{user}", creds.server);
     let mut so_far = String::new();
     for part in path.split('/').filter(|p| !p.is_empty()) {
@@ -503,9 +503,10 @@ pub fn mkcol(creds: &Credentials, path: &str) -> Result<(), String> {
 /// a few thousand requests on a big account.
 pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
     let http = agent();
-    let user = percent_encode(&creds.user);
+    let id = user_id(&http, creds);
+    let user = percent_encode(&id);
     let base = format!("{}/remote.php/dav/files/{user}", creds.server);
-    let prefix = format!("/remote.php/dav/files/{user}");
+    let prefix = files_prefix(&id);
     let mut listing = Listing {
         quota_free: -1,
         ..Listing::default()
@@ -557,11 +558,20 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
             }
         }
     }
+    // The root always comes back with its folder; without it, nothing in
+    // the answer was understood, and an empty listing would make every
+    // device's copy look like the only one.
+    if !seen.contains_key("/") {
+        return Err(format!(
+            "{} answered, but the Hub couldn't read the listing of {id}'s files",
+            creds.server
+        ));
+    }
     // Deeper folders were pushed last and so listed first; put the
     // listing in path order.
     listing.entries.sort_by(|a, b| a.path.cmp(&b.path));
     let trash_url = format!("{}/remote.php/dav/trashbin/{user}/trash", creds.server);
-    let trash_prefix = format!("/remote.php/dav/trashbin/{user}/trash");
+    let trash_prefix = format!("/remote.php/dav/trashbin/{id}/trash");
     match propfind(&http, creds, &trash_url, "1") {
         Ok(body) => {
             listing.requests += 1;
@@ -576,10 +586,48 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
     Ok(listing)
 }
 
+/// Where an account's files are in WebDAV, not percent-encoded.
+fn files_prefix(user: &str) -> String {
+    format!("/remote.php/dav/files/{user}")
+}
+
+/// The account's own id, which names its folder in WebDAV. Login Flow
+/// hands over the name the person signed in with, which can be their
+/// email address instead; the sign-in name is the fallback when the
+/// server won't say.
+fn user_id(http: &ureq::Agent, creds: &Credentials) -> String {
+    let url = format!("{}/ocs/v2.php/cloud/user?format=json", creds.server);
+    let answer = http
+        .get(&url)
+        .header("Authorization", basic(creds))
+        .header("OCS-APIRequest", "true")
+        .call()
+        .ok()
+        .filter(|r| r.status().as_u16() == 200)
+        .and_then(|mut r| r.body_mut().read_to_string().ok());
+    match answer.as_deref().and_then(parse_user_id) {
+        Some(id) => id,
+        None => {
+            tracing::debug!("Nextcloud: no user id from {url}; using the sign-in name");
+            creds.user.clone()
+        }
+    }
+}
+
+/// `ocs.data.id` of a `cloud/user` answer.
+fn parse_user_id(json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let id = value.pointer("/ocs/data/id")?.as_str()?.trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
 /// The path under the account's files an href names: `/` for the root.
+/// `prefix` is not percent-encoded; a server under a folder puts that
+/// folder in front of it.
 fn dav_path(href: &str, prefix: &str) -> Option<String> {
     let decoded = percent_decode(href);
-    let rest = decoded.strip_prefix(prefix)?;
+    let at = decoded.find(prefix)?;
+    let rest = &decoded[at + prefix.len()..];
     let rest = rest.trim_end_matches('/');
     Some(if rest.is_empty() {
         "/".to_string()
@@ -1175,6 +1223,37 @@ mod tests {
             Some("/".into())
         );
         assert_eq!(dav_path("/other/", "/remote.php/dav/files/bob"), None);
+    }
+
+    #[test]
+    fn listing_paths_for_a_user_signed_in_by_email() {
+        // Signed in with an email address: the hrefs carry it
+        // percent-encoded, or the account's own id instead, and a server
+        // under a folder puts its path in front.
+        let prefix = files_prefix("bob@example.com");
+        assert_eq!(
+            dav_path("/remote.php/dav/files/bob%40example.com/Photos/", &prefix),
+            Some("/Photos".into())
+        );
+        assert_eq!(
+            dav_path(
+                "/nextcloud/remote.php/dav/files/bob/a.jpg",
+                &files_prefix("bob")
+            ),
+            Some("/a.jpg".into())
+        );
+        assert_eq!(
+            dav_path("/remote.php/dav/files/bobby/a.jpg", &files_prefix("bob")),
+            None
+        );
+        assert_eq!(
+            parse_user_id(
+                r#"{"ocs":{"meta":{"status":"ok"},"data":{"id":"rob","email":"bob@example.com"}}}"#
+            ),
+            Some("rob".into())
+        );
+        assert_eq!(parse_user_id(r#"{"ocs":{"data":[]}}"#), None);
+        assert_eq!(parse_user_id("<html>"), None);
     }
 
     #[test]
