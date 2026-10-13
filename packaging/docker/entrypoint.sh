@@ -3,7 +3,7 @@
 # folder to that user (a new Unraid appdata folder belongs to root); started
 # with --user, it runs as that user as it is.
 set -eu
-data="${DISKTREE_HUB_DATA:-/data}"
+data="${FREESIZE_HUB_DATA:-/data}"
 if [ "$(id -u)" = 0 ]; then
     uid="${PUID:-99}"
     gid="${PGID:-100}"
@@ -11,6 +11,6 @@ if [ "$(id -u)" = 0 ]; then
     if [ "$(stat -c %u:%g "$data")" != "$uid:$gid" ]; then
         chown -R "$uid:$gid" "$data"
     fi
-    exec setpriv --reuid="$uid" --regid="$gid" --clear-groups -- /usr/local/bin/disktree-hub "$@"
+    exec setpriv --reuid="$uid" --regid="$gid" --clear-groups -- /usr/local/bin/freesize-hub "$@"
 fi
-exec /usr/local/bin/disktree-hub "$@"
+exec /usr/local/bin/freesize-hub "$@"

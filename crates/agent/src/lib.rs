@@ -1,4 +1,4 @@
-//! The device side of the DiskTree Hub, shared by the command-line agent and
+//! The device side of the FreeSize Hub, shared by the command-line agent and
 //! the app: pairing, reports, polling for commands, and deciding on them.
 
 pub mod client;

@@ -1,5 +1,5 @@
-//! `disktree agent` and `disktree approver`: this machine as a device of a
-//! DiskTree Hub, for servers and other machines nobody sits at. Requests
+//! `freesize agent` and `freesize approver`: this machine as a device of a
+//! FreeSize Hub, for servers and other machines nobody sits at. Requests
 //! from the Hub run only after the approver set here allows them, from
 //! their own device.
 
@@ -11,25 +11,25 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clap::Subcommand;
-use disktree_agent::commands::{self, Executor, Guards, Policy, Request, Verdict};
-use disktree_agent::guard::OpenFiles;
-use disktree_agent::quarantine::{MountPlaces, Quarantine, QuarantineExecutor};
-use disktree_agent::{AgentState, Approver, Client, Transport, UreqTransport, now};
-use disktree_core::{ScanOptions, ScanProgress, format_size, scan};
-use disktree_proto::pairing::{format_code, normalize_hub};
-use disktree_proto::{
+use freesize_agent::commands::{self, Executor, Guards, Policy, Request, Verdict};
+use freesize_agent::guard::OpenFiles;
+use freesize_agent::quarantine::{MountPlaces, Quarantine, QuarantineExecutor};
+use freesize_agent::{AgentState, Approver, Client, Transport, UreqTransport, now};
+use freesize_core::{ScanOptions, ScanProgress, format_size, scan};
+use freesize_proto::pairing::{format_code, normalize_hub};
+use freesize_proto::{
     ActionKind, ApprovedBy, CommandState, CommandUpdate, DeviceInfo, PairingLink, Platform, Report,
 };
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Connect this machine to a DiskTree Hub, report to it, and carry out
+    /// Connect this machine to a FreeSize Hub, report to it, and carry out
     /// requests its approver allows.
     Agent {
         #[command(subcommand)]
         action: AgentAction,
-        /// File keeping the pairing (default: in DiskTree's data folder).
-        #[arg(long, global = true, env = "DISKTREE_AGENT_STATE", value_name = "FILE")]
+        /// File keeping the pairing (default: in FreeSize's data folder).
+        #[arg(long, global = true, env = "FREESIZE_AGENT_STATE", value_name = "FILE")]
         state: Option<PathBuf>,
     },
     /// Choose the device that approves the Hub's requests for this machine.
@@ -37,7 +37,7 @@ pub enum Command {
     Approver {
         #[command(subcommand)]
         action: ApproverAction,
-        #[arg(long, global = true, env = "DISKTREE_AGENT_STATE", value_name = "FILE")]
+        #[arg(long, global = true, env = "FREESIZE_AGENT_STATE", value_name = "FILE")]
         state: Option<PathBuf>,
     },
     /// The Unraid plugin's background work, and the commands its page uses.
@@ -55,7 +55,7 @@ pub enum AgentAction {
     /// Pair with a Hub, using the link from its dashboard (Pair a device), or
     /// its address and the code.
     Pair {
-        /// The pairing link, `disktree://pair?...`.
+        /// The pairing link, `freesize://pair?...`.
         link: Option<String>,
         /// The Hub's address, when typing the code instead of the link.
         #[arg(long)]
@@ -91,7 +91,7 @@ pub enum AgentAction {
 
 #[derive(Subcommand, Debug)]
 pub enum ApproverAction {
-    /// Set the approver: the key fingerprint shown in the DiskTree app on
+    /// Set the approver: the key fingerprint shown in the FreeSize app on
     /// that device (Hub → This device's key).
     Set {
         fingerprint: String,
@@ -112,20 +112,20 @@ fn default_state_path() -> PathBuf {
     // On Unraid, the plugin's pairing on the flash drive: root's home is in
     // memory, and the plugin only reads its own file.
     #[cfg(unix)]
-    if disktree_unraid::System::real().is_unraid() {
+    if freesize_unraid::System::real().is_unraid() {
         return crate::unraid::plugin_state();
     }
     let base = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("DiskTree"))
+        std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("FreeSize"))
     } else if cfg!(target_os = "macos") {
         std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join("Library/Application Support/DiskTree"))
+            .map(|h| PathBuf::from(h).join("Library/Application Support/FreeSize"))
     } else if let Some(xdg) = std::env::var_os("XDG_DATA_HOME") {
-        Some(PathBuf::from(xdg).join("disktree"))
+        Some(PathBuf::from(xdg).join("freesize"))
     } else {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/disktree"))
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/freesize"))
     };
-    base.unwrap_or_else(|| PathBuf::from("."))
+    base.map_or_else(|| PathBuf::from("."), freesize_core::renamed::adopt_dir)
         .join("agent.json")
 }
 
@@ -165,7 +165,7 @@ pub fn main(command: Command) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("disktree: {err}");
+            eprintln!("freesize: {err}");
             ExitCode::FAILURE
         }
     }
@@ -174,7 +174,7 @@ pub fn main(command: Command) -> ExitCode {
 fn load(path: &Path) -> Result<AgentState, String> {
     AgentState::load(path)?.ok_or_else(|| {
         format!(
-            "not paired with a Hub yet ({} doesn't exist): run `disktree agent pair` first",
+            "not paired with a Hub yet ({} doesn't exist): run `freesize agent pair` first",
             path.display()
         )
     })
@@ -218,7 +218,7 @@ fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
     // pairing or setting the approver here doesn't change what the Hub shows.
     #[cfg(unix)]
     {
-        let system = disktree_unraid::System::real();
+        let system = freesize_unraid::System::real();
         if system.is_unraid() {
             return crate::unraid::device_info(&system, name, state);
         }
@@ -227,8 +227,8 @@ fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
         name: name.to_string(),
         platform: Platform::current(),
         os: os_name(),
-        hostname: disktree_agent::hostname(),
-        app: format!("DiskTree agent {}", env!("CARGO_PKG_VERSION")),
+        hostname: freesize_agent::hostname(),
+        app: format!("FreeSize agent {}", env!("CARGO_PKG_VERSION")),
         actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty],
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
@@ -246,13 +246,13 @@ fn pair(
 ) -> Result<(), String> {
     if AgentState::load(path)?.is_some() {
         return Err(format!(
-            "already paired ({}): run `disktree agent unpair` first",
+            "already paired ({}): run `freesize agent unpair` first",
             path.display()
         ));
     }
     let mut link = match (link, hub, code) {
         (Some(link), _, _) => {
-            PairingLink::parse(&link).ok_or("that isn't a DiskTree pairing link")?
+            PairingLink::parse(&link).ok_or("that isn't a FreeSize pairing link")?
         }
         (None, Some(hub), Some(code)) => PairingLink {
             hub: normalize_hub(&hub).ok_or("that isn't a Hub address")?,
@@ -264,8 +264,8 @@ fn pair(
     if link.key.is_none() {
         link.key = fingerprint.map(|f| f.trim().to_uppercase());
     }
-    let name = name.unwrap_or_else(disktree_agent::hostname);
-    if disktree_proto::pairing::plain_http_over_network(&link.hub) {
+    let name = name.unwrap_or_else(freesize_agent::hostname);
+    if freesize_proto::pairing::plain_http_over_network(&link.hub) {
         eprintln!(
             "warning: {} is plain http, so what this machine reports (folder and file names) \
              can be read on the network. Put HTTPS in front of the Hub.",
@@ -273,27 +273,27 @@ fn pair(
         );
     }
     let transport = UreqTransport::new();
-    let mut confirm = |hello: &disktree_proto::Hello| {
+    let mut confirm = |hello: &freesize_proto::Hello| {
         println!("The Hub \"{}\" at {} has the key", hello.name, link.hub);
         println!("    {}", hello.key.fingerprint());
         println!("Check it matches the dashboard (Settings → This Hub).");
         ask("Is it the same?")
     };
-    let state = disktree_agent::pair(&transport, &link, device_info(&name, None), &mut confirm)
+    let state = freesize_agent::pair(&transport, &link, device_info(&name, None), &mut confirm)
         .map_err(|e| e.message)?;
     state.save(path)?;
     println!("Paired with {} as \"{name}\".", state.hub_name);
     println!("This machine's key: {}", state.fingerprint());
     println!();
     #[cfg(unix)]
-    if disktree_unraid::System::real().is_unraid() {
+    if freesize_unraid::System::real().is_unraid() {
         unraid_next(path);
         return Ok(());
     }
     println!("Next:");
-    println!("  1. Choose who approves requests for it, with the key shown in the DiskTree");
-    println!("     app on their phone:   disktree approver set XXXX-XXXX-XXXX-XXXX");
-    println!("  2. Start reporting:      disktree agent run --scan /path/to/folder");
+    println!("  1. Choose who approves requests for it, with the key shown in the FreeSize");
+    println!("     app on their phone:   freesize approver set XXXX-XXXX-XXXX-XXXX");
+    println!("  2. Start reporting:      freesize agent run --scan /path/to/folder");
     Ok(())
 }
 
@@ -303,11 +303,11 @@ fn unraid_next(path: &Path) {
     let plugin = crate::unraid::plugin_state();
     if path != plugin {
         println!(
-            "The DiskTree plugin only uses {}, so it won't report with this pairing.",
+            "The FreeSize plugin only uses {}, so it won't report with this pairing.",
             plugin.display()
         );
         println!(
-            "Run `disktree agent unpair --state {}` and pair again without --state.",
+            "Run `freesize agent unpair --state {}` and pair again without --state.",
             path.display()
         );
         return;
@@ -315,9 +315,9 @@ fn unraid_next(path: &Path) {
     if crate::unraid::tell_daemon_paired() {
         println!("The plugin now reports this server to the Hub on its own.");
     }
-    println!("Next, choose who approves the Hub's requests, by the key the DiskTree app");
+    println!("Next, choose who approves the Hub's requests, by the key the FreeSize app");
     println!("on their phone shows: on the plugin's Settings and Hub tab, or with");
-    println!("  disktree approver set XXXX-XXXX-XXXX-XXXX");
+    println!("  freesize approver set XXXX-XXXX-XXXX-XXXX");
 }
 
 fn status(path: &Path) -> Result<(), String> {
@@ -355,7 +355,7 @@ fn report_info(state: &AgentState, transport: &dyn Transport) {
         ..Report::default()
     };
     if let Err(err) = Client::new(state, transport).report(&report) {
-        eprintln!("disktree: couldn't tell the Hub ({err}); it learns on the next report");
+        eprintln!("freesize: couldn't tell the Hub ({err}); it learns on the next report");
     }
 }
 
@@ -424,7 +424,7 @@ pub(crate) fn log(message: &str) {
 }
 
 enum ScanEvent {
-    Done(Box<disktree_proto::ScanReport>),
+    Done(Box<freesize_proto::ScanReport>),
     Failed(String),
     Finished,
 }
@@ -440,7 +440,7 @@ fn start_scans(roots: Vec<PathBuf>, events: mpsc::Sender<ScanEvent>) {
                         || root.display().to_string(),
                         |n| n.to_string_lossy().into_owned(),
                     );
-                    let report = disktree_agent::report::scan_report(
+                    let report = freesize_agent::report::scan_report(
                         &result.tree,
                         &label,
                         now(),
@@ -484,7 +484,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
         device: state.name.clone(),
     };
     log(&format!(
-        "DiskTree agent {} reporting to {} ({})",
+        "FreeSize agent {} reporting to {} ({})",
         env!("CARGO_PKG_VERSION"),
         state.hub_name,
         state.hub
@@ -494,7 +494,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
         None => log("no approver set: requests from the Hub are refused"),
     }
 
-    let places = disktree_agent::report::system_places();
+    let places = freesize_agent::report::system_places();
     let (events_tx, events) = mpsc::channel();
     let mut next_scan = Instant::now();
     let mut next_disks = Instant::now();
@@ -512,7 +512,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
         if Instant::now() >= next_disks {
             sent = client.report(&Report {
                 info: Some(device_info(&state.name, Some(&state))),
-                disks: Some(disktree_agent::report::disks(&places)),
+                disks: Some(freesize_agent::report::disks(&places)),
                 quarantine: Some(executor.quarantine.list()),
                 ..Report::default()
             });
@@ -571,7 +571,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
             Err(err) => {
                 if err.removed {
                     return Err(format!(
-                        "{err}. Run `disktree agent unpair` and pair again."
+                        "{err}. Run `freesize agent unpair` and pair again."
                     ));
                 }
                 let wait = if err.temporary() {
@@ -646,7 +646,7 @@ pub fn handle(
     policy: &Policy,
     executor: &dyn Executor,
     pending: &mut HashMap<String, Request>,
-    response: disktree_proto::PollResponse,
+    response: freesize_proto::PollResponse,
 ) -> Outcome {
     let mut changed = false;
     let mut ran = false;

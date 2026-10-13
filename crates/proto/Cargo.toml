@@ -1,6 +1,6 @@
 [package]
-name = "disktree-proto"
-description = "Messages between DiskTree devices and the DiskTree Hub, and how they're signed"
+name = "freesize-proto"
+description = "Messages between FreeSize devices and the FreeSize Hub, and how they're signed"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 base64 = "0.23.1"
-disktree-core.workspace = true
+freesize-core.workspace = true
 ed25519-dalek = "3.0.0"
 getrandom = "0.4.3"
 serde = { version = "1.0.229", features = ["derive"] }

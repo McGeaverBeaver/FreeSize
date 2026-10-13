@@ -1,13 +1,13 @@
-// DiskTree for Unraid: the page under Tools → DiskTree. It shows what the
+// FreeSize for Unraid: the page under Tools → FreeSize. It shows what the
 // background part found (status.php) and asks for changes (action.php).
 // Every change that removes or moves something first lists exactly what,
 // with links to look at it in Unraid's file browser.
 (function () {
   "use strict";
-  if (window.DiskTreePage) return;
-  window.DiskTreePage = true;
+  if (window.FreeSizePage) return;
+  window.FreeSizePage = true;
 
-  const API = "/plugins/disktree/include/";
+  const API = "/plugins/freesize/include/";
   const model = { status: null, running: false, config: null, now: 0, loaded: false };
   // What the person picked, kept across refreshes.
   const picked = { docker: new Set() };
@@ -182,8 +182,8 @@
     if (model.running) return null;
     return h("p", { class: "dt-note dt-bad" },
       model.status
-        ? "DiskTree's background part has stopped; what's shown is from when it last ran. Start it again with: /etc/rc.d/rc.disktree start"
-        : "DiskTree's background part isn't running yet. Start it with: /etc/rc.d/rc.disktree start");
+        ? "FreeSize's background part has stopped; what's shown is from when it last ran. Start it again with: /etc/rc.d/rc.freesize start"
+        : "FreeSize's background part isn't running yet. Start it with: /etc/rc.d/rc.freesize start");
   }
 
   // How far the background part's look has got, while one runs or before
@@ -250,7 +250,7 @@
       look,
       h("div", { class: "dt-head" },
         h("div", {},
-          h("p", {}, h("b", {}, `DiskTree ${s.version}`), ` on Unraid ${r.version || "?"}`, look ? "" : ` · now ${s.doing || "idle"}`),
+          h("p", {}, h("b", {}, `FreeSize ${s.version}`), ` on Unraid ${r.version || "?"}`, look ? "" : ` · now ${s.doing || "idle"}`),
           h("p", { class: "dt-muted" },
             `Last looked ${ago(s.last_round)}`,
             s.next_round && model.running ? ` · next ${until(s.next_round)}` : "",
@@ -280,10 +280,10 @@
       h("div", { class: "dt-facts" },
         fact("Docker", docker
           ? (safe.length ? `${size(safe.reduce((n, f) => n + f.bytes, 0))} safe to remove` : "nothing to remove")
-          : notLooked() ? "not looked at yet" : "not enabled", "DiskTreeApps"),
+          : notLooked() ? "not looked at yet" : "not enabled", "FreeSizeApps"),
         fact("Quarantine", s.quarantine && s.quarantine.length
-          ? `${count(s.quarantine.length, "batch", "batches")}, ${size(quarantined)}` : "empty", "DiskTreeQuarantine"),
-        fact("Hub", s.hub && s.hub.paired ? `${s.hub.name}${s.hub.connection ? ` (${s.hub.connection})` : ""}` : "not paired", "DiskTreeSettings")));
+          ? `${count(s.quarantine.length, "batch", "batches")}, ${size(quarantined)}` : "empty", "FreeSizeQuarantine"),
+        fact("Hub", s.hub && s.hub.paired ? `${s.hub.name}${s.hub.connection ? ` (${s.hub.connection})` : ""}` : "not paired", "FreeSizeSettings")));
   }
 
   function fact(title, text, tab) {
@@ -292,7 +292,7 @@
 
   function tabLink(tab) {
     // Unraid's tabs are inputs labelled by the page titles; click through.
-    const tabs = { DiskTreeApps: 3, DiskTreeQuarantine: 5, DiskTreeSettings: 6 };
+    const tabs = { FreeSizeApps: 3, FreeSizeQuarantine: 5, FreeSizeSettings: 6 };
     const n = tabs[tab];
     if (!n) return null;
     return h("a", { href: "#", class: "dt-link", onclick: (e) => {
@@ -768,11 +768,11 @@
           h("td", { class: "dt-num" }, size(a.reads * 512)),
           h("td", { class: "dt-num" }, size(a.writes * 512)),
           h("td", { class: "dt-wide" }, a.open.length ? a.open.map((o) => h("div", { class: "dt-path" }, o.path, h("span", { class: "dt-muted" }, ` · ${o.process}${o.container ? ` in ${o.container}` : ""}`))) : h("span", { class: "dt-muted" }, "nothing")))))) : h("p", { class: "dt-muted" }, "Nothing yet; the first numbers show after a minute."),
-      h("p", { class: "dt-muted" }, "Over the last day, from when DiskTree started. A disk that keeps waking up is usually read by an app on a schedule: move what it reads to a pool, or change the app's schedule."),
+      h("p", { class: "dt-muted" }, "Over the last day, from when FreeSize started. A disk that keeps waking up is usually read by an app on a schedule: move what it reads to a pool, or change the app's schedule."),
       h("h3", {}, "Permissions"),
       perms.length
         ? h("div", {},
-          h("p", { class: "dt-muted" }, "Files not owned by nobody:users, or without read and write for their group, can't always be reached over SMB. Tools → New Permissions fixes them (Docker Safe New Perms leaves appdata alone). DiskTree only reports them."),
+          h("p", { class: "dt-muted" }, "Files not owned by nobody:users, or without read and write for their group, can't always be reached over SMB. Tools → New Permissions fixes them (Docker Safe New Perms leaves appdata alone). FreeSize only reports them."),
           perms.map((p) => h("details", { class: "dt-details" },
             h("summary", {}, `${p.share}: ${count(p.count, "item")}`),
             h("ul", { class: "dt-list" }, p.examples.map((e) => h("li", { class: "dt-path" }, e))))))
@@ -932,7 +932,7 @@
             refreshSoon();
           } }, "Apply"))),
         h("h3", {}, "Never touch"),
-        h("p", { class: "dt-muted" }, "Besides what DiskTree always keeps (the flash drive, the system share, Docker's and the VMs' files in use, whole disks and shares), these paths and everything in them are never offered, never moved and refused when the Hub asks. One per line, in a share or on a disk."),
+        h("p", { class: "dt-muted" }, "Besides what FreeSize always keeps (the flash drive, the system share, Docker's and the VMs' files in use, whole disks and shares), these paths and everything in them are never offered, never moved and refused when the Hub asks. One per line, in a share or on a disk."),
         h("div", { class: "dt-form" }, h("label", { class: "dt-grow" }, "Paths", keep),
           h("button", { type: "button", onclick: async (e) => {
             const reply = await busy(e.target, () => post("keep", { paths: keep.value }));
@@ -944,7 +944,7 @@
   }
 
   // An http address other than this machine's own: what's sent can be read
-  // on the network. The same test as the disktree command's warning.
+  // on the network. The same test as the freesize command's warning.
   function plainHttp(url) {
     try {
       const u = new URL(url);
@@ -959,9 +959,9 @@
     const key = JSON.stringify(hub);
     if (built.hubKey === key) return;
     built.hubKey = key;
-    const parts = [h("h3", {}, "DiskTree Hub")];
+    const parts = [h("h3", {}, "FreeSize Hub")];
     if (!hub.paired) {
-      const link = h("textarea", { rows: 2, placeholder: "disktree://pair?hub=…&code=…&key=…" });
+      const link = h("textarea", { rows: 2, placeholder: "freesize://pair?hub=…&code=…&key=…" });
       const name = h("input", { type: "text", placeholder: "the server's host name" });
       // Stays until the next try, unlike the toast.
       const problem = h("p", { class: "dt-note dt-bad" });
@@ -989,7 +989,7 @@
         plainHttp(hub.url) ? h("p", { class: "dt-note" }, "The Hub's address is plain http, so what this server reports (folder and file names) can be read on your network. Put HTTPS in front of the Hub.") : null,
         h("p", { class: "dt-muted" }, "This server's key: ", h("code", {}, hub.device_key), ". The dashboard shows the same key for it."),
         h("h4", {}, "Approver"),
-        h("p", { class: "dt-muted" }, "Nobody sits at a server, so the Hub's requests (put back, delete for good, Docker cleanup) go to one phone or computer to allow or refuse, for just that request or for some minutes. It can only be chosen here or with the disktree approver command on the server, never from the Hub."),
+        h("p", { class: "dt-muted" }, "Nobody sits at a server, so the Hub's requests (put back, delete for good, Docker cleanup) go to one phone or computer to allow or refuse, for just that request or for some minutes. It can only be chosen here or with the freesize approver command on the server, never from the Hub."),
         hub.approver
           ? h("p", {}, "Requests go to ", h("b", {}, hub.approver), " (key ", h("code", {}, hub.approver_key), ").")
           : h("p", { class: "dt-note" }, "No approver: the Hub's requests are refused until you choose one."),
@@ -1007,7 +1007,7 @@
     const found = h("div");
     return h("div", {},
       h("div", { class: "dt-form" },
-        h("label", {}, "Key of the new approver (DiskTree app → Hub → This device's key)", fingerprint),
+        h("label", {}, "Key of the new approver (FreeSize app → Hub → This device's key)", fingerprint),
         h("button", { type: "button", onclick: async (e) => {
           const reply = await busy(e.target, () => post("approver_check", { fingerprint: fingerprint.value }));
           if (!reply.ok) {

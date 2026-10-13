@@ -59,7 +59,7 @@ async fn roles_come_from_groups() {
     idp.set_user(MockUser::new(
         "u-viewer",
         "Vera",
-        &["disktree-viewers", "family"],
+        &["freesize-viewers", "family"],
     ));
     let viewer_url = url.clone();
     blocking(move || {
@@ -78,9 +78,9 @@ async fn roles_come_from_groups() {
         let mut browser = Browser::new();
         let refused = browser.sign_in(&url, "%2F");
         assert_eq!(refused.status, 403);
-        assert!(refused.body.contains("No access to DiskTree"));
+        assert!(refused.body.contains("No access to FreeSize"));
         assert_eq!(browser.cookie, None);
-        let check = state.db.now(|c| disktree_hub::audit::verify(c).unwrap());
+        let check = state.db.now(|c| freesize_hub::audit::verify(c).unwrap());
         assert_eq!(check.broken_at, None);
     })
     .await;

@@ -2,8 +2,8 @@
 //! selected group ranks them, and inside an app the parts its space is made
 //! of.
 
-use disktree_core::bubbles::{Circle, fit};
-use disktree_core::{format_count, format_size};
+use freesize_core::bubbles::{Circle, fit};
+use freesize_core::{format_count, format_size};
 
 use crate::apps::{AppReport, AppUsage};
 use crate::insights::View;

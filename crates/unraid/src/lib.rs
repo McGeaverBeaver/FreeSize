@@ -1,4 +1,4 @@
-//! What DiskTree knows about Unraid: the array and its pools, where each
+//! What FreeSize knows about Unraid: the array and its pools, where each
 //! share's files sit, Docker and VMs sorted by how safe they are to clean,
 //! what must never be touched, the quarantine, what keeps disks awake,
 //! permissions, and moving folders between disks.

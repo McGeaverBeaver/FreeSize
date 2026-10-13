@@ -8,9 +8,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use disktree_core::snapshot::FolderSize;
-use disktree_proto::pairing::{code_hash, new_code};
-use disktree_proto::{AppsReport, DeviceInfo, PairingLink};
+use freesize_core::snapshot::FolderSize;
+use freesize_proto::pairing::{code_hash, new_code};
+use freesize_proto::{AppsReport, DeviceInfo, PairingLink};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -863,7 +863,7 @@ pub async fn pairing_code(
 ) -> ApiResult<Json<PairingCode>> {
     let hub_url = state.config.public_url().ok_or_else(|| {
         ApiError::conflict(
-            "set the Hub's address (DISKTREE_HUB_URL) first: devices need it to reach the Hub",
+            "set the Hub's address (FREESIZE_HUB_URL) first: devices need it to reach the Hub",
         )
     })?;
     let code = new_code();

@@ -1,6 +1,6 @@
 [package]
-name = "disktree-agent"
-description = "The device side of the DiskTree Hub: pairing, reports, commands and approvals"
+name = "freesize-agent"
+description = "The device side of the FreeSize Hub: pairing, reports, commands and approvals"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,8 @@ ureq = ["dep:ureq"]
 
 [dependencies]
 base64 = "0.23.1"
-disktree-core.workspace = true
-disktree-proto.workspace = true
+freesize-core.workspace = true
+freesize-proto.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 

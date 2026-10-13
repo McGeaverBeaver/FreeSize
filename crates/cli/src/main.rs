@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::Parser;
-use disktree_core::{
+use freesize_core::{
     DuplicateProgress, NodeId, ScanOptions, ScanProgress, ScanResult, SizeMode, SortKey, Tree,
     duplicate_candidates, extension_stats, flags, format_count, format_size, largest_files, ncdu,
     old_files, rebuildable, scan,
@@ -73,16 +73,22 @@ struct Args {
     json: bool,
 
     /// Save the scan to a file in ncdu's JSON format, to open later in
-    /// DiskTree or ncdu.
+    /// FreeSize or ncdu.
     #[arg(long, value_name = "FILE")]
     export: Option<PathBuf>,
 
-    /// Open a saved scan (DiskTree's or `ncdu -o`'s) instead of scanning.
+    /// Open a saved scan (FreeSize's or `ncdu -o`'s) instead of scanning.
     #[arg(long, value_name = "FILE")]
     import: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
+    // Settings named for DiskTree (`DISKTREE_AGENT_STATE` in a service
+    // from before the rename) count until they're renamed.
+    for (key, value) in freesize_core::renamed::old_env() {
+        // SAFETY: no other thread has started yet.
+        unsafe { std::env::set_var(key, value) };
+    }
     let cli = Cli::parse();
     match cli.command {
         Some(command) => agent::main(command),
@@ -140,7 +146,7 @@ fn scan_and_print(args: Args) -> ExitCode {
         Ok(result) => result,
         Err(err) => {
             let source = args.import.as_ref().unwrap_or(&args.path);
-            eprintln!("disktree: {}: {err}", source.display());
+            eprintln!("freesize: {}: {err}", source.display());
             return ExitCode::FAILURE;
         }
     };
@@ -152,7 +158,7 @@ fn scan_and_print(args: Args) -> ExitCode {
         let written = std::fs::File::create(file)
             .and_then(|f| ncdu::export(&result.tree, now, std::io::BufWriter::new(f)));
         if let Err(err) = written {
-            eprintln!("disktree: {}: {err}", file.display());
+            eprintln!("freesize: {}: {err}", file.display());
             return ExitCode::FAILURE;
         }
     }
@@ -369,7 +375,7 @@ fn print_duplicates(tree: &Tree, show_progress: bool) {
     print_groups(tree, &groups);
 }
 
-fn find_groups(tree: &Tree, show_progress: bool) -> Vec<disktree_core::DuplicateGroup> {
+fn find_groups(tree: &Tree, show_progress: bool) -> Vec<freesize_core::DuplicateGroup> {
     let candidates = duplicate_candidates(tree, tree.root(), MB);
     let progress = DuplicateProgress::new();
     std::thread::scope(|s| {
@@ -390,7 +396,7 @@ fn find_groups(tree: &Tree, show_progress: bool) -> Vec<disktree_core::Duplicate
     })
 }
 
-fn print_groups(tree: &Tree, groups: &[disktree_core::DuplicateGroup]) {
+fn print_groups(tree: &Tree, groups: &[freesize_core::DuplicateGroup]) {
     let wasted: u64 = groups.iter().map(|g| g.wasted()).sum();
     println!(
         "\nDuplicate files: {} set{}, {} in extra copies",

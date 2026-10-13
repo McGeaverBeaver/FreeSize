@@ -6,64 +6,66 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// DiskTree Hub: one dashboard for the storage of all your devices.
+/// FreeSize Hub: one dashboard for the storage of all your devices.
 #[derive(Clone, Debug, Parser)]
 #[command(
     version,
     about,
-    after_help = "`disktree-hub health` checks that the Hub on this machine answers, \
+    after_help = "`freesize-hub health` checks that the Hub on this machine answers, \
                   for a container's health check."
 )]
 pub struct Config {
     /// Address and port to listen on. Bind it to a LAN or WireGuard address
     /// to keep the Hub off the internet.
-    #[arg(long, env = "DISKTREE_HUB_LISTEN", default_value = "0.0.0.0:9090")]
+    #[arg(long, env = "FREESIZE_HUB_LISTEN", default_value = "0.0.0.0:9090")]
     pub listen: SocketAddr,
 
     /// Folder for the database and the Hub's key. Back it up.
-    #[arg(long, env = "DISKTREE_HUB_DATA", default_value_os_t = default_data_dir())]
+    #[arg(long, env = "FREESIZE_HUB_DATA", default_value_os_t = default_data_dir())]
     pub data: PathBuf,
 
     /// The address people and devices use to reach the Hub, e.g.
-    /// `https://disktree.home.lan`. Used in pairing links and as the base of
+    /// `https://freesize.home.lan`. Used in pairing links and as the base of
     /// the sign-in redirect (`<url>/auth/callback`).
-    #[arg(long, env = "DISKTREE_HUB_URL")]
+    #[arg(long, env = "FREESIZE_HUB_URL")]
     pub url: Option<String>,
 
     /// Name shown in the dashboard and to devices.
-    #[arg(long, env = "DISKTREE_HUB_NAME", default_value = "DiskTree Hub")]
+    #[arg(long, env = "FREESIZE_HUB_NAME", default_value = "FreeSize Hub")]
     pub name: String,
 
     /// OpenID Connect issuer, e.g. Authentik's
-    /// `https://auth.home.lan/application/o/disktree/`.
-    #[arg(long, env = "DISKTREE_OIDC_ISSUER")]
+    /// `https://auth.home.lan/application/o/freesize/`.
+    #[arg(long, env = "FREESIZE_OIDC_ISSUER")]
     pub oidc_issuer: Option<String>,
 
-    #[arg(long, env = "DISKTREE_OIDC_CLIENT_ID")]
+    #[arg(long, env = "FREESIZE_OIDC_CLIENT_ID")]
     pub oidc_client_id: Option<String>,
 
-    #[arg(long, env = "DISKTREE_OIDC_CLIENT_SECRET", hide_env_values = true)]
+    #[arg(long, env = "FREESIZE_OIDC_CLIENT_SECRET", hide_env_values = true)]
     pub oidc_client_secret: Option<String>,
 
     /// File holding the client secret instead (Docker secrets).
-    #[arg(long, env = "DISKTREE_OIDC_CLIENT_SECRET_FILE")]
+    #[arg(long, env = "FREESIZE_OIDC_CLIENT_SECRET_FILE")]
     pub oidc_client_secret_file: Option<PathBuf>,
 
-    /// Members of this group can do everything.
-    #[arg(long, env = "DISKTREE_ADMIN_GROUP", default_value = "disktree-admins")]
+    /// Members of this group can do everything. While it's the default,
+    /// `disktree-admins` (the default before the rename) counts too.
+    #[arg(long, env = "FREESIZE_ADMIN_GROUP", default_value = "freesize-admins")]
     pub admin_group: String,
 
     /// Members of this group can look at every device. Device groups can name
-    /// other groups that see only their devices.
+    /// other groups that see only their devices. While it's the default,
+    /// `disktree-viewers` counts too.
     #[arg(
         long,
-        env = "DISKTREE_VIEWER_GROUP",
-        default_value = "disktree-viewers"
+        env = "FREESIZE_VIEWER_GROUP",
+        default_value = "freesize-viewers"
     )]
     pub viewer_group: String,
 
     /// Bearer token for `/metrics`; without it, metrics are off.
-    #[arg(long, env = "DISKTREE_METRICS_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "FREESIZE_METRICS_TOKEN", hide_env_values = true)]
     pub metrics_token: Option<String>,
 }
 
@@ -76,15 +78,23 @@ fn default_data_dir() -> PathBuf {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
     };
     base.map_or_else(
-        || PathBuf::from("disktree-hub-data"),
+        || PathBuf::from("freesize-hub-data"),
         |b| {
             b.join(if cfg!(windows) {
-                "DiskTree Hub"
+                "FreeSize Hub"
             } else {
-                "disktree-hub"
+                "freesize-hub"
             })
         },
     )
+}
+
+/// Membership of `group`, or of `old` while `group` is still `default`, so
+/// an Authentik set up before the rename keeps working.
+fn in_group(groups: &[String], group: &str, default: &str, old: &str) -> bool {
+    groups
+        .iter()
+        .any(|g| g == group || (group == default && g == old))
 }
 
 /// The sign-in settings, when they're all there.
@@ -97,11 +107,39 @@ pub struct OidcSettings {
 }
 
 impl Config {
+    /// When the data folder is the default and only the one from before
+    /// the rename exists, moves that into place.
+    pub fn adopt_old_data(&mut self) {
+        if self.data == default_data_dir() {
+            self.data = freesize_core::renamed::adopt_dir(self.data.clone());
+        }
+    }
+
+    /// Whether these groups make someone an admin.
+    pub fn is_admin(&self, groups: &[String]) -> bool {
+        in_group(
+            groups,
+            &self.admin_group,
+            "freesize-admins",
+            "disktree-admins",
+        )
+    }
+
+    /// Whether these groups let someone see every device.
+    pub fn is_viewer(&self, groups: &[String]) -> bool {
+        in_group(
+            groups,
+            &self.viewer_group,
+            "freesize-viewers",
+            "disktree-viewers",
+        )
+    }
+
     /// The public address without a trailing slash.
     pub fn public_url(&self) -> Option<String> {
         self.url
             .as_deref()
-            .and_then(disktree_proto::pairing::normalize_hub)
+            .and_then(freesize_proto::pairing::normalize_hub)
     }
 
     /// Whether the dashboard is reached over HTTPS, so cookies are marked
@@ -114,13 +152,13 @@ impl Config {
     pub fn oidc(&self) -> Result<OidcSettings, String> {
         let mut missing = Vec::new();
         if self.public_url().is_none() {
-            missing.push("DISKTREE_HUB_URL");
+            missing.push("FREESIZE_HUB_URL");
         }
         if self.oidc_issuer.is_none() {
-            missing.push("DISKTREE_OIDC_ISSUER");
+            missing.push("FREESIZE_OIDC_ISSUER");
         }
         if self.oidc_client_id.is_none() {
-            missing.push("DISKTREE_OIDC_CLIENT_ID");
+            missing.push("FREESIZE_OIDC_CLIENT_ID");
         }
         let secret = match (&self.oidc_client_secret, &self.oidc_client_secret_file) {
             (Some(secret), _) => Some(secret.trim().to_string()),
@@ -130,7 +168,7 @@ impl Config {
             (None, None) => None,
         };
         if secret.as_deref().is_none_or(str::is_empty) {
-            missing.push("DISKTREE_OIDC_CLIENT_SECRET");
+            missing.push("FREESIZE_OIDC_CLIENT_SECRET");
         }
         if !missing.is_empty() {
             return Err(format!("not set: {}", missing.join(", ")));
@@ -149,25 +187,25 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Config {
-        let mut all = vec!["disktree-hub"];
+        let mut all = vec!["freesize-hub"];
         all.extend_from_slice(args);
         Config::parse_from(all)
     }
 
     #[test]
     fn sign_in_needs_every_setting() {
-        let config = parse(&["--url", "disktree.lan/"]);
-        assert_eq!(config.public_url().as_deref(), Some("https://disktree.lan"));
+        let config = parse(&["--url", "freesize.lan/"]);
+        assert_eq!(config.public_url().as_deref(), Some("https://freesize.lan"));
         assert!(config.https());
         let missing = config.oidc().unwrap_err();
-        assert!(missing.contains("DISKTREE_OIDC_ISSUER"));
-        assert!(!missing.contains("DISKTREE_HUB_URL"));
+        assert!(missing.contains("FREESIZE_OIDC_ISSUER"));
+        assert!(!missing.contains("FREESIZE_HUB_URL"));
 
         let config = parse(&[
             "--url",
             "http://10.0.0.2:9090",
             "--oidc-issuer",
-            "https://auth.lan/application/o/disktree/",
+            "https://auth.lan/application/o/freesize/",
             "--oidc-client-id",
             "id",
             "--oidc-client-secret",
@@ -177,5 +215,20 @@ mod tests {
         assert_eq!(oidc.client_secret, "secret");
         assert_eq!(oidc.redirect_uri, "http://10.0.0.2:9090/auth/callback");
         assert!(!config.https());
+    }
+
+    #[test]
+    fn groups_from_before_the_rename_count_while_the_default_is_used() {
+        let groups = |g: &[&str]| g.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let config = parse(&[]);
+        assert!(config.is_admin(&groups(&["freesize-admins"])));
+        assert!(config.is_admin(&groups(&["disktree-admins"])));
+        assert!(config.is_viewer(&groups(&["disktree-viewers"])));
+        assert!(!config.is_admin(&groups(&["disktree-viewers"])));
+
+        let config = parse(&["--admin-group", "nas-admins"]);
+        assert!(config.is_admin(&groups(&["nas-admins"])));
+        assert!(!config.is_admin(&groups(&["disktree-admins"])));
+        assert!(!config.is_admin(&groups(&["freesize-admins"])));
     }
 }

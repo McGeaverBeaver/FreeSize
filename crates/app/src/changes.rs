@@ -1,8 +1,8 @@
 //! Rows of the scan view's Changes tab: what grew, what's new, what shrank
 //! or went away since an earlier scan of the same folder.
 
-use disktree_core::snapshot::{self, Change, ChangeKind, Snapshot};
-use disktree_core::{SizeMode, Tree, format_size};
+use freesize_core::snapshot::{self, Change, ChangeKind, Snapshot};
+use freesize_core::{SizeMode, Tree, format_size};
 
 use crate::CleanRow;
 
@@ -123,7 +123,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use disktree_core::{ScanOptions, ScanProgress, scan};
+    use freesize_core::{ScanOptions, ScanProgress, scan};
 
     use super::*;
 
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn lists_growth_and_losses() {
-        let dir = std::env::temp_dir().join(format!("disktree-changes-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-changes-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         write(&dir, "Old/x.bin", 3 * MB as usize);
         write(&dir, "Pictures/a.jpg", MB as usize);

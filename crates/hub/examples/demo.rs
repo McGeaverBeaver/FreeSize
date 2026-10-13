@@ -2,7 +2,7 @@
 //! for trying the dashboard without Authentik or real devices:
 //!
 //! ```sh
-//! cargo run -p disktree-hub --example demo
+//! cargo run -p freesize-hub --example demo
 //! ```
 //!
 //! Then open http://127.0.0.1:9090 and sign in (the mock provider signs you
@@ -13,10 +13,10 @@
 mod idp;
 
 use clap::Parser;
-use disktree_agent::{Client, UreqTransport};
-use disktree_core::snapshot::FolderSize;
-use disktree_hub::{AppState, Config};
-use disktree_proto::{
+use freesize_agent::{Client, UreqTransport};
+use freesize_core::snapshot::FolderSize;
+use freesize_hub::{AppState, Config};
+use freesize_proto::{
     ActionKind, AppEntry, AppsReport, Breakdown, DeviceInfo, Disk, FileEntry, JunkEntry,
     PairingLink, Platform, Report, ScanReport, TypeEntry,
 };
@@ -28,15 +28,15 @@ const GB: u64 = 1 << 30;
 async fn main() {
     let hub_addr = std::env::var("DEMO_HUB").unwrap_or_else(|_| "127.0.0.1:9090".into());
     let idp_addr = std::env::var("DEMO_IDP").unwrap_or_else(|_| "127.0.0.1:9091".into());
-    let data = std::env::temp_dir().join(format!("disktree-hub-demo-{}", std::process::id()));
+    let data = std::env::temp_dir().join(format!("freesize-hub-demo-{}", std::process::id()));
     let idp_listener = tokio::net::TcpListener::bind(&idp_addr).await.unwrap();
     let idp = idp::MockIdp::serve(
         idp_listener,
-        format!("http://{idp_addr}/application/o/disktree/"),
+        format!("http://{idp_addr}/application/o/freesize/"),
     )
     .await;
     let config = Config::parse_from([
-        "disktree-hub",
+        "freesize-hub",
         "--data",
         data.to_str().unwrap(),
         "--url",
@@ -52,16 +52,16 @@ async fn main() {
     ]);
     let state = AppState::open(config).unwrap();
     let listener = tokio::net::TcpListener::bind(&hub_addr).await.unwrap();
-    tokio::spawn(disktree_hub::serve(listener, state.clone()));
+    tokio::spawn(freesize_hub::serve(listener, state.clone()));
     let url = format!("http://{hub_addr}");
     let seed_state = state.clone();
     tokio::task::spawn_blocking(move || seed(&url, &seed_state))
         .await
         .unwrap();
     // Alerts for what was just seeded, rather than in a minute.
-    disktree_hub::alerts::check_now(&state).await.unwrap();
+    freesize_hub::alerts::check_now(&state).await.unwrap();
     println!(
-        "DiskTree Hub demo on http://{hub_addr} (data in {})",
+        "FreeSize Hub demo on http://{hub_addr} (data in {})",
         data.display()
     );
     tokio::signal::ctrl_c().await.ok();
@@ -75,9 +75,9 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
         os: os.into(),
         hostname: name.to_lowercase().replace(' ', "-"),
         app: if attended {
-            format!("DiskTree app {}", env!("CARGO_PKG_VERSION"))
+            format!("FreeSize app {}", env!("CARGO_PKG_VERSION"))
         } else {
-            format!("DiskTree agent {}", env!("CARGO_PKG_VERSION"))
+            format!("FreeSize agent {}", env!("CARGO_PKG_VERSION"))
         },
         actions: if platform == Platform::Android {
             vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]
@@ -106,7 +106,7 @@ fn files(list: &[(&str, u64)]) -> Vec<FileEntry> {
             path: path.into(),
             size: mb << 20,
             allocated: mb << 20,
-            modified: disktree_hub::db::now() - (mb as i64 % 900) * 86_400,
+            modified: freesize_hub::db::now() - (mb as i64 % 900) * 86_400,
         })
         .collect()
 }
@@ -126,7 +126,7 @@ fn scan(
     ScanReport {
         root: root.into(),
         label: label.into(),
-        taken: disktree_hub::db::now() - days_ago * 86_400 - 3600,
+        taken: freesize_hub::db::now() - days_ago * 86_400 - 3600,
         size: total.size,
         allocated: total.allocated,
         files: 48_213,
@@ -240,7 +240,7 @@ fn seed(url: &str, state: &AppState) {
                     ]),
                 )),
                 apps: Some(AppsReport {
-                    taken: disktree_hub::db::now() - 3600,
+                    taken: freesize_hub::db::now() - 3600,
                     breakdown: Some(Breakdown {
                         total: 238 * GB,
                         free: 31 * GB,
@@ -334,7 +334,7 @@ fn seed(url: &str, state: &AppState) {
         let code = make_code(state, url, group);
         let link = PairingLink::parse(&code).unwrap();
         let agent =
-            disktree_agent::pair(&transport, &link, device.clone(), &mut |_| false).unwrap();
+            freesize_agent::pair(&transport, &link, device.clone(), &mut |_| false).unwrap();
         Client::new(&agent, &transport).report(&report).unwrap();
         // Two months of daily disk samples, growing towards today's.
         let id = agent.device.clone();
@@ -349,7 +349,7 @@ fn seed(url: &str, state: &AppState) {
                         params![
                             id,
                             path,
-                            disktree_hub::db::now() / 86_400 - day,
+                            freesize_hub::db::now() / 86_400 - day,
                             (total * GB) as i64,
                             (used * GB) as i64
                         ],
@@ -361,7 +361,7 @@ fn seed(url: &str, state: &AppState) {
             if i >= 2 {
                 c.execute(
                     "UPDATE devices SET last_seen = ?1 WHERE id = ?2",
-                    params![disktree_hub::db::now() - 3 * 3600 * i as i64, id],
+                    params![freesize_hub::db::now() - 3 * 3600 * i as i64, id],
                 )
                 .unwrap();
             }
@@ -373,7 +373,7 @@ fn seed(url: &str, state: &AppState) {
 }
 
 /// Older scans of the tower's shares, for comparing.
-fn tower_history(agents: &[(DeviceInfo, disktree_agent::AgentState)]) {
+fn tower_history(agents: &[(DeviceInfo, freesize_agent::AgentState)]) {
     let transport = UreqTransport::new();
     let (_, tower) = agents.iter().find(|(i, _)| i.name == "Tower").unwrap();
     let older = [
@@ -440,20 +440,20 @@ fn agentless(state: &AppState) {
          [{"name":"dump","asize":4096,"dsize":4096},
           {"name":"vzdump-qemu-100-2026_09_01.vma.zst","asize":21474836480,"dsize":21474836480},
           {"name":"vzdump-qemu-100-2026_10_01.vma.zst","asize":22548578304,"dsize":22548578304}]]]"#;
-    let tree = disktree_core::ncdu::import(&ncdu[..]).unwrap();
-    let report = disktree_agent::report::scan_report(
+    let tree = freesize_core::ncdu::import(&ncdu[..]).unwrap();
+    let report = freesize_agent::report::scan_report(
         &tree,
         "VM storage",
-        disktree_hub::db::now() - 2 * 86_400,
+        freesize_hub::db::now() - 2 * 86_400,
         0,
         true,
     );
-    let key = disktree_proto::keys::KeyPair::generate().public();
+    let key = freesize_proto::keys::KeyPair::generate().public();
     let mut info = info("Proxmox host", Platform::Linux, "", false);
     info.app = "No agent: scans are uploaded as files".into();
     info.actions = Vec::new();
     state.db.now(|c| {
-        let now = disktree_hub::db::now();
+        let now = freesize_hub::db::now();
         c.execute(
             "INSERT INTO devices (id, name, platform, key, fingerprint, group_id, info, paired,
                                   last_seen, agentless)
@@ -466,13 +466,13 @@ fn agentless(state: &AppState) {
             ],
         )
         .unwrap();
-        disktree_hub::devices::store_scan(c, "DEMOPROXMOX", report).unwrap();
+        freesize_hub::devices::store_scan(c, "DEMOPROXMOX", report).unwrap();
         // Where alerts would go; off, so the demo sends nothing.
         c.execute(
             "INSERT INTO alert_channels (name, target, enabled, created)
              VALUES ('Robert''s phone', ?1, 0, ?2)",
             params![
-                r#"{"kind":"ntfy","server":"https://ntfy.sh","topic":"disktree-demo-7f3k","token":""}"#,
+                r#"{"kind":"ntfy","server":"https://ntfy.sh","topic":"freesize-demo-7f3k","token":""}"#,
                 now
             ],
         )
@@ -481,7 +481,7 @@ fn agentless(state: &AppState) {
 }
 
 /// The tower's approver is the phone; a few requests in different states.
-fn approvals_and_requests(state: &AppState, agents: &[(DeviceInfo, disktree_agent::AgentState)]) {
+fn approvals_and_requests(state: &AppState, agents: &[(DeviceInfo, freesize_agent::AgentState)]) {
     let transport = UreqTransport::new();
     let find = |name: &str| agents.iter().find(|(i, _)| i.name.contains(name)).unwrap();
     let (phone_info, phone) = find("Pixel");
@@ -494,7 +494,7 @@ fn approvals_and_requests(state: &AppState, agents: &[(DeviceInfo, disktree_agen
             ..Report::default()
         })
         .unwrap();
-    let now = disktree_hub::db::now();
+    let now = freesize_hub::db::now();
     let requests = [
         (
             &tower.device,
@@ -543,7 +543,7 @@ fn app(package: &str, label: &str, gb: u64, cache: u64, days: Option<i64>) -> Ap
         code: GB / 4,
         data: gb * GB,
         cache: cache * GB,
-        last_used: days.map(|d| disktree_hub::db::now() - d * 86_400),
+        last_used: days.map(|d| freesize_hub::db::now() - d * 86_400),
         installed: None,
         source: "Play Store".into(),
         removable: true,
@@ -552,16 +552,16 @@ fn app(package: &str, label: &str, gb: u64, cache: u64, days: Option<i64>) -> Ap
 
 /// A pairing code made the way the dashboard makes one.
 fn make_code(state: &AppState, url: &str, group: i64) -> String {
-    let code = disktree_proto::pairing::new_code();
+    let code = freesize_proto::pairing::new_code();
     state.db.now(|c| {
         c.execute(
             "INSERT INTO pairing_codes (hash, group_id, created, expires, created_by)
              VALUES (?1, ?2, ?3, ?4, 'demo')",
             params![
-                disktree_proto::pairing::code_hash(&code),
+                freesize_proto::pairing::code_hash(&code),
                 group,
-                disktree_hub::db::now(),
-                disktree_hub::db::now() + 600
+                freesize_hub::db::now(),
+                freesize_hub::db::now() + 600
             ],
         )
         .unwrap();

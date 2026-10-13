@@ -1,7 +1,7 @@
 //! Moving files and folders elsewhere instead of deleting them, keeping the
 //! folders they were in, with a record so a move can be put back.
 //!
-//! The record of the last move is kept in DiskTree's data folder
+//! The record of the last move is kept in FreeSize's data folder
 //! (`last-move.json`).
 
 use std::fs;
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn moves_keep_their_folders_and_never_overwrite() {
-        let dir = std::env::temp_dir().join(format!("disktree-moves-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-moves-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let root = dir.join("phone");
         write(&root.join("DCIM/Camera/a.mp4"), b"video");

@@ -21,7 +21,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use disktree_proto::keys::{random, random_id, sha256_hex};
+use freesize_proto::keys::{random, random_id, sha256_hex};
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use rusqlite::{OptionalExtension, params};
@@ -291,7 +291,7 @@ pub async fn login(State(state): State<AppState>, Query(query): Query<LoginQuery
     if let Err(err) = stored {
         return ApiError::from(err).into_response();
     }
-    let enc = disktree_proto::pairing::encode;
+    let enc = freesize_proto::pairing::encode;
     let separator = if provider.authorization_endpoint.contains('?') {
         '&'
     } else {
@@ -317,7 +317,7 @@ fn setup_page(missing: &str) -> Response {
         "Sign-in isn't set up yet",
         &format!(
             "The Hub signs people in through an OpenID Connect provider such as Authentik. \
-             Set these and restart the Hub ({missing}). The README's \"DiskTree Hub\" section \
+             Set these and restart the Hub ({missing}). The README's \"FreeSize Hub\" section \
              walks through creating the provider and application in Authentik."
         ),
     )
@@ -455,7 +455,7 @@ pub async fn callback(
         }
         Ok(None) => page(
             StatusCode::FORBIDDEN,
-            "No access to DiskTree",
+            "No access to FreeSize",
             &format!(
                 "You signed in, but your account isn't in a group that may use the Hub. An \
                  admin can add you to \"{}\" or \"{}\" in the sign-in provider.",
@@ -473,8 +473,8 @@ fn create_session(
     config: &crate::Config,
     claims: &IdClaims,
 ) -> rusqlite::Result<Option<String>> {
-    let admin = claims.groups.contains(&config.admin_group);
-    let viewer = claims.groups.contains(&config.viewer_group)
+    let admin = config.is_admin(&claims.groups);
+    let viewer = config.is_viewer(&claims.groups)
         || scoped_groups(c)?.iter().any(|g| claims.groups.contains(g));
     let name = claims.display_name();
     if !admin && !viewer {
@@ -564,7 +564,7 @@ impl User {
     /// groups are `viewer_groups`.
     pub fn sees(&self, viewer_groups: &[String], config: &crate::Config) -> bool {
         self.admin
-            || self.groups.contains(&config.viewer_group)
+            || config.is_viewer(&self.groups)
             || viewer_groups.iter().any(|g| self.groups.contains(g))
     }
 }
@@ -671,8 +671,8 @@ mod tests {
 
     fn settings() -> OidcSettings {
         OidcSettings {
-            issuer: "https://auth.lan/application/o/disktree/".into(),
-            client_id: "disktree".into(),
+            issuer: "https://auth.lan/application/o/freesize/".into(),
+            client_id: "freesize".into(),
             client_secret: "s3cret-s3cret-s3cret-s3cret-s3cret".into(),
             redirect_uri: "https://hub.lan/auth/callback".into(),
         }
@@ -705,8 +705,8 @@ mod tests {
         let s = settings();
         let empty = JwkSet { keys: vec![] };
         let good = json!({
-            "iss": s.issuer, "aud": "disktree", "sub": "u1", "exp": now() + 300,
-            "nonce": "n1", "name": "Robert", "groups": ["disktree-admins"]
+            "iss": s.issuer, "aud": "freesize", "sub": "u1", "exp": now() + 300,
+            "nonce": "n1", "name": "Robert", "groups": ["freesize-admins"]
         });
         let claims = validate_id_token(
             &token(good.clone(), &s.client_secret),
@@ -717,7 +717,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(claims.display_name(), "Robert");
-        assert_eq!(claims.groups, ["disktree-admins"]);
+        assert_eq!(claims.groups, ["freesize-admins"]);
 
         let check = |claims: serde_json::Value, secret: &str, nonce: &str| {
             validate_id_token(&token(claims, secret), &empty, &s.issuer, &s, nonce).is_err()

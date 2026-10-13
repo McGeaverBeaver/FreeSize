@@ -1,5 +1,0 @@
-Menu="DiskTree:3"
-Title="Docker and VMs"
----
-<?require_once "$docroot/plugins/disktree/include/page.php";?>
-<div class="disktree" id="dt-apps"><p class="dt-muted">Loading…</p></div>

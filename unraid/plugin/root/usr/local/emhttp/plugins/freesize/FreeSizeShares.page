@@ -1,0 +1,5 @@
+Menu="FreeSize:2"
+Title="Shares and moves"
+---
+<?require_once "$docroot/plugins/freesize/include/page.php";?>
+<div class="freesize" id="dt-shares"><p class="dt-muted">Loading…</p></div>

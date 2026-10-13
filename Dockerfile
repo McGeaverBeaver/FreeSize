@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# DiskTree Hub, for amd64 and arm64:
+# FreeSize Hub, for amd64 and arm64:
 #
-#   docker buildx build --platform linux/amd64,linux/arm64 -t disktree-hub .
+#   docker buildx build --platform linux/amd64,linux/arm64 -t freesize-hub .
 #
 # The build stage runs on the build machine and cross-compiles, so building
 # for arm64 on a PC needs no emulation. The final image runs the Hub as
@@ -28,10 +28,10 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target,id=disktree-hub-target-$TARGETARCH \
-    cargo build --release --locked -p disktree-hub --target "$(cat /target)" \
+    --mount=type=cache,target=/src/target,id=freesize-hub-target-$TARGETARCH \
+    cargo build --release --locked -p freesize-hub --target "$(cat /target)" \
  && mkdir -p "/hub/$TARGETARCH" \
- && cp "target/$(cat /target)/release/disktree-hub" "/hub/$TARGETARCH/" \
+ && cp "target/$(cat /target)/release/freesize-hub" "/hub/$TARGETARCH/" \
  && cp /etc/ssl/certs/ca-certificates.crt /hub/
 
 # What the final image takes: the Hub in a folder per architecture, and
@@ -45,16 +45,17 @@ COPY --from=build /hub/ /
 FROM debian:bookworm-slim
 ARG TARGETARCH
 COPY --from=hub /ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=hub /$TARGETARCH/disktree-hub /usr/local/bin/disktree-hub
+COPY --from=hub /$TARGETARCH/freesize-hub /usr/local/bin/freesize-hub
 COPY --chmod=755 packaging/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-ENV DISKTREE_HUB_DATA=/data \
-    DISKTREE_HUB_LISTEN=0.0.0.0:9090 \
+# The listen address is the Hub's default (0.0.0.0:9090), not set here,
+# so a DISKTREE_HUB_LISTEN from a template made before the rename counts.
+ENV FREESIZE_HUB_DATA=/data \
     PUID=99 \
     PGID=100
 VOLUME /data
 EXPOSE 9090
-HEALTHCHECK --interval=60s --timeout=10s --start-period=20s CMD ["/usr/local/bin/disktree-hub", "health"]
-LABEL org.opencontainers.image.title="DiskTree Hub" \
+HEALTHCHECK --interval=60s --timeout=10s --start-period=20s CMD ["/usr/local/bin/freesize-hub", "health"]
+LABEL org.opencontainers.image.title="FreeSize Hub" \
       org.opencontainers.image.description="One dashboard for the storage of all your devices" \
       org.opencontainers.image.source="https://github.com/McGeaverBeaver/FreeSize"
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

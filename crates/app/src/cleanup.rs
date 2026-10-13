@@ -58,8 +58,10 @@ pub struct Junk {
     pub names: Vec<String>,
 }
 
-/// Where DiskTree saves APKs for reinstalling apps; never offered as junk.
-pub const SAVED_APKS: &str = "Download/DiskTree";
+/// Where FreeSize saves APKs for reinstalling apps; never offered as junk.
+pub const SAVED_APKS: &str = "Download/FreeSize";
+/// Where they were saved before the rename; never offered either.
+const OLD_SAVED_APKS: &str = "Download/DiskTree";
 
 /// Finds old installers, the thumbnail cache and leftover folders under
 /// `root`, the shared storage root. `installed` lists every installed
@@ -80,13 +82,13 @@ pub fn find(
 }
 
 fn installers(root: &Path) -> Option<Junk> {
-    let keep = root.join(SAVED_APKS);
+    let keep = [root.join(SAVED_APKS), root.join(OLD_SAVED_APKS)];
     let mut junk = Junk {
         kind: JunkKind::Installers,
         ..Junk::default()
     };
     walk(&root.join("Download"), &mut |path, meta| {
-        if path == keep {
+        if keep.iter().any(|k| path == k) {
             return false;
         }
         if meta.is_file() && is_installer(path) {
@@ -456,7 +458,7 @@ mod tests {
 
     impl TempRoot {
         fn new(name: &str) -> TempRoot {
-            let dir = std::env::temp_dir().join(format!("disktree-{name}-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("freesize-{name}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             TempRoot(dir)
@@ -488,7 +490,8 @@ mod tests {
         root.file("Download/old.apk", 100);
         root.file("Download/sub/Other.APK", 50);
         root.file("Download/notes.txt", 10);
-        root.file("Download/DiskTree/Tool 1.0.apk", 999);
+        root.file("Download/FreeSize/Tool 1.0.apk", 999);
+        root.file("Download/DiskTree/Tool 0.9.apk", 999);
         let junk = find(&root.0, &installed(&[]), &HashMap::new());
         let installers = junk
             .iter()

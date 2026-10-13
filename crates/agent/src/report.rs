@@ -3,9 +3,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use disktree_core::snapshot::{self, relative_path};
-use disktree_core::{SizeMode, Tree, disk_space, extension_stats, largest_files};
-use disktree_proto::{Disk, FileEntry, ScanReport, TypeEntry};
+use freesize_core::snapshot::{self, relative_path};
+use freesize_core::{SizeMode, Tree, disk_space, extension_stats, largest_files};
+use freesize_proto::{Disk, FileEntry, ScanReport, TypeEntry};
 
 /// Folders kept per scan report.
 pub const MAX_FOLDERS: usize = 10_000;
@@ -180,14 +180,14 @@ pub fn linux_places(mounts: &str) -> Vec<(String, PathBuf)> {
 mod tests {
     use std::fs;
 
-    use disktree_core::{ScanOptions, ScanProgress, scan};
+    use freesize_core::{ScanOptions, ScanProgress, scan};
 
     use super::*;
 
     #[test]
     fn scan_reports_carry_folders_files_and_types() {
         let dir =
-            std::env::temp_dir().join(format!("disktree-agent-report-{}", std::process::id()));
+            std::env::temp_dir().join(format!("freesize-agent-report-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("Movies/2024")).unwrap();
         fs::write(dir.join("Movies/2024/trip.mp4"), vec![1u8; 300_000]).unwrap();

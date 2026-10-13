@@ -1,16 +1,48 @@
-# DiskTree
+# FreeSize
 
 A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 [Slint](https://slint.dev) UI. One codebase runs on **Windows, macOS, Linux and Android**.
 
-![DiskTree on the desktop](docs/screenshots/desktop.png)
+![FreeSize on the desktop](docs/screenshots/desktop.png)
 
 | Phone layout: folders | Phone layout: treemap |
 |---|---|
 | ![](docs/screenshots/phone-folders.png) | ![](docs/screenshots/phone-map.png) |
 
-> "DiskTree" is a working name. TreeSize is a trademark of JAM Software, so
-> don't ship under that name.
+> FreeSize was called DiskTree until 0.8.6. TreeSize is a trademark of JAM
+> Software, so don't ship under that name.
+
+### Coming from DiskTree
+
+Each part takes over what DiskTree kept, the first time it starts:
+
+- **Windows, macOS and Linux**: the app and the command line move DiskTree's
+  data folder (scan history, drive history, the Hub pairing) to FreeSize's.
+  Run `freesize` and `freesize-gui` from now on; the old executables can go.
+- **Android**: FreeSize is a new app to Android (its package is
+  `io.github.mcgeaverbeaver.freesize`), signed with the same key. Install it,
+  connect it to the Hub again, then uninstall DiskTree. The app history in
+  `Documents/DiskTree` carries over; installers saved in `Download/DiskTree`
+  stay where they are and are never offered as junk.
+- **Unraid plugin**: check for updates as usual. The last DiskTree update
+  installs the FreeSize plugin within a minute, which takes over the
+  settings and the Hub pairing from `/boot/config/plugins/disktree` and
+  removes DiskTree. The page is under Tools, FreeSize.
+- **The Hub**: the image is `ghcr.io/mcgeaverbeaver/freesize-hub`; the old
+  name gets the same image for a while, so an existing container updates in
+  place. Settings named `DISKTREE_…` still count where the `FREESIZE_…` name
+  isn't set, and the Authentik groups `disktree-admins` and
+  `disktree-viewers` still count while the group settings are left at their
+  defaults. A Hub run without Docker moves its data folder like the apps.
+  Pairing links and QR codes starting `disktree://` still pair.
+- **Linux services**: the units are `freesize-agent.service` and
+  `freesize-hub.service` now. Install them as under Running the Hub, keeping
+  `--state` and the data folder pointing at the old paths, or move those.
+- **What keeps its old name**: the quarantine folder on each disk
+  (`.disktree-quarantine`, since its records name the files inside by full
+  path), and the names inside the protocol: the request headers, the
+  webhook's `X-DiskTree-Signature`, the Prometheus metrics (`disktree_…`)
+  and the dashboard's cookie.
 
 ## Features
 
@@ -53,10 +85,10 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
   their folders. The last move can be put back. See [The basket](#the-basket).
 - **Export** a report (HTML), a spreadsheet (CSV) or the whole scan (ncdu's
   JSON format), and open saved scans again, including ones made with
-  `ncdu -o` on a machine without DiskTree. See
+  `ncdu -o` on a machine without FreeSize. See
   [Export and saved scans](#export-and-saved-scans).
 - **Drive trends** on the start screen: how much each drive grew over the last
-  30 days and, at that rate, when it will be full. DiskTree records each
+  30 days and, at that rate, when it will be full. FreeSize records each
   drive's used space once a day it's opened, so trends appear after a few
   days.
 - **Size on disk vs. file size**, switchable. Compressed, sparse and cloud-only
@@ -87,18 +119,18 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 - **Old screenshots and chat media (Android)**: cards that open screenshots
   older than a month, and the photos and videos chat apps saved, to look
   through before deciding what goes.
-- **Command-line tool** (`disktree`) sharing the same core.
-- **DiskTree Hub**: one web dashboard for every device's storage, with
+- **Command-line tool** (`freesize`) sharing the same core.
+- **FreeSize Hub**: one web dashboard for every device's storage, with
   history, search, alerts and requests that each device approves itself
-  (see [DiskTree Hub](#disktree-hub)).
+  (see [FreeSize Hub](#freesize-hub)).
 
 ## Platform notes
 
 | Platform | What gets scanned | Notes |
 |---|---|---|
-| Windows | Any drive or folder your account can open | Folders it can't open are marked "no access" and counted; run DiskTree as administrator to include most of them. Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
-| macOS | Everything your account can open, once Full Disk Access is granted | Grant it in System Settings → Privacy & Security for the full picture. Other users' folders need `sudo disktree / --export scan.json`, which the app opens. Detects iCloud "dataless" files. |
-| Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. `sudo disktree / --export scan.json` scans everything, and the app opens the file. |
+| Windows | Any drive or folder your account can open | Folders it can't open are marked "no access" and counted; run FreeSize as administrator to include most of them. Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
+| macOS | Everything your account can open, once Full Disk Access is granted | Grant it in System Settings → Privacy & Security for the full picture. Other users' folders need `sudo freesize / --export scan.json`, which the app opens. Detects iCloud "dataless" files. |
+| Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. `sudo freesize / --export scan.json` scans everything, and the app opens the file. |
 | Android 8.0+ | All shared storage and SD cards, plus sizes for every app and the system | Files need **All files access** (Android 11+). Apps' private data can't be opened as files on Android, so it's measured through Android's storage statistics instead, which need **Usage access**. |
 | iOS | — | Not planned: the iOS sandbox doesn't allow scanning the device. |
 
@@ -122,19 +154,19 @@ and run the commands below inside that folder. `git pull` fetches updates.
 ### Desktop app
 
 ```sh
-cargo run --release -p disktree-app            # opens the drive picker
-cargo run --release -p disktree-app -- ~/Videos   # scans a folder right away
+cargo run --release -p freesize-app            # opens the drive picker
+cargo run --release -p freesize-app -- ~/Videos   # scans a folder right away
 ```
 
-The binary is `target/release/disktree-gui` (`disktree-gui.exe` on Windows).
+The binary is `target/release/freesize-gui` (`freesize-gui.exe` on Windows).
 It's a single file you can copy anywhere. On Windows, release builds don't open
-a console window. `cargo build --release -p disktree-app -p disktree-cli`
+a console window. `cargo build --release -p freesize-app -p freesize-cli`
 builds the app and the command line without starting anything.
 
 ### Command line
 
 ```sh
-cargo run --release -p disktree-cli -- /usr --depth 2 --top 10
+cargo run --release -p freesize-cli -- /usr --depth 2 --top 10
 ```
 
 ```
@@ -147,7 +179,7 @@ Total: 4.31 GB (4.53 GB size on disk)
    624 MB   13.5%  ██▊                   ├── bin/
 ```
 
-Run `disktree --help` for all options (`--apparent` for file sizes,
+Run `freesize --help` for all options (`--apparent` for file sizes,
 `--cross-filesystems`, `--min-percent`, …). `--cleanup` adds rebuildable
 folders and files not changed in a year, and `--duplicates` finds duplicate
 files of 1 MB or more (it reads them, so it takes a while). Both only list;
@@ -156,10 +188,10 @@ the command line tool never deletes anything.
 For scripts, spreadsheets and Home Assistant:
 
 ```sh
-disktree ~/Videos --json                 # everything above as JSON
-disktree / --export root-scan.json       # save the scan (ncdu's format)
-disktree --import root-scan.json         # look at a saved scan again
-ssh server ncdu -o- -x /srv > srv.json && disktree --import srv.json
+freesize ~/Videos --json                 # everything above as JSON
+freesize / --export root-scan.json       # save the scan (ncdu's format)
+freesize --import root-scan.json         # look at a saved scan again
+ssh server ncdu -o- -x /srv > srv.json && freesize --import srv.json
 ```
 
 ### Clean up tab
@@ -194,7 +226,7 @@ After a scan, the **Clean up** tab (**Clean** on phones) lists:
 - **Not in any file**: after scanning a whole drive, how much of the used
   space no file accounts for, and why: ZFS snapshots, Windows restore points
   and shadow copies, local Time Machine snapshots, space the file system
-  reserves, and folders DiskTree couldn't read.
+  reserves, and folders FreeSize couldn't read.
 - **Similar photos**: press *Find similar photos* to group photos that look
   alike, such as bursts, retakes and the same picture saved at another size.
   Each photo gets a small fingerprint of its brightness pattern; most camera
@@ -208,8 +240,8 @@ Delete or Collect. On desktops Delete moves it to the Recycle Bin or Trash.
 
 ### Changes
 
-DiskTree keeps the sizes of the 10,000 biggest folders of every scan (not
-every file), the last 12 scans of each scanned folder, in DiskTree's data
+FreeSize keeps the sizes of the 10,000 biggest folders of every scan (not
+every file), the last 12 scans of each scanned folder, in FreeSize's data
 folder under `scans/`. When a folder has been scanned before, the
 **Changes** tab compares this scan with an earlier one (pick which): how much
 the whole folder grew, the folders that grew or are new, and the ones that
@@ -234,8 +266,8 @@ item removable, with two ways to act on all of it:
   goes to `<destination>/Videos/2023/trip.mp4`). Within a drive that's a
   rename; across drives each item is copied, checked and only then removed.
   Nothing is overwritten. **Put back** returns the last move; its record is
-  `last-move.json` in DiskTree's data folder. On Android, Move offers a
-  `DiskTree moved` folder on internal storage or on each SD card or USB
+  `last-move.json` in FreeSize's data folder. On Android, Move offers a
+  `FreeSize moved` folder on internal storage or on each SD card or USB
   drive.
 
 ### Export and saved scans
@@ -249,11 +281,11 @@ item removable, with two ways to act on all of it:
 - **Scan file (JSON)**: the whole scan in the format of ncdu's `-o` option.
 
 On desktops a save dialog asks where; on Android files go to
-`Download/DiskTree`. To open a scan file, type its path (ending in `.json`)
+`Download/FreeSize`. To open a scan file, type its path (ending in `.json`)
 and press Scan. Saved scans open read-only: nothing in them can be opened,
 deleted or collected, since the files may be on another machine. Scans made
 with `ncdu -o` (1.x or 2.x JSON) open the same way, so a server or router
-without DiskTree can be scanned with ncdu and looked at here.
+without FreeSize can be scanned with ncdu and looked at here.
 
 ### Android
 
@@ -281,19 +313,19 @@ Build:
 
 ```sh
 git pull
-scripts/android/build-apk.sh      # -> target/release/apk/DiskTree.apk
+scripts/android/build-apk.sh      # -> target/release/apk/FreeSize.apk
 ```
 
 The first build takes several minutes; later ones only rebuild what changed.
 It also creates the signing key that every later build reuses (see
 [Android signing key](#android-signing-key)), so new builds install over the
-old one and keep DiskTree's permissions. Releases up to 0.1.3 were signed
+old one and keep FreeSize's permissions. Releases up to 0.1.3 were signed
 with a different key, so uninstall such a copy once first.
 
 To get the APK onto the phone, either:
 
 - copy it over (USB cable, Google Drive, …) and open it on the phone. From
-  WSL, `cp target/release/apk/DiskTree.apk /mnt/c/Users/<you>/Downloads/` puts
+  WSL, `cp target/release/apk/FreeSize.apk /mnt/c/Users/<you>/Downloads/` puts
   it in your Windows Downloads folder.
 - or install it over Wi-Fi with adb. Turn on Developer options (Settings →
   About phone → tap *Build number* seven times), then Settings → System →
@@ -303,14 +335,14 @@ To get the APK onto the phone, either:
   adb=~/Android/Sdk/platform-tools/adb
   $adb pair 192.168.1.50:37123      # address and code from the pairing dialog
   $adb connect 192.168.1.50:41234   # address on the Wireless debugging screen
-  $adb install -r target/release/apk/DiskTree.apk
+  $adb install -r target/release/apk/FreeSize.apk
   ```
 
 `build-apk.sh` produces one APK for every device: arm64 phones plus x86_64
 emulators and Chromebooks. It links the native code for 16 KB memory pages and
 runs `scripts/android/check-apk.sh`, which fails the build if the APK would be
 rejected by a phone or by Google Play. To see the app's log, run
-`adb logcat -s DiskTree`.
+`adb logcat -s FreeSize`.
 
 Publishing to Google Play requires declaring why the app needs All files access
 and why it lists all installed apps (`QUERY_ALL_PACKAGES`). Disk analyzers and
@@ -319,20 +351,20 @@ F-Droid don't have that step.
 
 ## Installing on an Android phone
 
-1. Download **`disktree-android.apk`** from the latest release. It's one file
+1. Download **`freesize-android.apk`** from the latest release. It's one file
    for all phones.
 2. Open it. If Android asks, allow your browser or Files app to install unknown
    apps.
 3. Google Play Protect may warn that the app comes from an unknown developer.
    Tap *More details → Install anyway*.
-4. Start DiskTree, tap **Grant access**, turn on *Allow access to manage all
+4. Start FreeSize, tap **Grant access**, turn on *Allow access to manage all
    files*, and go back. Then pick *Internal storage* or an SD card.
 5. To see what apps and the system use, tap **Allow usage access** under
-   *Apps & system*, turn DiskTree on in the list, and go back.
+   *Apps & system*, turn FreeSize on in the list, and go back.
 6. If the switch is greyed out or Android says *App was denied access* /
    *Controlled by Restricted Setting*, Android is blocking it because the app
-   was installed from a downloaded file. Tap **Open DiskTree's app info** in
-   DiskTree (or go to Settings → Apps → DiskTree), tap **⋮** in the top
+   was installed from a downloaded file. Tap **Open FreeSize's app info** in
+   FreeSize (or go to Settings → Apps → FreeSize), tap **⋮** in the top
    corner, choose **Allow restricted settings** and confirm with your PIN or
    fingerprint. Then repeat step 5. You only need to do this once per install.
 
@@ -379,7 +411,7 @@ its top or the Back gesture returns to where you were on the home screen.
 | Files saved by apps | Photos, videos, downloads and other files each app saved to your storage, with where most of them are. |
 | Biggest caches | Apps by cache size, to clear the big ones in their info pages. |
 | Growing fast | Apps that grew by 100 MB or more over the last month, fastest first. |
-| Removed apps | Apps DiskTree has seen before that are gone, so you can find one again by name. |
+| Removed apps | Apps FreeSize has seen before that are gone, so you can find one again by name. |
 
 Apps that work without being opened are never suggested for removal:
 preinstalled apps, apps without an icon, your default home screen, browser,
@@ -396,10 +428,10 @@ Signal's storage deletes your messages). Its buttons:
   *Archive* removes the app but keeps its data and login. Tapping its icon
   later reinstalls it from the Play Store.
 - **Save APK to Downloads** (apps not from a store): copies the app's install
-  file to `Download/DiskTree`, so you can install it again later. The app's
+  file to `Download/FreeSize`, so you can install it again later. The app's
   data isn't included.
 - **Browse its files** (apps that saved files to your storage): scans the
-  folder holding most of them, so you can see and delete them in DiskTree.
+  folder holding most of them, so you can see and delete them in FreeSize.
 - **Open in Play Store** (or the store it came from).
 - **App info**: Android's page for clearing the app's cache or data.
 
@@ -416,12 +448,12 @@ files access:
 - **Empty the trash** (Android 11+): photos and videos deleted in the last 30
   days still take space until Android removes them for good.
 - **Delete old app installers**: `.apk` files in Download. APKs saved with
-  DiskTree in `Download/DiskTree` are kept.
+  FreeSize in `Download/FreeSize` are kept.
 - **Clear the thumbnail cache**: `DCIM/.thumbnails`, which gallery apps
   rebuild.
 - **Delete leftovers of removed apps**: their folders in `Android/media`.
 
-DiskTree asks before deleting anything, then measures again.
+FreeSize asks before deleting anything, then measures again.
 
 Two more cards are for things that aren't junk, so they never delete
 anything themselves; **Review** opens the files to look through:
@@ -438,31 +470,31 @@ anything themselves; **Review** opens the files to look through:
 **Storage over time** charts apps, your files and the system day by day,
 under the storage breakdown. It says how much used space grew over the last
 30 days and, when it's growing, about when the storage will be full at that
-rate. DiskTree records a sample each day it measures the apps, so the chart
+rate. FreeSize records a sample each day it measures the apps, so the chart
 starts with the first two days and the growth figures need a few days.
 
-After you come back from uninstalling an app or from its info page, DiskTree
+After you come back from uninstalling an app or from its info page, FreeSize
 measures the apps again.
 
-The app history is a small file, `Documents/DiskTree/app-history.json`, with a
-second copy in DiskTree's private storage. The first survives uninstalling
-DiskTree. Other apps with All files access can read it, so delete it if you
-don't want the list of your apps there. DiskTree only notices an app was
+The app history is a small file, `Documents/FreeSize/app-history.json`, with a
+second copy in FreeSize's private storage. The first survives uninstalling
+FreeSize. Other apps with All files access can read it, so delete it if you
+don't want the list of your apps there. FreeSize only notices an app was
 removed the next time it measures the apps, so the removal date can be later
 than the day you removed it.
 
 | Problem | Cause | Fix |
 |---|---|---|
 | Uninstall does nothing | The APK was built without the `REQUEST_DELETE_PACKAGES` permission (versions before 0.2.0). | Install 0.2.0 or later. |
-| *Apps & system* stays at "Allow usage access" | DiskTree isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
-| Usage access switch is greyed out, says "Controlled by Restricted Setting", or shows "App was denied access" | Android 13+ blocks Usage access for apps installed from a downloaded file (restricted settings). | Settings → Apps → DiskTree → ⋮ → *Allow restricted settings*, then turn Usage access on. If ⋮ isn't there, try to turn the switch on once first; the menu only appears after Android has blocked it. |
-| "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `disktree-android.apk` from v0.1.1 or later. |
-| "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key: releases up to 0.1.3 were built on GitHub with a throwaway key. | Uninstall DiskTree once, then install the new APK. Releases from 0.2.0 on share one key and install over each other. |
+| *Apps & system* stays at "Allow usage access" | FreeSize isn't switched on under Settings → Apps → Special app access → Usage access. | Turn it on there; the list appears within a second of returning. |
+| Usage access switch is greyed out, says "Controlled by Restricted Setting", or shows "App was denied access" | Android 13+ blocks Usage access for apps installed from a downloaded file (restricted settings). | Settings → Apps → FreeSize → ⋮ → *Allow restricted settings*, then turn Usage access on. If ⋮ isn't there, try to turn the switch on once first; the menu only appears after Android has blocked it. |
+| "You can't install the app on your device" or "App not compatible" | The APK has no code for the phone's processor. v0.1.0 shipped separate files, and the `x86_64` one is for emulators. | Use `freesize-android.apk` from v0.1.1 or later. |
+| "App not installed as package conflicts with an existing package" | The installed copy was signed with a different key: releases up to 0.1.3 were built on GitHub with a throwaway key. | Uninstall FreeSize once, then install the new APK. Releases from 0.2.0 on share one key and install over each other. |
 | Installing apps from outside the Play Store is blocked entirely | Advanced Protection is on (Settings → Security & privacy), or a work profile forbids it. | Install with `adb install`, or turn that setting off. |
-| "App blocked" because the developer isn't verified | Google is rolling out developer verification region by region. | `adb install` still works. Registering the developer and package `dev.disktree.app` with Google removes the block for everyone. |
+| "App blocked" because the developer isn't verified | Google is rolling out developer verification region by region. | `adb install` still works. Registering the developer and package `io.github.mcgeaverbeaver.freesize` with Google removes the block for everyone. |
 | A folder shows "no access" | `Android/data`, `Android/obb` and other apps' private files are off limits to every app on Android 11+. | Nothing to fix; that's an Android rule. |
 
-## DiskTree Hub
+## FreeSize Hub
 
 One dashboard for the storage of all your devices: phones, PCs, servers and
 the NAS. Each device reports its disks, its biggest folders and files (not
@@ -505,17 +537,17 @@ on the device itself:
   same admin do the same kind of thing again without asking until it runs
   out; the lengths on offer (and a maximum of 8 hours) are set per device
   group in Settings. The device lists its grants and ends them on request
-  (Hub settings → End grants, or `disktree agent revoke`). What can't be
+  (Hub settings → End grants, or `freesize agent revoke`). What can't be
   put back, emptying the quarantine and removing Docker images, is never
   covered by a grant: it's asked for every time, with the paths shown.
 - A server with nobody at it sends its requests to its **approver**, a
-  phone or PC with the DiskTree app. The approver is chosen **on the server
-  only**, with `disktree approver set <key>` (the key is under Hub settings
+  phone or PC with the FreeSize app. The approver is chosen **on the server
+  only**, with `freesize approver set <key>` (the key is under Hub settings
   in the app), never from the dashboard, so a stolen dashboard sign-in can't
   approve its own requests. The server checks the approver's signature on
   every answer.
 - Every device refuses what's outside the folders it scans, paths with
-  `..` or through links, system folders, and DiskTree's own files. On a
+  `..` or through links, system folders, and FreeSize's own files. On a
   desktop, deleted files go to the Trash; on a server they go to a
   quarantine on the same disk, to put back or empty later (each another
   request, approved the same way); on Android they're deleted.
@@ -528,7 +560,7 @@ on the device itself:
 
 ![An approval on the desktop app](docs/screenshots/hub-approval.png)
 
-The DiskTree app on a phone only hears from the Hub while it's open. Turn on
+The FreeSize app on a phone only hears from the Hub while it's open. Turn on
 the request alert (Alerts → When to alert) and add ntfy or Pushover, and
 you'll get a notification to open it.
 
@@ -559,66 +591,66 @@ names) are only as private as your HTTPS. A plain `http://` address works
 too, on every device including Android; devices warn when they pair over it,
 since anyone on the network can read what they send.
 
-**Unraid**: the template is in `unraid/disktree-hub.xml`. Until it's in
+**Unraid**: the template is in `unraid/freesize-hub.xml`. Until it's in
 Community Applications, add it from the Unraid terminal, then pick
-**disktree-hub** under Docker → Add Container → Template:
+**freesize-hub** under Docker → Add Container → Template:
 
 ```sh
-wget -O /boot/config/plugins/dockerMan/templates-user/my-disktree-hub.xml \
-  https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/disktree-hub.xml
+wget -O /boot/config/plugins/dockerMan/templates-user/my-freesize-hub.xml \
+  https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/freesize-hub.xml
 ```
 
 It asks for the web port, the appdata folder
-(`/mnt/user/appdata/disktree-hub`), the Hub's address and the Authentik
+(`/mnt/user/appdata/freesize-hub`), the Hub's address and the Authentik
 settings; the listen address and metrics token are under "Show more
 settings".
 
 **Docker** (any Linux, Synology, Docker Desktop):
 
 ```sh
-docker run -d --name disktree-hub --restart unless-stopped \
-  -p 192.168.10.200:9090:9090 -v /srv/disktree-hub:/data \
-  -e DISKTREE_HUB_URL=https://disktree.home.lan \
-  -e DISKTREE_OIDC_ISSUER=https://auth.home.lan/application/o/disktree/ \
-  -e DISKTREE_OIDC_CLIENT_ID=... \
-  -v /srv/disktree-hub-secret:/run/secrets/oidc:ro \
-  -e DISKTREE_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
-  ghcr.io/mcgeaverbeaver/disktree-hub:latest
+docker run -d --name freesize-hub --restart unless-stopped \
+  -p 192.168.10.200:9090:9090 -v /srv/freesize-hub:/data \
+  -e FREESIZE_HUB_URL=https://freesize.home.lan \
+  -e FREESIZE_OIDC_ISSUER=https://auth.home.lan/application/o/freesize/ \
+  -e FREESIZE_OIDC_CLIENT_ID=... \
+  -v /srv/freesize-hub-secret:/run/secrets/oidc:ro \
+  -e FREESIZE_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc \
+  ghcr.io/mcgeaverbeaver/freesize-hub:latest
 ```
 
-The client secret comes from a file (`/srv/disktree-hub-secret` here, holding
-just the secret) rather than `-e DISKTREE_OIDC_CLIENT_SECRET=...`, which
+The client secret comes from a file (`/srv/freesize-hub-secret` here, holding
+just the secret) rather than `-e FREESIZE_OIDC_CLIENT_SECRET=...`, which
 would stay in your shell history and show in `docker inspect`.
 
 The container runs the Hub as `PUID`:`PGID` (99:100 by default) and gives
 it the data folder. The image is built for amd64 and arm64 by
 `scripts/release.sh` (see Releases).
 
-**Plain Linux**: `disktree-hub-linux-<arch>.tar.gz` from a release has the
+**Plain Linux**: `freesize-hub-linux-<arch>.tar.gz` from a release has the
 program, a systemd unit and a settings file:
 
 ```sh
-sudo install -m 755 disktree-hub /usr/local/bin/
-sudo install -m 644 disktree-hub.service /etc/systemd/system/
-sudo install -m 600 disktree-hub.env /etc/disktree-hub.env   # fill it in
-sudo systemctl enable --now disktree-hub
+sudo install -m 755 freesize-hub /usr/local/bin/
+sudo install -m 644 freesize-hub.service /etc/systemd/system/
+sudo install -m 600 freesize-hub.env /etc/freesize-hub.env   # fill it in
+sudo systemctl enable --now freesize-hub
 ```
 
-Its data goes to `/var/lib/disktree-hub`. Every setting is a variable (or
-a flag; `disktree-hub --help` lists them):
+Its data goes to `/var/lib/freesize-hub`. Every setting is a variable (or
+a flag; `freesize-hub --help` lists them):
 
 | Variable | Meaning |
 |---|---|
-| `DISKTREE_HUB_LISTEN` | Address and port, default `0.0.0.0:9090` |
-| `DISKTREE_HUB_URL` | How people and devices reach the Hub; goes into pairing codes |
-| `DISKTREE_HUB_DATA` | The data folder |
-| `DISKTREE_HUB_NAME` | Name in the dashboard and on devices |
-| `DISKTREE_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` (or `_CLIENT_SECRET_FILE`) | The Authentik provider |
-| `DISKTREE_ADMIN_GROUP`, `DISKTREE_VIEWER_GROUP` | Groups for admins and viewers (`disktree-admins`, `disktree-viewers`) |
-| `DISKTREE_METRICS_TOKEN` | Turns on `/metrics` and `/metrics/json` |
-| `DISKTREE_HUB_LOG` | `info`, or `debug` |
+| `FREESIZE_HUB_LISTEN` | Address and port, default `0.0.0.0:9090` |
+| `FREESIZE_HUB_URL` | How people and devices reach the Hub; goes into pairing codes |
+| `FREESIZE_HUB_DATA` | The data folder |
+| `FREESIZE_HUB_NAME` | Name in the dashboard and on devices |
+| `FREESIZE_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET` (or `_CLIENT_SECRET_FILE`) | The Authentik provider |
+| `FREESIZE_ADMIN_GROUP`, `FREESIZE_VIEWER_GROUP` | Groups for admins and viewers (`freesize-admins`, `freesize-viewers`) |
+| `FREESIZE_METRICS_TOKEN` | Turns on `/metrics` and `/metrics/json` |
+| `FREESIZE_HUB_LOG` | `info`, or `debug` |
 
-`disktree-hub health` checks that the Hub on this machine answers; the
+`freesize-hub health` checks that the Hub on this machine answers; the
 Docker image uses it as its health check.
 
 ### Signing in with Authentik
@@ -628,14 +660,14 @@ PKCE), so Authentik's MFA and policies apply.
 
 1. In Authentik, **Applications → Providers → Create → OAuth2/OpenID
    Provider**: client type **Confidential**, redirect URI
-   `https://disktree.home.lan/auth/callback` (your Hub address plus
+   `https://freesize.home.lan/auth/callback` (your Hub address plus
    `/auth/callback`), and under **Advanced protocol settings** a signing
    key (Authentik's self-signed certificate is fine). Without one,
    Authentik signs with the client secret (HS256), which the Hub also
    accepts from 0.8.4 on; 0.8.3 couldn't sign in that way.
-2. **Applications → Create**: name it, slug `disktree`, with that provider.
-   The issuer is then `https://auth.home.lan/application/o/disktree/`.
-3. **Directory → Groups**: make `disktree-admins` and `disktree-viewers`,
+2. **Applications → Create**: name it, slug `freesize`, with that provider.
+   The issuer is then `https://auth.home.lan/application/o/freesize/`.
+3. **Directory → Groups**: make `freesize-admins` and `freesize-viewers`,
    and add yourself to the admins.
 4. Give the Hub the issuer, client ID and client secret.
 
@@ -650,20 +682,20 @@ In the dashboard, **Pair a device** shows a code and a QR code, valid for 10
 minutes and good for one device. It carries the Hub's address and its key's
 fingerprint, which the device checks before it trusts the Hub.
 
-- **Phone**: scan the QR code with the camera; it opens DiskTree's connect
-  dialog. Or open the DiskTree Hub card on the start screen → Connect, and
+- **Phone**: scan the QR code with the camera; it opens FreeSize's connect
+  dialog. Or open the FreeSize Hub card on the start screen → Connect, and
   type the Hub's address and the code.
-- **Computer**: DiskTree app → DiskTree Hub → Connect, and paste the link.
-- **Server**: the command line (`disktree`) is also the agent:
+- **Computer**: FreeSize app → FreeSize Hub → Connect, and paste the link.
+- **Server**: the command line (`freesize`) is also the agent:
 
   ```sh
-  sudo disktree agent pair 'disktree://pair?hub=...' --state /var/lib/disktree-agent/agent.json
-  sudo disktree approver set XXXX-XXXX-XXXX-XXXX --state /var/lib/disktree-agent/agent.json
-  sudo disktree agent run --scan /mnt/user --scan /mnt/cache --state /var/lib/disktree-agent/agent.json
+  sudo freesize agent pair 'freesize://pair?hub=...' --state /var/lib/freesize-agent/agent.json
+  sudo freesize approver set XXXX-XXXX-XXXX-XXXX --state /var/lib/freesize-agent/agent.json
+  sudo freesize agent run --scan /mnt/user --scan /mnt/cache --state /var/lib/freesize-agent/agent.json
   ```
 
-  `packaging/systemd/disktree-agent.service` (also in the Linux release
-  archive) runs it as a service. `disktree agent status` shows the Hub,
+  `packaging/systemd/freesize-agent.service` (also in the Linux release
+  archive) runs it as a service. `freesize agent status` shows the Hub,
   the approver and grants.
 
 The app reports after each scan; the agent reports its disks every hour and
@@ -680,7 +712,7 @@ ncdu -1xo- / | gzip > scan.json.gz
 ```
 
 Any ncdu writes this with `-o` (not ncdu 2.6's binary `-O`), and so does
-`disktree /path --export scan.json`. Files up to 128 MB unpacked; for big
+`freesize /path --export scan.json`. Files up to 128 MB unpacked; for big
 machines, run the agent instead.
 
 ### Alerts, metrics and Home Assistant
@@ -698,7 +730,7 @@ worse and when they're over, to:
 - a **webhook**: a JSON POST, signed with HMAC-SHA256 in an
   `X-DiskTree-Signature: sha256=…` header when you set a secret.
 
-With `DISKTREE_METRICS_TOKEN` set, `/metrics` serves Prometheus metrics
+With `FREESIZE_METRICS_TOKEN` set, `/metrics` serves Prometheus metrics
 (disk size, free and used space; scanned folder sizes; devices; requests;
 alerts) and `/metrics/json` the same as JSON. Both want the token as a
 bearer token:
@@ -706,20 +738,20 @@ bearer token:
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: disktree
+  - job_name: freesize
     scheme: https
     authorization:
       credentials: <token>
     static_configs:
-      - targets: [disktree.home.lan]
+      - targets: [freesize.home.lan]
 
 # Home Assistant configuration.yaml
 sensor:
   - platform: rest
     name: Tower array used
-    resource: https://disktree.home.lan/metrics/json
+    resource: https://freesize.home.lan/metrics/json
     headers:
-      Authorization: !secret disktree_bearer   # "Bearer <token>"
+      Authorization: !secret freesize_bearer   # "Bearer <token>"
     value_template: >-
       {{ (value_json.devices | selectattr('name', 'eq', 'Tower') | first).disks
          | selectattr('path', 'eq', '/mnt/user') | map(attribute='used_percent') | first }}
@@ -730,16 +762,16 @@ sensor:
 ### Trying the Hub without devices
 
 ```sh
-cargo run -p disktree-hub --example demo
+cargo run -p freesize-hub --example demo
 ```
 
 starts a Hub on http://127.0.0.1:9090 with a stand-in sign-in (it signs you
 straight in as an admin) and a few made-up devices, scans, requests and
 alerts.
 
-## DiskTree for Unraid
+## FreeSize for Unraid
 
-A plugin for Unraid 6.12 and newer: a page under **Tools → DiskTree** and a
+A plugin for Unraid 6.12 and newer: a page under **Tools → FreeSize** and a
 small background part. It knows the array, the pools, Docker and the VMs,
 and keeps what the server needs out of reach.
 
@@ -799,7 +831,7 @@ stopped, everything they could use counts as in use.
 In Unraid, **Plugins → Install Plugin**, and paste:
 
 ```
-https://github.com/McGeaverBeaver/FreeSize/releases/latest/download/disktree.plg
+https://github.com/McGeaverBeaver/FreeSize/releases/latest/download/freesize.plg
 ```
 
 (Unraid downloads it without logging in, so the repository has to be
@@ -807,9 +839,9 @@ public.) Updates show on the Plugins page like any other plugin's.
 
 The background part runs at the lowest CPU and disk priority, stops when
 the array stops so it never holds a disk, and logs to
-`/var/log/disktree.log`. To start or stop it by hand:
-`/etc/rc.d/rc.disktree start|stop|restart|status`. Removing the plugin
-keeps its settings and Hub pairing in `/boot/config/plugins/disktree`, and
+`/var/log/freesize.log`. To start or stop it by hand:
+`/etc/rc.d/rc.freesize start|stop|restart|status`. Removing the plugin
+keeps its settings and Hub pairing in `/boot/config/plugins/freesize`, and
 anything still in the quarantine stays in `.disktree-quarantine` at the top
 of each disk until you delete it. The pairing file there holds the server's
 private key; the flash drive can't keep file permissions, so make sure the
@@ -819,35 +851,35 @@ Security).
 ### With the Hub
 
 On the **Settings and Hub** tab, paste a pairing link from the Hub (Pair a
-device), then choose the approver by the key its DiskTree app shows. The
+device), then choose the approver by the key its FreeSize app shows. The
 server then reports its disks, a scan per disk, shares, Docker, VMs and
 quarantine to the Hub, which shows them on the device's **Unraid** and
 **Quarantine** tabs. An admin can ask it to put back or empty the
 quarantine, remove Docker images, or delete what the server listed as not
 in use; the approver's phone shows every path first. The approver can only
-be changed on this page or with `disktree approver set` on the server.
+be changed on this page or with `freesize approver set` on the server.
 
 ### From the Unraid terminal
 
 ```sh
-disktree unraid status
-disktree unraid estimate /mnt/user/Movies/Old
-disktree unraid quarantine list
-disktree unraid quarantine add /mnt/user/isos/old.iso --reason "not needed"
-disktree unraid quarantine restore <batch>
-disktree unraid quarantine empty <batch>...
-disktree unraid folders --share Movies --folder "Old Films"   # --wake: sleeping disks too
-disktree unraid move plan --share Movies --folder "Old Films" --from disk1 --to disk3
-disktree unraid move start --share Movies --folder "Old Films" --from disk1 --from disk2 --to disk3
-disktree unraid docker-cleanup <id>...    # ids from status --json
-disktree agent pair 'disktree://pair?...' # same as pairing on the page
-disktree agent status                     # the Hub, the approver, grants
-disktree approver set XXXX-XXXX-XXXX-XXXX
+freesize unraid status
+freesize unraid estimate /mnt/user/Movies/Old
+freesize unraid quarantine list
+freesize unraid quarantine add /mnt/user/isos/old.iso --reason "not needed"
+freesize unraid quarantine restore <batch>
+freesize unraid quarantine empty <batch>...
+freesize unraid folders --share Movies --folder "Old Films"   # --wake: sleeping disks too
+freesize unraid move plan --share Movies --folder "Old Films" --from disk1 --to disk3
+freesize unraid move start --share Movies --folder "Old Films" --from disk1 --from disk2 --to disk3
+freesize unraid docker-cleanup <id>...    # ids from status --json
+freesize agent pair 'freesize://pair?...' # same as pairing on the page
+freesize agent status                     # the Hub, the approver, grants
+freesize approver set XXXX-XXXX-XXXX-XXXX
 ```
 
-On Unraid, `disktree agent` and `disktree approver` use the plugin's
+On Unraid, `freesize agent` and `freesize approver` use the plugin's
 pairing on the flash drive; pairing there is picked up by the plugin
-straight away. The plugin's log is `/var/log/disktree.log`, with every
+straight away. The plugin's log is `/var/log/freesize.log`, with every
 pairing attempt from the page.
 
 ## Releases
@@ -944,18 +976,18 @@ Rust, the Android SDK and the signing key stay on the VM's own disk.
    scripts/release.sh
    ```
 
-`scripts/release.sh` runs the tests, builds `disktree-android.apk`,
-`disktree-linux-x86_64.tar.gz`, `disktree-hub-linux-x86_64.tar.gz`,
-`disktree-windows-x86_64.zip` (the Windows build is cross-compiled with
-MinGW) and the Unraid plugin, `disktree.plg` with its package
-`disktree-<version>-x86_64-1.txz` (a static musl build, so it runs on every
+`scripts/release.sh` runs the tests, builds `freesize-android.apk`,
+`freesize-linux-x86_64.tar.gz`, `freesize-hub-linux-x86_64.tar.gz`,
+`freesize-windows-x86_64.zip` (the Windows build is cross-compiled with
+MinGW) and the Unraid plugin, `freesize.plg` with its package
+`freesize-<version>-x86_64-1.txz` (a static musl build, so it runs on every
 Unraid version), writes `SHA256SUMS.txt`, and creates the GitHub release `v<version>`
 for the checked-out commit with those files and notes listing the changes.
 With `gcc-aarch64-linux-gnu` installed it adds the Hub and command line for
 ARM boards (`*-linux-aarch64.tar.gz`).
 
 It also publishes the Hub's Docker image, as a GitHub Actions workflow
-would but without using Actions minutes: `ghcr.io/mcgeaverbeaver/disktree-hub`,
+would but without using Actions minutes: `ghcr.io/mcgeaverbeaver/freesize-hub`,
 a package of the repository, for amd64 and arm64. The image takes the Hub
 the release has just built, so Docker compiles nothing and needs only a few
 hundred MB. It logs in to GitHub's registry with the GitHub CLI's token
@@ -968,9 +1000,9 @@ sudo usermod -aG docker $USER   # then log in again
 ```
 
 and the first time the image is pushed, make the package public on GitHub
-(Packages → disktree-hub → Package settings → Change visibility) so Unraid
+(Packages → freesize-hub → Package settings → Change visibility) so Unraid
 can pull it without logging in; the script reminds you while it's private.
-`DISKTREE_IMAGE` names another image, and `--no-image` leaves it out.
+`FREESIZE_IMAGE` names another image, and `--no-image` leaves it out.
 
 The script refuses to publish uncommitted or unpushed code, or a version
 that's already released. The image is tagged `<version>` and `latest` (the
@@ -1016,12 +1048,12 @@ To sign with a different key, set `CARGO_APK_RELEASE_KEYSTORE` and
 ```
 crates/core   scanner, tree model, stats, treemap and bubble layout,
               snapshots, scan files (no UI)
-crates/cli    `disktree` command-line tool and Hub agent
+crates/cli    `freesize` command-line tool and Hub agent
 crates/app    Slint app; ui/app.slint is the whole UI, src/controller.rs the logic
 crates/proto  what devices and the Hub say to each other: keys, signatures,
               pairing links, reports, commands
 crates/agent  the device side of the Hub, shared by the app and the agent
-crates/hub    DiskTree Hub: web server, dashboard (web/), SQLite, alerts
+crates/hub    FreeSize Hub: web server, dashboard (web/), SQLite, alerts
 crates/unraid Unraid: the array, shares, Docker, VMs, what to protect,
               disk activity, permissions, moves between disks
 unraid/       the Hub's Unraid template, and plugin/: the .plg and the
@@ -1034,7 +1066,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work, and
 
 ## Licensing
 
-DiskTree will be released under the GNU General Public License, version 3 or
+FreeSize will be released under the GNU General Public License, version 3 or
 later (decided 2026-10-12; the LICENSE file arrives with 0.9, together with
 the "Made with Slint" attribution Slint's royalty-free license asks for).
 Until the file is in the repository, no license is granted.

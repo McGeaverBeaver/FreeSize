@@ -1,0 +1,5 @@
+Menu="FreeSize:3"
+Title="Docker and VMs"
+---
+<?require_once "$docroot/plugins/freesize/include/page.php";?>
+<div class="freesize" id="dt-apps"><p class="dt-muted">Loading…</p></div>

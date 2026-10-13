@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use disktree_core::{DiskSpace, disk_space};
+use freesize_core::{DiskSpace, disk_space};
 
 use crate::cleanup::{self, Junk, MediaUse, Review};
 use crate::growth::{self, Change};
@@ -58,7 +58,7 @@ pub struct AppUsage {
     pub archived: bool,
     /// Developer-declared category (`ApplicationInfo.category`), -1 if none.
     pub category: i32,
-    /// DiskTree itself.
+    /// FreeSize itself.
     pub own: bool,
     /// How its size changed over about the last month, from the app
     /// history; `None` until there are a few days of it.
@@ -281,16 +281,13 @@ pub fn demo_enabled() -> bool {
 fn history_paths() -> Vec<PathBuf> {
     const NAME: &str = "app-history.json";
     if demo::enabled() {
-        return vec![std::env::temp_dir().join("disktree-demo").join(NAME)];
+        return vec![std::env::temp_dir().join("freesize-demo").join(NAME)];
     }
     let mut paths = Vec::new();
     if cfg!(target_os = "android") {
-        paths.push(
-            locations::default_path()
-                .join("Documents")
-                .join("DiskTree")
-                .join(NAME),
-        );
+        // DiskTree's folder from before the rename becomes FreeSize's.
+        let documents = locations::default_path().join("Documents");
+        paths.push(freesize_core::renamed::adopt_dir(documents.join("FreeSize")).join(NAME));
     }
     paths.extend(platform::private_dir().map(|dir| dir.join(NAME)));
     paths
@@ -357,26 +354,26 @@ pub fn clear_all_cache() -> bool {
     platform::clear_all_cache()
 }
 
-/// Whether DiskTree's window is in front, used to notice the user coming
+/// Whether FreeSize's window is in front, used to notice the user coming
 /// back from a system screen.
 pub fn window_has_focus() -> bool {
     platform::window_has_focus()
 }
 
-/// Copies the app's install files to `Download/DiskTree`, so an app that
+/// Copies the app's install files to `Download/FreeSize`, so an app that
 /// isn't in any store can be installed again. Slow for big apps, so call it
 /// off the UI thread. Returns a message for the user.
 pub fn save_apk(package: &str, label: &str, version: &str) -> Result<String, String> {
     let files = platform::apk_files(package)?;
-    let dir = locations::default_path().join("Download").join("DiskTree");
+    let dir = locations::default_path().join("Download").join("FreeSize");
     let name = file_name(&format!("{label} {version}"));
     let saved =
         copy_apks(&files, &dir, &name).map_err(|err| format!("Couldn't save the APK: {err}"))?;
     Ok(if files.len() == 1 {
-        format!("Saved {saved} to Download/DiskTree.")
+        format!("Saved {saved} to Download/FreeSize.")
     } else {
         format!(
-            "Saved {} files to Download/DiskTree/{saved}. They're split APKs: install them \
+            "Saved {} files to Download/FreeSize/{saved}. They're split APKs: install them \
              together with an app like SAI, or with adb install-multiple.",
             files.len()
         )
@@ -525,8 +522,8 @@ mod platform {
 }
 
 /// Sample data for working on the UI without a phone: debug builds started
-/// with `DISKTREE_FAKE_APPS=1` show it on the home screen, and
-/// `DISKTREE_FAKE_APPS=no-access` shows the Usage access prompt.
+/// with `FREESIZE_FAKE_APPS=1` show it on the home screen, and
+/// `FREESIZE_FAKE_APPS=no-access` shows the Usage access prompt.
 mod demo {
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -534,7 +531,7 @@ mod demo {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use disktree_core::disk_space;
+    use freesize_core::disk_space;
 
     use super::{AppReport, AppUsage};
     use crate::cleanup::{Junk, JunkKind, MediaUse, Place, Review, ReviewKind};
@@ -668,11 +665,11 @@ mod demo {
     }
 
     pub fn enabled() -> bool {
-        cfg!(debug_assertions) && std::env::var_os("DISKTREE_FAKE_APPS").is_some()
+        cfg!(debug_assertions) && std::env::var_os("FREESIZE_FAKE_APPS").is_some()
     }
 
     pub fn access_granted() -> bool {
-        std::env::var("DISKTREE_FAKE_APPS").as_deref() != Ok("no-access")
+        std::env::var("FREESIZE_FAKE_APPS").as_deref() != Ok("no-access")
     }
 
     pub fn report() -> AppReport {
@@ -734,7 +731,7 @@ mod demo {
             ),
             app("Old Game", "com.example.oldgame", 0, 1_200, 0, 0),
             app("Sideloaded Tool", "org.example.tool", 45, 120, 5, 3),
-            app("DiskTree", "dev.disktree.app", 16, 2, 0, 0),
+            app("FreeSize", "io.github.mcgeaverbeaver.freesize", 16, 2, 0, 0),
         ];
         apps[3].category = 0;
         apps[7].last_opened = None;
@@ -746,7 +743,7 @@ mod demo {
         apps[10].installer_label = Some("Chrome".into());
         apps[11].installer = Some("com.google.android.packageinstaller".into());
         apps[11].own = true;
-        apps[11].protected = Some("DiskTree itself".into());
+        apps[11].protected = Some("FreeSize itself".into());
         let mut aicore = app("AICore", "com.google.android.aicore", 127, 6_030, 0, 0);
         aicore.system = true;
         aicore.has_launcher = false;
@@ -944,7 +941,7 @@ mod tests {
 
     #[test]
     fn copies_one_apk_or_a_folder_of_splits() {
-        let dir = std::env::temp_dir().join(format!("disktree-apk-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-apk-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let base = dir.join("base.apk");

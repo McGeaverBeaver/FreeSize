@@ -11,7 +11,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use disktree_proto::{
+use freesize_proto::{
     Action, ActionKind, Approval, ApprovedBy, Command, CommandState, CommandUpdate, Decision,
     Grant, Purpose, Signed,
 };
@@ -145,7 +145,7 @@ pub fn consider(
         refuse(
             &request.command.id,
             CommandState::Denied,
-            "nobody is at this device and no approver is set: run `disktree approver set \
+            "nobody is at this device and no approver is set: run `freesize approver set \
              <fingerprint>` on it first"
                 .into(),
         )
@@ -327,7 +327,7 @@ pub fn protected(path: &Path, policy: &Policy) -> Option<&'static str> {
         .iter()
         .any(|keep| path == keep || keep.starts_with(path))
     {
-        return Some("DiskTree's own files");
+        return Some("FreeSize's own files");
     }
     protected_text(
         &path.to_string_lossy(),
@@ -444,7 +444,7 @@ pub trait Executor {
             detail: format!(
                 "deleted {done} of {}, freeing {}",
                 targets.len(),
-                disktree_core::format_size(freed)
+                freesize_core::format_size(freed)
             ),
             results,
             freed,
@@ -543,7 +543,7 @@ pub fn run(request: &Request, executor: &dyn Executor, approval: Approval) -> Co
                 update.freed = bytes;
                 update.detail = format!(
                     "emptied the quarantine, freeing {}",
-                    disktree_core::format_size(bytes)
+                    freesize_core::format_size(bytes)
                 );
             }
             Err(err) => failed(&mut update, err),
@@ -551,7 +551,7 @@ pub fn run(request: &Request, executor: &dyn Executor, approval: Approval) -> Co
         Action::DockerCleanup { items, .. } => match executor.docker_cleanup(items) {
             Ok(bytes) => {
                 update.freed = bytes;
-                update.detail = format!("freed {}", disktree_core::format_size(bytes));
+                update.detail = format!("freed {}", freesize_core::format_size(bytes));
             }
             Err(err) => failed(&mut update, err),
         },
@@ -565,7 +565,7 @@ pub fn run(request: &Request, executor: &dyn Executor, approval: Approval) -> Co
         Action::CleanJunk { kind, .. } => match executor.clean(kind) {
             Ok(bytes) => {
                 update.freed = bytes;
-                update.detail = format!("freed {}", disktree_core::format_size(bytes));
+                update.detail = format!("freed {}", freesize_core::format_size(bytes));
             }
             Err(err) => {
                 update.state = CommandState::Failed;
@@ -590,7 +590,7 @@ pub fn describe(command: &Command, device_name: Option<&str>) -> Vec<String> {
                     1 => "1 item".to_string(),
                     n => format!("{n} items"),
                 },
-                disktree_core::format_size(*bytes)
+                freesize_core::format_size(*bytes)
             ));
             lines.extend(paths.iter().take(50).map(|p| format!("{root}/{p}")));
             if paths.len() > 50 {
@@ -607,7 +607,7 @@ pub fn describe(command: &Command, device_name: Option<&str>) -> Vec<String> {
         Action::CleanJunk { label, bytes, .. } => lines.push(format!(
             "{} asks to clean up {label} ({}){on}.",
             command.by.name,
-            disktree_core::format_size(*bytes)
+            freesize_core::format_size(*bytes)
         )),
         Action::Restore { label, .. } => lines.push(format!(
             "{} asks to put back {label}{on}, where it was before.",
@@ -621,13 +621,13 @@ pub fn describe(command: &Command, device_name: Option<&str>) -> Vec<String> {
                 1 => "1 batch".to_string(),
                 n => format!("{n} batches"),
             },
-            disktree_core::format_size(*bytes)
+            freesize_core::format_size(*bytes)
         )),
         Action::DockerCleanup { labels, bytes, .. } => {
             lines.push(format!(
                 "{} asks to remove from Docker ({}){on}:",
                 command.by.name,
-                disktree_core::format_size(*bytes)
+                freesize_core::format_size(*bytes)
             ));
             lines.extend(labels.iter().take(50).cloned());
         }
@@ -642,7 +642,7 @@ pub fn describe(command: &Command, device_name: Option<&str>) -> Vec<String> {
 mod tests {
     use std::fs;
 
-    use disktree_proto::{Admin, KeyPair};
+    use freesize_proto::{Admin, KeyPair};
 
     use super::*;
     use crate::state::Approver;
@@ -662,7 +662,7 @@ mod tests {
 
     fn setup(name: &str, attended: bool) -> Setup {
         let dir =
-            std::env::temp_dir().join(format!("disktree-agent-cmd-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("freesize-agent-cmd-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("share/movies")).unwrap();
         fs::write(dir.join("share/movies/a.mkv"), vec![1u8; 5000]).unwrap();

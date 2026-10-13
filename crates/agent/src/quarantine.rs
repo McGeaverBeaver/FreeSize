@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use disktree_proto::unraid::{QuarantineBatch, QuarantineItem};
+use freesize_proto::unraid::{QuarantineBatch, QuarantineItem};
 use serde::{Deserialize, Serialize};
 
 /// The quarantine's folder at the top of each filesystem.
@@ -441,7 +441,7 @@ impl crate::commands::Executor for QuarantineExecutor {
     fn delete_all(
         &self,
         targets: &[PathBuf],
-        command: &disktree_proto::Command,
+        command: &freesize_proto::Command,
     ) -> crate::commands::Deleted {
         let moved = self.quarantine.move_in(
             &command.id,
@@ -456,7 +456,7 @@ impl crate::commands::Executor for QuarantineExecutor {
             detail: format!(
                 "moved {done} of {} to the quarantine ({}); the space is freed when it's emptied",
                 targets.len(),
-                disktree_core::format_size(bytes)
+                freesize_core::format_size(bytes)
             ),
             results: moved.results,
             freed: 0,
@@ -472,7 +472,7 @@ impl crate::commands::Executor for QuarantineExecutor {
     }
 
     fn note(&self, request: &crate::commands::Request) -> String {
-        use disktree_proto::Action;
+        use freesize_proto::Action;
         match &request.command.action {
             Action::Delete { .. } => format!(
                 "{} moves them to its quarantine on the same disk: they can be put back, and \

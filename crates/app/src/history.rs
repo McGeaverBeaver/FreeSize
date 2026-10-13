@@ -1,9 +1,9 @@
-//! A record of every app DiskTree has seen, so a removed app can be found
+//! A record of every app FreeSize has seen, so a removed app can be found
 //! again later ("what was that camera app called?").
 //!
 //! The history is a small JSON file. On Android it's kept in two places:
-//! `Documents/DiskTree/app-history.json` in shared storage, which survives
-//! uninstalling DiskTree, and DiskTree's private storage, which works without
+//! `Documents/FreeSize/app-history.json` in shared storage, which survives
+//! uninstalling FreeSize, and FreeSize's private storage, which works without
 //! All files access. Both are read and merged, and both are written.
 
 use std::collections::HashMap;
@@ -31,11 +31,11 @@ pub struct Entry {
     pub installed_at: Option<u64>,
     pub first_seen: u64,
     pub last_seen: u64,
-    /// When DiskTree first noticed the app was gone.
+    /// When FreeSize first noticed the app was gone.
     pub removed_at: Option<u64>,
     /// Its size when last seen.
     pub size: u64,
-    /// `[day, bytes]` pairs, one per day DiskTree measured the app; days
+    /// `[day, bytes]` pairs, one per day FreeSize measured the app; days
     /// count from 1970. Oldest first.
     pub sizes: Vec<[u64; 2]>,
 }
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn saves_loads_and_merges_copies() {
-        let dir = std::env::temp_dir().join(format!("disktree-history-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-history-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let paths = vec![
             dir.join("one/app-history.json"),
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn unreadable_copies_are_skipped() {
-        let dir = std::env::temp_dir().join(format!("disktree-bad-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-bad-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("app-history.json");
         fs::write(&path, b"not json").unwrap();

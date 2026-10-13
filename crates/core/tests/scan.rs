@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use disktree_core::{
+use freesize_core::{
     NodeId, NodeKind, ScanOptions, ScanProgress, SizeMode, SortKey, Tree, age_bins,
     extension_stats, flags, has_extension, largest_files, largest_files_where, scan, size_bins,
 };

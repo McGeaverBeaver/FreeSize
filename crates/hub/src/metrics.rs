@@ -1,6 +1,6 @@
 //! Metrics for Prometheus (`/metrics`) and the same as JSON for Home
 //! Assistant's REST sensors (`/metrics/json`), behind the bearer token set
-//! in `DISKTREE_METRICS_TOKEN`. Without the token they're off.
+//! in `FREESIZE_METRICS_TOKEN`. Without the token they're off.
 
 use std::fmt::Write;
 
@@ -131,7 +131,7 @@ fn refused(state: &AppState, headers: &HeaderMap) -> Option<Response> {
         return Some(
             (
                 StatusCode::NOT_FOUND,
-                "Metrics are off. Set DISKTREE_METRICS_TOKEN to turn them on.\n",
+                "Metrics are off. Set FREESIZE_METRICS_TOKEN to turn them on.\n",
             )
                 .into_response(),
         );
@@ -147,7 +147,7 @@ fn refused(state: &AppState, headers: &HeaderMap) -> Option<Response> {
     let mut response = (StatusCode::UNAUTHORIZED, "Wrong or missing token.\n").into_response();
     response.headers_mut().insert(
         header::WWW_AUTHENTICATE,
-        HeaderValue::from_static("Bearer realm=\"DiskTree Hub metrics\""),
+        HeaderValue::from_static("Bearer realm=\"FreeSize Hub metrics\""),
     );
     Some(response)
 }

@@ -1,24 +1,24 @@
 [package]
-name = "disktree-app"
-description = "DiskTree desktop and Android app"
+name = "freesize-app"
+description = "FreeSize desktop and Android app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
 [lib]
-name = "disktree_app"
+name = "freesize_app"
 # cdylib is what Android loads; desktop builds use the binary below.
 crate-type = ["lib", "cdylib"]
 
 [[bin]]
-name = "disktree-gui"
+name = "freesize-gui"
 path = "src/main.rs"
 
 [dependencies]
-disktree-agent.workspace = true
-disktree-core.workspace = true
-disktree-proto.workspace = true
+freesize-agent.workspace = true
+freesize-core.workspace = true
+freesize-proto.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -26,7 +26,7 @@ slint = "1.18.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 # The Hub is reached with ureq on desktops; Android uses Java's HTTP client.
-disktree-agent = { workspace = true, features = ["ureq"] }
+freesize-agent = { workspace = true, features = ["ureq"] }
 rfd = "0.17.2"
 trash = "5.2.9"
 
@@ -47,8 +47,8 @@ slint-build = "1.18.1"
 # Read by `cargo apk build`; build with scripts/android/build-apk.sh, which
 # also applies the 16 KB page alignment flag and verifies the result.
 [package.metadata.android]
-package = "dev.disktree.app"
-apk_name = "DiskTree"
+package = "io.github.mcgeaverbeaver.freesize"
+apk_name = "FreeSize"
 # One universal APK: arm64-v8a for phones, x86_64 for emulators and Chromebooks.
 build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
 resources = "android/res"
@@ -59,7 +59,7 @@ min_sdk_version = 26
 target_sdk_version = 36
 
 [package.metadata.android.application]
-label = "DiskTree"
+label = "FreeSize"
 icon = "@mipmap/ic_launcher"
 theme = "@style/AppTheme"
 # Lets the app reach a Hub at a plain http address, the usual LAN setup;
@@ -75,12 +75,13 @@ uses_cleartext_traffic = true
 config_changes = "orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|fontScale|keyboard|keyboardHidden|navigation|locale|layoutDirection|colorMode|touchscreen"
 launch_mode = "singleTask"
 
-# Opens pairing links (disktree://pair?...) from a scanned QR code. cargo-apk
+# Opens pairing links (freesize://pair?...) from a scanned QR code, and
+# disktree://pair?... from a Hub not updated since the rename. cargo-apk
 # still adds the launcher entry, since this filter has no MAIN action.
 [[package.metadata.android.application.activity.intent_filter]]
 actions = ["android.intent.action.VIEW"]
 categories = ["android.intent.category.DEFAULT", "android.intent.category.BROWSABLE"]
-data = [{ scheme = "disktree", host = "pair" }]
+data = [{ scheme = "freesize", host = "pair" }, { scheme = "disktree", host = "pair" }]
 
 # Android 10 and older: classic storage permissions.
 [[package.metadata.android.uses_permission]]
@@ -104,7 +105,7 @@ name = "android.permission.PACKAGE_USAGE_STATS"
 [[package.metadata.android.uses_permission]]
 name = "android.permission.QUERY_ALL_PACKAGES"
 
-# Talking to a DiskTree Hub, when one is connected.
+# Talking to a FreeSize Hub, when one is connected.
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 

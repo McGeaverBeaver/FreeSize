@@ -1,0 +1,5 @@
+Menu="FreeSize:6"
+Title="Settings and Hub"
+---
+<?require_once "$docroot/plugins/freesize/include/page.php";?>
+<div class="freesize" id="dt-settings"><p class="dt-muted">Loading…</p></div>

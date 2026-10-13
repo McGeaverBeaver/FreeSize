@@ -1,12 +1,12 @@
 <?php
-// DiskTree for Unraid: what the page's PHP shares. Everything that changes
-// the server goes through the `disktree` command, which refuses what must
+// FreeSize for Unraid: what the page's PHP shares. Everything that changes
+// the server goes through the `freesize` command, which refuses what must
 // never be touched; this file only passes arguments along, quoted.
 
-$dt_root = getenv('DISKTREE_TEST_ROOT') ?: '';
-$dt_bin = $dt_root ? getenv('DISKTREE_TEST_BIN') : '/usr/local/bin/disktree';
-$dt_config = "$dt_root/boot/config/plugins/disktree";
-$dt_data = "$dt_root/var/local/disktree";
+$dt_root = getenv('FREESIZE_TEST_ROOT') ?: '';
+$dt_bin = $dt_root ? getenv('FREESIZE_TEST_BIN') : '/usr/local/bin/freesize';
+$dt_config = "$dt_root/boot/config/plugins/freesize";
+$dt_data = "$dt_root/var/local/freesize";
 
 /** A server path, inside the test folder when testing. */
 function dt_file($path) {
@@ -15,7 +15,7 @@ function dt_file($path) {
 }
 
 /**
- * Runs `disktree` with the arguments as given, each quoted. For `disktree
+ * Runs `freesize` with the arguments as given, each quoted. For `freesize
  * unraid`, where its folders are goes right after `unraid`, ahead of any
  * `--` that ends the options.
  */
@@ -42,7 +42,7 @@ function dt_state() {
 
 /** Adds a line to the plugin's log, next to the background part's. */
 function dt_log($line) {
-  @file_put_contents(dt_file('/var/log/disktree.log'), $line."\n", FILE_APPEND);
+  @file_put_contents(dt_file('/var/log/freesize.log'), $line."\n", FILE_APPEND);
 }
 
 /** Asks the background part for something. */
@@ -52,10 +52,10 @@ function dt_request($name) {
   return @file_put_contents("$dt_data/requests/$name", '') !== false;
 }
 
-/** The settings in disktree.cfg, with defaults. */
+/** The settings in freesize.cfg, with defaults. */
 function dt_config() {
   global $dt_config;
-  $cfg = @parse_ini_file("$dt_config/disktree.cfg") ?: [];
+  $cfg = @parse_ini_file("$dt_config/freesize.cfg") ?: [];
   return [
     'scan_hours' => (int)($cfg['SCAN_HOURS'] ?? 24),
     'wake_days' => (int)($cfg['WAKE_DAYS'] ?? 7),

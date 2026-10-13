@@ -1,6 +1,6 @@
-# Working on DiskTree
+# Working on FreeSize
 
-DiskTree is a disk space analyzer (Rust + Slint) for Windows, macOS, Linux
+FreeSize (DiskTree until 0.8.6) is a disk space analyzer (Rust + Slint) for Windows, macOS, Linux
 and Android, with a self-hosted Hub for all devices and an Unraid plugin.
 Read [README.md](README.md) for what it does, [ARCHITECTURE.md](ARCHITECTURE.md)
 for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
@@ -16,7 +16,7 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
   request or for N minutes; the lengths on offer are set per device group in
   the Hub's settings.
 - **A device's approver can't be changed from the Hub.** Only on the device:
-  `disktree approver set` on the command line, the app, or the Unraid
+  `freesize approver set` on the command line, the app, or the Unraid
   plugin's settings page.
 - **The Hub signs people in with OpenID Connect through Authentik.**
 - **Don't suggest growing the build VM's disk.** When space runs low, clean
@@ -29,7 +29,7 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
 - Before pushing: `cargo fmt --all`, `cargo clippy --workspace --all-targets
   -- -D warnings`, `cargo test --workspace`. For changes to shared code,
   also clippy for Windows (`--target x86_64-pc-windows-gnu`) and macOS
-  (`--target aarch64-apple-darwin --exclude disktree-hub`). For Android
+  (`--target aarch64-apple-darwin --exclude freesize-hub`). For Android
   changes, `scripts/android/build-apk.sh dist/test.apk` builds and checks
   the APK.
 - Keep README.md, ARCHITECTURE.md and docs/ROADMAP.md in step with changes.
@@ -37,7 +37,7 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
   passwords, or the owner's addresses, hostnames or other personal details.
 - Each release bumps `version` in the root `Cargo.toml`; Android won't
   install a lower version over a higher one.
-- `cargo run -p disktree-hub --example demo` starts a Hub with made-up
+- `cargo run -p freesize-hub --example demo` starts a Hub with made-up
   devices on http://127.0.0.1:9090 for trying dashboard changes.
 
 ## This machine

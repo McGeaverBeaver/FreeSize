@@ -5,10 +5,10 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use disktree_core::snapshot::FolderSize;
-use disktree_proto::keys::random_id;
-use disktree_proto::unraid::{QuarantineBatch, Safety, UnraidReport};
-use disktree_proto::{
+use freesize_core::snapshot::FolderSize;
+use freesize_proto::keys::random_id;
+use freesize_proto::unraid::{QuarantineBatch, Safety, UnraidReport};
+use freesize_proto::{
     Action, ActionKind, Admin as AdminRef, ApprovalRequest, AppsReport, Command, CommandState,
     CommandUpdate, Decision, PollResponse, PublicKey, Purpose, Signed,
 };
@@ -80,7 +80,7 @@ pub struct NewCommand {
 struct Target {
     name: String,
     group_id: i64,
-    info: disktree_proto::DeviceInfo,
+    info: freesize_proto::DeviceInfo,
 }
 
 /// The size of the paths in the device's newest scan of `root`. Every path
@@ -128,7 +128,7 @@ fn sizes_in_scan(c: &Connection, device: &str, root: &str, paths: &[String]) -> 
 /// Whether a device can be asked for `kind`. Devices from 0.8.3 don't
 /// name the kinds split off in 0.8.4: one that puts back can empty its
 /// quarantine, one that cleans on Unraid removes Docker images.
-fn can_do(info: &disktree_proto::DeviceInfo, kind: ActionKind) -> bool {
+fn can_do(info: &freesize_proto::DeviceInfo, kind: ActionKind) -> bool {
     let has = |k| info.actions.contains(&k);
     has(kind)
         || match kind {
@@ -155,7 +155,7 @@ fn check_action(
     }
     if !target.info.attended && target.info.approver.is_none() {
         return Err(ApiError::conflict(format!(
-            "nobody is at {} and it has no approver: set one on the device with `disktree \
+            "nobody is at {} and it has no approver: set one on the device with `freesize \
              approver set <fingerprint>`",
             target.name
         )));
@@ -220,7 +220,7 @@ fn check_action(
                     n => format!("{n} items"),
                 },
                 crate::reports::iso_date(found.when),
-                disktree_core::format_size(found.bytes)
+                freesize_core::format_size(found.bytes)
             );
         }
         Action::EmptyQuarantine { batches, bytes } => {
@@ -406,7 +406,7 @@ pub async fn create(
             };
             let signed = Signed::sign(
                 &command,
-                &disktree_proto::KeyPair::from_seed(key),
+                &freesize_proto::KeyPair::from_seed(key),
                 Purpose::Command,
             );
             let summary = command.action.summary();

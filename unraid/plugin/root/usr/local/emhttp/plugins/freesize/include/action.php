@@ -1,5 +1,5 @@
 <?php
-// DiskTree for Unraid: what the page asks for. Nothing here deletes
+// FreeSize for Unraid: what the page asks for. Nothing here deletes
 // anything on its own: moving to the quarantine is a rename, a share move
 // keeps the originals in the quarantine, and only "empty" and Docker
 // cleanup remove data, each after the page listed exactly what goes.
@@ -98,12 +98,12 @@ case 'settings':
   $yes = fn($k) => ($_POST[$k] ?? '') === 'yes' ? 'yes' : 'no';
   $cfg = "SCAN_HOURS=\"$hours\"\nWAKE_DAYS=\"$days\"\nPERMISSIONS=\"{$yes('permissions')}\"\nREPORT=\"{$yes('report')}\"\n";
   @mkdir($dt_config, 0755, true);
-  if (@file_put_contents("$dt_config/disktree.cfg", $cfg) === false) dt_fail("couldn't save the settings");
+  if (@file_put_contents("$dt_config/freesize.cfg", $cfg) === false) dt_fail("couldn't save the settings");
   dt_request('settings');
   dt_reply(['ok' => true, 'output' => 'Saved.']);
 
 case 'keep':
-  // Paths never offered, on top of what DiskTree keeps on its own.
+  // Paths never offered, on top of what FreeSize keeps on its own.
   $lines = preg_split('/\r?\n/', (string)($_POST['paths'] ?? ''));
   $keep = [];
   foreach ($lines as $line) {
@@ -120,9 +120,9 @@ case 'keep':
 
 case 'pair':
   $link = trim((string)($_POST['link'] ?? ''));
-  if (!preg_match('#^disktree://pair\?[A-Za-z0-9%._~=&+-]{1,1000}$#', $link)) {
+  if (!preg_match('#^freesize://pair\?[A-Za-z0-9%._~=&+-]{1,1000}$#', $link)) {
     dt_log('Pairing with the Hub failed: the pasted text isn\'t a whole pairing link');
-    dt_fail('paste the whole pairing link from the dashboard (Pair a device); it starts with disktree://pair?');
+    dt_fail('paste the whole pairing link from the dashboard (Pair a device); it starts with freesize://pair?');
   }
   $args = ['agent', 'pair', $link, '--state', dt_state()];
   $name = dt_text('name', 80);
@@ -135,7 +135,7 @@ case 'pair':
   $warnings = [];
   foreach ($result['output'] === '' ? [] : explode("\n", $result['output']) as $line) {
     if (str_starts_with($line, 'warning: ')) $warnings[] = $line;
-    else $said[] = preg_replace('/^disktree: /', '', $line);
+    else $said[] = preg_replace('/^freesize: /', '', $line);
   }
   if ($result['ok']) {
     dt_log($said[0] ?? 'Paired with the Hub.');
@@ -150,7 +150,7 @@ case 'approver_check':
 case 'approver_set':
   $key = strtoupper(trim((string)($_POST['fingerprint'] ?? '')));
   if (!preg_match('/^[A-Z0-9]{4}(-[A-Z0-9]{4}){3}$/', $key)) {
-    dt_fail('type the key as the DiskTree app shows it, like ABCD-EFGH-JKMN-PQRS');
+    dt_fail('type the key as the FreeSize app shows it, like ABCD-EFGH-JKMN-PQRS');
   }
   $flag = $_POST['action'] === 'approver_set' ? '--yes' : '--check';
   $result = dt_run(['approver', 'set', $key, $flag, '--state', dt_state()], false);

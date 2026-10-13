@@ -14,9 +14,9 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use disktree_agent::quarantine::{QUARANTINE_DIR, Quarantine};
-use disktree_core::format_size;
-use disktree_proto::unraid::{DiskKind, MoveJob};
+use freesize_agent::quarantine::{QUARANTINE_DIR, Quarantine};
+use freesize_core::format_size;
+use freesize_proto::unraid::{DiskKind, MoveJob};
 use serde::Serialize;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -132,7 +132,7 @@ pub fn plan(
         plan.problems.push(format!("{source_path} isn't there"));
         return plan;
     }
-    let open = disktree_agent::guard::open_files(&system.file("/proc"));
+    let open = freesize_agent::guard::open_files(&system.file("/proc"));
     if let Some((file, process, _)) = open.iter().find(|(f, _, _)| f.starts_with(&plan.source)) {
         plan.problems.push(format!(
             "{} is open in {process}; stop it first",
@@ -285,7 +285,7 @@ pub fn folders(
         out.disks.push(disk.name.clone());
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            // Hidden folders: the recycle bin's, DiskTree's own and such.
+            // Hidden folders: the recycle bin's, FreeSize's own and such.
             if name.starts_with('.') || !entry.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }

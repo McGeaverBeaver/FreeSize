@@ -41,11 +41,11 @@ fn write_log(priority: c_int, message: &str) {
     let text = CString::new(message.replace('\0', " ")).unwrap_or_default();
     // SAFETY: both strings are NUL-terminated and outlive the call.
     unsafe {
-        __android_log_write(priority, c"DiskTree".as_ptr(), text.as_ptr());
+        __android_log_write(priority, c"FreeSize".as_ptr(), text.as_ptr());
     }
 }
 
-/// Logs a warning to logcat (`adb logcat -s DiskTree`); stderr goes nowhere on Android.
+/// Logs a warning to logcat (`adb logcat -s FreeSize`); stderr goes nowhere on Android.
 pub fn log(message: &str) {
     write_log(LOG_WARN, message);
 }
@@ -360,7 +360,7 @@ pub fn open_app_settings(package: &str) {
     }
 }
 
-/// Opens DiskTree's own page in system settings. Its ⋮ menu holds "Allow
+/// Opens FreeSize's own page in system settings. Its ⋮ menu holds "Allow
 /// restricted settings", which Android requires before granting Usage
 /// access to an app installed from a downloaded APK.
 pub fn open_own_app_settings() {
@@ -375,11 +375,11 @@ pub fn open_own_app_settings() {
         )
     });
     if let Err(err) = result {
-        log(&format!("could not open DiskTree's app settings: {err}"));
+        log(&format!("could not open FreeSize's app settings: {err}"));
     }
 }
 
-/// What DiskTree can do with apps on this device.
+/// What FreeSize can do with apps on this device.
 pub fn abilities() -> Abilities {
     let sdk = sdk();
     Abilities {
@@ -394,12 +394,12 @@ pub fn abilities() -> Abilities {
     }
 }
 
-/// DiskTree's private storage, which needs no permission.
+/// FreeSize's private storage, which needs no permission.
 pub fn private_dir() -> Option<PathBuf> {
     APP.get()?.internal_data_path()
 }
 
-/// Whether DiskTree's window has focus. It loses it while a system screen
+/// Whether FreeSize's window has focus. It loses it while a system screen
 /// or dialog is in front.
 pub fn window_has_focus() -> bool {
     with_activity(|env, activity| {
@@ -1315,7 +1315,7 @@ pub fn collect_app_report() -> Result<AppReport, String> {
         for app in &mut apps {
             app.own = app.package == own;
             app.protected = if app.own {
-                Some("DiskTree itself".into())
+                Some("FreeSize itself".into())
             } else {
                 protected.get(&app.package).map(|reason| reason.to_string())
             };
@@ -1542,7 +1542,7 @@ pub enum Opened {
 }
 
 /// Opens a file in shared storage with the app that normally shows that kind
-/// of file. Other apps can't read DiskTree's file paths, so the file is
+/// of file. Other apps can't read FreeSize's file paths, so the file is
 /// handed over as its MediaStore entry with permission to read it.
 pub fn open_file(path: &std::path::Path) -> Result<Opened, String> {
     let path_text = path.to_string_lossy().into_owned();
@@ -1847,7 +1847,7 @@ fn app_icon(env: &mut Env, pm: &JObject, package: &str) -> JniResult<Pixels> {
 /// installed, where the app allows them) and needs no native TLS library.
 pub struct JavaTransport;
 
-impl disktree_agent::Transport for JavaTransport {
+impl freesize_agent::Transport for JavaTransport {
     fn request(
         &self,
         method: &str,
@@ -2021,7 +2021,7 @@ fn http(
     })
 }
 
-/// The link the app was opened with (a `disktree://pair` link from a
+/// The link the app was opened with (a `freesize://pair` link from a
 /// scanned QR code), if any.
 pub fn launch_link() -> Option<String> {
     with_activity(|env, activity| {

@@ -163,7 +163,7 @@ global Theme {
     out property <color> pressed: Palette.foreground.transparentize(86%);
 }
 
-/// Icons for kinds of content, in the order of `disktree_core::Kind`, then
+/// Icons for kinds of content, in the order of `freesize_core::Kind`, then
 /// "can be rebuilt" (12) and "more" (13).
 global Icons {
     out property <image> folder: @image-url("icons/folder.svg");
@@ -1547,7 +1547,7 @@ component ScanningPane inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    title: "DiskTree";
+    title: "FreeSize";
     icon: @image-url("icon.png");
     preferred-width: 1180px;
     preferred-height: 760px;
@@ -1609,7 +1609,7 @@ export component AppWindow inherits Window {
     in property <[string]> sheet-facts;
     in property <string> sheet-note;
     in property <[SheetAction]> sheet-actions;
-    // Connecting to a DiskTree Hub.
+    // Connecting to a FreeSize Hub.
     in property <bool> hub-connect-open;
     in-out property <string> hub-link;
     in-out property <string> hub-code;
@@ -1791,7 +1791,7 @@ export component AppWindow inherits Window {
                     padding: 10px;
                     spacing: 10px;
                     Text {
-                        text: "DiskTree needs “All files access” to see everything on your storage.";
+                        text: "FreeSize needs “All files access” to see everything on your storage.";
                         wrap: word-wrap;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
@@ -2479,7 +2479,7 @@ export component AppWindow inherits Window {
         }
     }
 
-    // Connecting to a DiskTree Hub: a pairing link, or its address and code.
+    // Connecting to a FreeSize Hub: a pairing link, or its address and code.
     if root.hub-connect-open: Rectangle {
         background: #00000088;
         TouchArea { }
@@ -2498,7 +2498,7 @@ export component AppWindow inherits Window {
                 padding-bottom: 18px + (root.compact ? root.safe-area-insets.bottom : 0px);
                 spacing: 10px;
                 Text {
-                    text: "Connect to a DiskTree Hub";
+                    text: "Connect to a FreeSize Hub";
                     font-size: 18px;
                     font-weight: 600;
                 }

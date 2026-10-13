@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 
-use disktree_proto::unraid::{DiskActivity, DiskKind, OpenFile};
+use freesize_proto::unraid::{DiskActivity, DiskKind, OpenFile};
 
 use crate::System;
 use crate::array::Array;
@@ -149,7 +149,7 @@ pub fn open_by_disk(
 ) -> BTreeMap<String, Vec<OpenFile>> {
     let mut by_disk: BTreeMap<String, Vec<OpenFile>> = BTreeMap::new();
     let proc = system.file("/proc");
-    for (path, process, pid) in disktree_agent::guard::open_files(&proc) {
+    for (path, process, pid) in freesize_agent::guard::open_files(&proc) {
         let server = system
             .unraid_path(&path)
             .unwrap_or_else(|| path.to_string_lossy().into_owned());

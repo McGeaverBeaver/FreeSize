@@ -1,4 +1,4 @@
-//! DiskTree Hub: a small server with a web dashboard that collects what
+//! FreeSize Hub: a small server with a web dashboard that collects what
 //! paired devices report about their storage, and passes on actions an
 //! admin asks for, which each device carries out only after approving them.
 
@@ -27,7 +27,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use disktree_proto::KeyPair;
+use freesize_proto::KeyPair;
 
 pub use config::Config;
 pub use db::Db;
@@ -90,7 +90,7 @@ fn load_or_create_key(path: &Path) -> Result<KeyPair, String> {
                 .decode(text.trim())
                 .ok()
                 .and_then(|b| b.try_into().ok())
-                .ok_or_else(|| format!("{}: not a DiskTree Hub key", path.display()))?;
+                .ok_or_else(|| format!("{}: not a FreeSize Hub key", path.display()))?;
             Ok(KeyPair::from_seed(seed))
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -205,14 +205,15 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// Runs the Hub until Ctrl+C or SIGTERM.
-pub async fn run(config: Config) -> Result<(), String> {
+pub async fn run(mut config: Config) -> Result<(), String> {
+    config.adopt_old_data();
     let listen = config.listen;
     let state = AppState::open(config)?;
     if let Err(missing) = state.oidc.settings() {
         tracing::warn!("sign-in isn't set up ({missing}); the dashboard can't be used yet");
     }
     tracing::info!(
-        "DiskTree Hub {} listening on {listen}, key {}",
+        "FreeSize Hub {} listening on {listen}, key {}",
         env!("CARGO_PKG_VERSION"),
         state.key.public().fingerprint()
     );

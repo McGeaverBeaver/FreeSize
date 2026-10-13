@@ -82,7 +82,7 @@ impl Source {
     }
 }
 
-/// Whether DiskTree may suggest removing the app. System apps, apps without
+/// Whether FreeSize may suggest removing the app. System apps, apps without
 /// an icon (keyboards, services, plugins), apps working in the background
 /// for the user (default apps, accessibility, device admin) and archived
 /// apps are left out of the suggestions.

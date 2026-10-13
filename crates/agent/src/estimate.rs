@@ -24,7 +24,7 @@ impl Estimate {
     /// One line for a prompt, e.g. "Frees about 12 GB; 3 GB are hard links
     /// to files kept elsewhere and free nothing."
     pub fn describe(&self) -> String {
-        let size = disktree_core::format_size;
+        let size = freesize_core::format_size;
         let mut text = format!("Frees about {}", size(self.freed));
         if self.linked > 0 {
             text.push_str(&format!(

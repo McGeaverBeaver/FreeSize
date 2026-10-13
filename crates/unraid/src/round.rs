@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use disktree_core::{ScanOptions, ScanProgress, scan};
-use disktree_proto::ScanReport;
-use disktree_proto::unraid::{DiskKind, UnraidReport};
+use freesize_core::{ScanOptions, ScanProgress, scan};
+use freesize_proto::ScanReport;
+use freesize_proto::unraid::{DiskKind, UnraidReport};
 
 use crate::array::{self, Array};
 use crate::docker::{self, Inventory};
@@ -142,7 +142,7 @@ pub fn round(
                     },
                 );
                 let mut report =
-                    disktree_agent::report::scan_report(&tree, &name, now, result.errors, true);
+                    freesize_agent::report::scan_report(&tree, &name, now, result.errors, true);
                 report.root = mount.clone();
                 out.scans.push(report);
                 scans.disks.push(DiskScan {
@@ -225,7 +225,7 @@ pub fn round(
 fn disks_with_scans(
     array: &Array,
     tops: &BTreeMap<String, DiskTops>,
-) -> Vec<disktree_proto::unraid::ArrayDisk> {
+) -> Vec<freesize_proto::unraid::ArrayDisk> {
     array
         .disks
         .iter()
@@ -238,13 +238,13 @@ fn disks_with_scans(
 }
 
 /// The disks as the Hub's device page shows them.
-pub fn hub_disks(array: &Array) -> Vec<disktree_proto::Disk> {
+pub fn hub_disks(array: &Array) -> Vec<freesize_proto::Disk> {
     array
         .disks
         .iter()
         .filter(|d| d.kind != DiskKind::Parity && d.size > 0)
         .filter_map(|d| {
-            Some(disktree_proto::Disk {
+            Some(freesize_proto::Disk {
                 name: d.name.clone(),
                 path: d.path.clone()?,
                 total: d.size,

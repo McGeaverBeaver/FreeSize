@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use disktree_proto::unraid::{Finding, Safety, Vm, VmDisk, VmReport};
+use freesize_proto::unraid::{Finding, Safety, Vm, VmDisk, VmReport};
 
 use crate::System;
 use crate::array::Array;

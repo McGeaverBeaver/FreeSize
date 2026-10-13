@@ -11,8 +11,8 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use common::idp::MockUser;
 use common::{Browser, blocking, start_hub_with};
-use disktree_agent::{Client, UreqTransport, pair};
-use disktree_proto::{ActionKind, DeviceInfo, Disk, PairingLink, Platform, Report};
+use freesize_agent::{Client, UreqTransport, pair};
+use freesize_proto::{ActionKind, DeviceInfo, Disk, PairingLink, Platform, Report};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -177,16 +177,16 @@ async fn alerts_go_out_and_metrics_come_in() {
         let (to, headers, body, _) = &got[0];
         assert_eq!(to, "ntfy");
         assert_eq!(body["topic"], "disks");
-        assert_eq!(body["title"], "DiskTree Hub test");
+        assert_eq!(body["title"], "FreeSize Hub test");
         assert_eq!(headers["authorization"], "Bearer tk_123");
     }
     inbox.lock().unwrap().clear();
 
     // The disk is 95% full: both channels hear of it, once.
-    let notices = disktree_hub::alerts::check_now(&hub.state).await.unwrap();
+    let notices = freesize_hub::alerts::check_now(&hub.state).await.unwrap();
     assert_eq!(notices.len(), 1);
     assert!(
-        disktree_hub::alerts::check_now(&hub.state)
+        freesize_hub::alerts::check_now(&hub.state)
             .await
             .unwrap()
             .is_empty()
@@ -255,7 +255,7 @@ async fn alerts_go_out_and_metrics_come_in() {
             .unwrap()
     })
     .await;
-    let notices = disktree_hub::alerts::check_now(&hub.state).await.unwrap();
+    let notices = freesize_hub::alerts::check_now(&hub.state).await.unwrap();
     assert!(notices[0].resolved);
     {
         let got = inbox.lock().unwrap();
@@ -265,7 +265,7 @@ async fn alerts_go_out_and_metrics_come_in() {
 
     // Viewers see alerts, not where they go.
     hub.idp
-        .set_user(MockUser::new("u-viewer", "Val", &["disktree-viewers"]));
+        .set_user(MockUser::new("u-viewer", "Val", &["freesize-viewers"]));
     blocking(move || {
         let mut viewer = Browser::new();
         viewer.sign_in(&url, "%2F");

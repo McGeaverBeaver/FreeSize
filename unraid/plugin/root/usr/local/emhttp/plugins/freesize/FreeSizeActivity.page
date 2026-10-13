@@ -1,0 +1,5 @@
+Menu="FreeSize:4"
+Title="Disk activity"
+---
+<?require_once "$docroot/plugins/freesize/include/page.php";?>
+<div class="freesize" id="dt-activity"><p class="dt-muted">Loading…</p></div>
