@@ -30,6 +30,13 @@ what was tried in the release's draft notes, and say what wasn't.
       (compare the drive's free space before and after) and the result
       names what was skipped; a "check first" rule lands in the
       quarantine and Put back restores it; `freesize junk` lists the same.
+- [ ] Leftovers of removed programs: run Find junk, uninstall a program
+      whose settings folder is in AppData or `~/.config` (Discord, say),
+      set the folder's files two weeks back (or wait), and Find junk lists
+      the folder under Apps with the program's name and the date; nothing
+      of a program still installed is listed; Clean moves it to the
+      quarantine and Put back restores it. On Linux a Flatpak removed
+      without `--delete-data` shows up without the earlier look.
 - [ ] Scanning a whole drive on btrfs (Linux) or APFS (macOS): the Clean
       up tab's "Not in any file" names the snapshots and, on a Mac, the
       purgeable space.

@@ -61,7 +61,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.14.0)
+## Where things stand (0.15.0)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -127,6 +127,12 @@ compiling inside Docker.
   `background.rs`, which sends kept and fresh reports and turns requests
   into notifications; `build-apk.sh` compiles the Java and repacks
   cargo-apk's APK with the hand-written manifest. Shizuku is left over.
+  0.15: leftovers of removed programs on desktops
+  (`freesize_core::leftovers`): a check-first junk rule from the
+  installed-programs list (registry, Spotlight, `.desktop` files and
+  package databases) and a record of which folder belonged to which
+  program (`programs.json`); id-named folders (Flatpak, snap, bundle ids)
+  without the record.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
@@ -139,9 +145,11 @@ compiling inside Docker.
      works since the repository went public. Unraid's own CSS is in
      github.com/unraid/webgui (`emhttp/plugins/dynamix/styles`); render
      the page against it before changing its layout.
-  3. The roadmap's Next releases are all done as of 0.14; what's left is
-     under "Left over" in docs/ROADMAP.md (Shizuku mode, the Hub on
-     Windows, the parked items). 0.14 leaves the owner the day-long
+  3. The roadmap's Next releases are all done as of 0.14, and 0.15 took
+     the leftovers item from "Left over"; what's left there is Shizuku
+     mode, the Hub on Windows and the parked items (docs/ROADMAP.md).
+     0.15 leaves the owner the leftovers check in TESTING.md on a
+     Windows machine and a Linux box. 0.14 leaves the owner the day-long
      background check in TESTING.md, and the APK has to be built on the
      VM: this container type-checks the Android code but can't build the
      APK. 0.13 leaves the owner the Suggestions checks in

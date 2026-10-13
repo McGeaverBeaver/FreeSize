@@ -341,6 +341,7 @@ impl State {
                                 kind: ITEM,
                                 id: item_id(index, item_index),
                                 title: path.to_string_lossy().into_owned().into(),
+                                subtitle: item.note.clone().into(),
                                 detail: if item.bytes > 0 || item.files > 0 {
                                     format_size(item.bytes).into()
                                 } else {

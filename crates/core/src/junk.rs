@@ -321,6 +321,9 @@ pub struct Item {
     pub bytes: u64,
     pub files: u64,
     pub covers: Covers,
+    /// A word on the item where the path doesn't say enough: the program a
+    /// leftover belonged to. Empty for most rules.
+    pub note: String,
 }
 
 impl Item {
@@ -494,6 +497,12 @@ pub fn find(platform: Platform, env: &Env, running: &[String], now: i64) -> Vec<
             items,
         });
     }
+    sort(&mut findings);
+    findings
+}
+
+/// By category, biggest first within one.
+fn sort(findings: &mut [Finding]) {
     findings.sort_by(|a, b| {
         a.rule
             .category
@@ -501,16 +510,43 @@ pub fn find(platform: Platform, env: &Env, running: &[String], now: i64) -> Vec<
             .then_with(|| b.bytes.cmp(&a.bytes))
             .then_with(|| a.rule.id.cmp(b.rule.id))
     });
+}
+
+/// [`find`], plus the leftovers of removed programs
+/// ([`crate::leftovers`]), whose record of programs is kept at `record`
+/// (none: the record isn't kept, and only id-named folders can be
+/// leftovers). What a rule already covers isn't a leftover too.
+pub fn find_all(
+    platform: Platform,
+    env: &Env,
+    running: &[String],
+    now: i64,
+    record: Option<&Path>,
+) -> Vec<Finding> {
+    let mut findings = find(platform, env, running, now);
+    if let Some(mut leftovers) = crate::leftovers::look(platform, env, now, record) {
+        leftovers.items.retain(|item| {
+            !findings
+                .iter()
+                .flat_map(|f| &f.items)
+                .any(|taken| taken.covers(&item.path) || item.covers(&taken.path))
+        });
+        if let Some(leftovers) = crate::leftovers::finding(leftovers.items) {
+            findings.push(leftovers);
+            sort(&mut findings);
+        }
+    }
     findings
 }
 
-/// [`find`] for this machine, now.
+/// [`find_all`] for this machine, now.
 pub fn find_here() -> Vec<Finding> {
-    find(
+    find_all(
         Platform::current(),
         &Env::system(),
         &running_programs(),
         now(),
+        crate::leftovers::record_path().as_deref(),
     )
 }
 
@@ -535,8 +571,17 @@ pub fn safe_total(findings: &[Finding]) -> u64 {
         .sum()
 }
 
-/// The rule with this id on the platform.
+/// The rule with this id on the platform, the leftovers of removed
+/// programs included on desktops.
 pub fn rule_by_id(platform: Platform, id: &str) -> Option<&'static Rule> {
+    if id == crate::leftovers::ID
+        && matches!(
+            platform,
+            Platform::Windows | Platform::MacOs | Platform::Linux
+        )
+    {
+        return Some(&crate::leftovers::RULE);
+    }
     rules_for(platform).iter().find(|r| r.id == id)
 }
 
@@ -617,6 +662,7 @@ fn items_of(rule: &Rule, path: &Path, now: i64, taken: &[Item]) -> Vec<Item> {
                     bytes,
                     files,
                     covers: Covers::Itself,
+                    note: String::new(),
                 })
                 .into_iter()
                 .collect()
@@ -665,6 +711,7 @@ fn items_of(rule: &Rule, path: &Path, now: i64, taken: &[Item]) -> Vec<Item> {
                 bytes,
                 files,
                 covers: Covers::Entries(names),
+                note: String::new(),
             }]
         }
         Take::Files { extensions, days } => {
@@ -690,6 +737,7 @@ fn items_of(rule: &Rule, path: &Path, now: i64, taken: &[Item]) -> Vec<Item> {
                         bytes: meta.len(),
                         files: 1,
                         covers: Covers::Itself,
+                        note: String::new(),
                     });
                 }
                 true
@@ -743,11 +791,12 @@ fn empty_folders(dir: &Path, keep: &[&str], top: bool, out: &mut Vec<Item>) -> b
         bytes: 0,
         files: 0,
         covers: Covers::Itself,
+        note: String::new(),
     }));
     false
 }
 
-fn modified(meta: &fs::Metadata) -> i64 {
+pub(crate) fn modified(meta: &fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -777,7 +826,7 @@ pub fn size_of(dir: &Path) -> (u64, u64) {
     (bytes, files)
 }
 
-fn size_and_newest(dir: &Path) -> (u64, u64, i64) {
+pub(crate) fn size_and_newest(dir: &Path) -> (u64, u64, i64) {
     let (mut bytes, mut files, mut newest) = (0, 0, 0);
     walk(dir, &mut |_, meta| {
         if meta.is_file() {
@@ -878,7 +927,7 @@ fn remove_tree(dir: &Path, skipped: &mut Vec<Skipped>) -> Result<(), String> {
 pub fn known_rule(id: &str) -> bool {
     Platform::ALL
         .into_iter()
-        .any(|p| rules_for(p).iter().any(|r| r.id == id))
+        .any(|p| rule_by_id(p, id).is_some())
 }
 
 /// The platform's rules, specific ones before any that would match the

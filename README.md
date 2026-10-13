@@ -309,6 +309,20 @@ exact paths, each with **Show** to look at the files first.
   ticked: a button opens the system's settings page or shows the command.
 - A rule whose program is running (Chrome's cache while Chrome is open)
   is skipped until it's closed, and says so.
+- **Leftovers of removed programs** (Apps, check first) are the settings
+  and caches a program left in AppData, `~/Library` or `~/.config`,
+  `~/.cache` and `~/.local/share` after it was uninstalled. FreeSize only
+  calls a folder a leftover when it's sure whose it was: it saw the program
+  installed on an earlier look and matched the folder to it then (the
+  list is kept in `programs.json` in its data folder, so the rule grows
+  more useful the longer FreeSize is around), or the folder is named by
+  the program's own id (a Flatpak under `~/.var/app`, a snap under
+  `~/snap`, a bundle id under `~/Library/Containers`). The program must be
+  gone now and nothing in the folder changed for two weeks. Each path says
+  which program ("Discord, installed until 2026-09-20"), and the folders
+  go to the quarantine, so one a program still needs comes back with Put
+  back. Nothing is offered on a machine whose list of programs couldn't
+  be read.
 
 **Clean** asks once, then frees what it can and reports what was freed,
 what went to the quarantine, what was skipped because a file was in use

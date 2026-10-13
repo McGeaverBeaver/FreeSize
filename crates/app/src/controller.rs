@@ -2568,12 +2568,14 @@ impl Controller {
         let spawned = std::thread::Builder::new()
             .name("freesize-junk".into())
             .spawn(move || {
-                use freesize_core::junk::{Env, Platform, find, now, running_programs};
-                let findings = find(
+                use freesize_core::junk::{Env, Platform, find_all, now, running_programs};
+                let record = growth::data_dir().map(|dir| dir.join("programs.json"));
+                let findings = find_all(
                     Platform::current(),
                     &Env::system(),
                     &running_programs(),
                     now(),
+                    record.as_deref(),
                 );
                 put(&worker_result, findings);
             });

@@ -204,9 +204,8 @@ else that can delete:
   Disk Access following an unsigned build.
 
 Left over and planned (the release it goes in is under Next releases):
-- **A quarantine on phones and desktops**, with one Put back for everything,
-  the basket's own undo folded in (0.9). Shrinking photos (SD Maid SE's
-  Squeezer) waits for it, since it rewrites people's photos.
+- **Shrinking photos** (SD Maid SE's Squeezer) now that the quarantine
+  (0.9) can hold the originals, since it rewrites people's photos.
 - **Shizuku mode** on Android: batch cache clearing and `Android/data`
   through an unrooted phone's helper. The Java side the APK gained in 0.14
   (the background job) is the foothold; Shizuku's client library (an AAR
@@ -214,11 +213,12 @@ Left over and planned (the release it goes in is under Next releases):
   the permission flow and a user service running as shell are still to
   write, and need a phone with Shizuku to try. Sideloaded builds only; Play
   restricts it.
-- **Community Applications** for the plugin and the Hub template (0.9.1).
 - From 2b/2c: **leftovers of uninstalled programs** in AppData and
-  `~/Library` once matching folders to programs is reliable enough to call
-  one abandoned (old downloads and screen recordings are junk cleaner
-  rules since 0.10).
+  `~/Library`: done in 0.15, with the record of which folder belonged to
+  which program as the reliability it waited for. What a program's
+  folder is called is still only known once FreeSize has seen the program
+  installed, so the rule finds more the longer FreeSize is around; a
+  look at a fresh machine finds only the id-named folders.
 
 Parked, each with its reason:
 - **The Hub on Windows** as a service from the installer: needs the
@@ -324,6 +324,26 @@ Parked, each with its reason:
   on; it's listed under Left over. Still to do by hand: the day-long check
   (reports within 15 minutes with the app closed, an approval notice within
   15 minutes, the battery screen) in TESTING.md.
+- 0.15: leftovers of removed programs, the 2b/2c item left over. A
+  "check first" rule of the junk cleaner (`program-leftovers`, under
+  Apps, `freesize_core::leftovers`) for the settings and caches in
+  AppData, `~/Library`, `~/.config`, `~/.cache`, `~/.local/share` and
+  `~/.local/state` of programs that are gone. The reliability the item
+  waited for comes from two sources: the installed programs are read the
+  platform's way (the Uninstall registry keys, Spotlight's list of app
+  bundles, `.desktop` files and the dpkg, pacman and rpm databases, Flatpak
+  and snapd) and every look records which folder belonged to which program
+  while it was installed (`programs.json` in FreeSize's data folder,
+  shared by the app and `freesize agent`), so a folder is only called a
+  leftover once its program was seen installed and is gone, or when it's
+  named by the program's own id (Flatpak, snap, bundle ids) and that list
+  was read completely. Nothing changed in two weeks, a believable list of
+  programs, and a list of names programs share (`Microsoft`, `fonts`,
+  Apple's ids) that is never offered. Each path says which program and
+  when it was last seen; cleaning moves the folders to the quarantine. In
+  the Clean junk screen, `freesize junk` (`--also program-leftovers`,
+  with the programs in `--json`) and the Hub's Junk tab. Still to do by
+  hand: the check in TESTING.md on a Windows machine and a Linux box.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the
@@ -465,6 +485,11 @@ half ships even if an action stalls on a device nobody has.
   reports within 15 minutes of a scan and shows an approval within 15
   minutes of a request, over a day, without the battery screen listing
   FreeSize above the usual apps.
+- **0.15, leftovers of removed programs.** Under Done. The left-over 2b/2c
+  item, as a junk rule on desktops. Done when, after uninstalling a
+  program FreeSize had seen, its settings folder is listed under its name
+  two weeks later, nothing of an installed program is, and a removed
+  Flatpak's `~/.var/app` folder is listed on the first look.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 

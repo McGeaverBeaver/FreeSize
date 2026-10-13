@@ -39,7 +39,13 @@ pub fn main(args: JunkArgs) -> Result<(), String> {
     let platform = junk::Platform::current();
     let env = junk::Env::system();
     let now = junk::now();
-    let mut findings = junk::find(platform, &env, &junk::running_programs(), now);
+    let mut findings = junk::find_all(
+        platform,
+        &env,
+        &junk::running_programs(),
+        now,
+        freesize_core::leftovers::record_path().as_deref(),
+    );
     for id in args.only.iter().chain(&args.also) {
         if junk::rule_by_id(platform, id).is_none() {
             return Err(format!(

@@ -54,6 +54,15 @@ pub fn report_json(findings: &[Finding], now: i64) -> serde_json::Value {
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect();
             entry["paths"] = serde_json::json!(paths);
+            // Leftovers say which program each path belonged to.
+            if finding.items.iter().any(|i| !i.note.is_empty()) {
+                let notes: Vec<String> = finding
+                    .items
+                    .iter()
+                    .flat_map(|i| i.paths().into_iter().map(|_| i.note.clone()))
+                    .collect();
+                entry["notes"] = serde_json::json!(notes);
+            }
         }
     }
     value
@@ -137,11 +146,12 @@ pub fn clean(
 /// The finding of one rule among this machine's, found afresh so what goes
 /// is what's there now.
 pub fn find_rule(platform: junk::Platform, kind: &str) -> Result<Finding, String> {
-    junk::find(
+    junk::find_all(
         platform,
         &junk::Env::system(),
         &junk::running_programs(),
         junk::now(),
+        freesize_core::leftovers::record_path().as_deref(),
     )
     .into_iter()
     .find(|f| f.rule.id == kind)

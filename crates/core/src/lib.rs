@@ -19,6 +19,7 @@ pub mod bubbles;
 mod format;
 pub mod junk;
 mod kinds;
+pub mod leftovers;
 pub mod ncdu;
 mod platform;
 mod reclaim;

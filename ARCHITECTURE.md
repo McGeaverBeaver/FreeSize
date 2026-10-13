@@ -187,7 +187,40 @@ end of a list never double count, and marks a finding `running` when one
 of its processes is (`running_programs`: `/proc` on Linux, `ps` on macOS,
 `tasklist` on Windows). `Finding::ticked` is safe and not running;
 `delete` removes an item and reports what stayed in use. Nothing here
-decides to run: callers list, the person ticks.
+decides to run: callers list, the person ticks. `find_all` adds the
+leftovers of removed programs (below) to `find`'s findings, dropping any
+a rule already covers; `find_here` is that for this machine.
+
+### Leftovers of removed programs (`leftovers.rs`)
+
+The one junk rule (`program-leftovers`, Apps, check first) that isn't a
+pattern: the folders in AppData, `~/Library` and the XDG folders that
+belonged to a program that's gone. What's installed comes from the
+platform (`installed`): on Linux the `.desktop` files in the XDG data
+dirs, Flatpak's and snapd's app folders, dpkg's status file, pacman's
+database and `rpm -qa`; on macOS every app bundle Spotlight lists
+(`mdfind`) plus the Applications folders, with the bundle id from each
+`Info.plist`; on Windows the three Uninstall registry keys through
+`reg query` (DisplayName, Publisher, InstallLocation; system components
+and patches skipped). The parsers are plain functions with tests. A
+folder is matched to a program by `key` (lower case, letters and digits,
+without versions, architectures or brackets), by the program's id under
+the id-named places (`~/.var/app`, `~/snap`, `~/Library/Containers`,
+`Caches`, `Preferences`, `Saved Application State`), by its install
+location, and under a vendor folder (`Google\Chrome`) by vendor and
+name or by the publisher. Every look records the installed programs and
+the matched folders in `Record` (`programs.json` in the data folder, the
+one the app and `freesize agent` share); a recorded folder whose program
+isn't installed any more is a leftover, named after the program and the
+date it was last seen. Id-named folders with no program of that id are
+leftovers without a record, but only where the id list was read
+completely (`Installed::complete`), never for Apple's own ids, and never
+when an installed bundle shares the vendor (an app's helpers). Fewer than
+ten installed programs means the list wasn't read and nothing is offered;
+nothing changed for 14 days (`AGE_DAYS`) is required of every leftover,
+and a list of names shared between programs (`NEVER`) is never offered.
+Android and Unraid have none of this; the phone's own leftovers rule
+(`Android/media`) is in the app.
 
 ### Snapshots (`snapshot.rs`)
 
