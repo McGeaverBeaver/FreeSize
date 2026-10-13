@@ -1143,6 +1143,7 @@ pub fn device_info(system: &System, name: &str, state: Option<&AgentState>) -> D
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),
+        rights: freesize_core::access::rights().label().into(),
     }
 }
 

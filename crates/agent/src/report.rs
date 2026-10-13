@@ -11,6 +11,8 @@ use freesize_proto::{Disk, FileEntry, ScanReport, TypeEntry};
 pub const MAX_FOLDERS: usize = 10_000;
 /// Files kept per scan report.
 pub const MAX_FILES: usize = 500;
+/// Unreadable folders named per scan report.
+pub const MAX_UNREADABLE: usize = 50;
 
 /// A finished scan as the Hub stores it: folder sizes, the biggest files and
 /// file types.
@@ -45,6 +47,12 @@ pub fn scan_report(
             size: s.size,
         })
         .collect();
+    let unreadable = tree
+        .unreadable()
+        .into_iter()
+        .take(MAX_UNREADABLE)
+        .map(|id| relative_path(tree, id))
+        .collect();
     ScanReport {
         root: tree.path(root).to_string_lossy().into_owned(),
         label: label.to_string(),
@@ -55,6 +63,7 @@ pub fn scan_report(
         dirs: u64::from(node.dirs),
         errors,
         complete,
+        unreadable,
         folders,
         largest,
         types,

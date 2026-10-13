@@ -892,8 +892,38 @@ fn report_html(
             format_size(scan.allocated as u64),
             scan.files,
             iso_time(scan.taken),
-            if scan.complete { "" } else { " · partial" },
+            if !scan.complete {
+                " · cut short".to_string()
+            } else if scan.errors > 0 {
+                format!(" · incomplete, {} unreadable", scan.errors)
+            } else {
+                String::new()
+            },
         ));
+        if !scan.unreadable.is_empty() {
+            let names: Vec<String> = scan
+                .unreadable
+                .iter()
+                .take(10)
+                .map(|p| {
+                    if p.is_empty() {
+                        label(scan).to_string()
+                    } else {
+                        p.clone()
+                    }
+                })
+                .map(|p| e(&p))
+                .collect();
+            out.push_str(&format!(
+                "<p class=\"dim\">Couldn't read {}{}.</p>",
+                names.join(", "),
+                if scan.errors as usize > names.len() {
+                    format!(" and {} more", scan.errors as usize - names.len())
+                } else {
+                    String::new()
+                }
+            ));
+        }
         let total = scan.allocated.max(1) as f64;
         let mut top: Vec<&FolderSize> = folders
             .iter()
@@ -1047,6 +1077,7 @@ pub async fn create_device(
         attended: false,
         approver: None,
         grants: Vec::new(),
+        rights: String::new(),
     };
     let id = state
         .db

@@ -98,6 +98,7 @@ async fn alerts_go_out_and_metrics_come_in() {
             attended: false,
             approver: None,
             grants: vec![],
+            rights: String::new(),
         };
         let agent = pair(&UreqTransport::new(), &link, info, &mut |_| false).unwrap();
         Client::new(&agent, &UreqTransport::new())

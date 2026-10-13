@@ -22,6 +22,7 @@ fn info(name: &str) -> DeviceInfo {
         attended: false,
         approver: None,
         grants: vec![],
+        rights: freesize_core::access::rights().label().into(),
     }
 }
 
@@ -71,11 +72,33 @@ async fn pair_report_and_look() {
         std::fs::write(dir.join("Movies/2024/trip.mp4"), vec![1u8; 400_000]).unwrap();
         std::fs::write(dir.join("Movies/old.mkv"), vec![1u8; 200_000]).unwrap();
         std::fs::write(dir.join("notes.txt"), b"hello").unwrap();
-        let tree = scan(&dir, &ScanOptions::default(), &ScanProgress::new())
-            .unwrap()
-            .tree;
-        let scan_report =
-            freesize_agent::report::scan_report(&tree, "Shares", 1_790_000_000, 0, true);
+        // A folder the agent can't read is counted and named in the report
+        // (unless the test runs as root, which reads everything).
+        std::fs::create_dir_all(dir.join("Movies/private")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                dir.join("Movies/private"),
+                std::fs::Permissions::from_mode(0o000),
+            )
+            .unwrap();
+        }
+        let scanned = scan(&dir, &ScanOptions::default(), &ScanProgress::new()).unwrap();
+        let unreadable = scanned.tree.unreadable().len() as u64;
+        assert_eq!(scanned.errors, unreadable);
+        if freesize_core::access::rights() == freesize_core::access::Rights::User && cfg!(unix) {
+            assert_eq!(unreadable, 1);
+        }
+        let tree = scanned.tree;
+        let scan_report = freesize_agent::report::scan_report(
+            &tree,
+            "Shares",
+            1_790_000_000,
+            scanned.errors,
+            true,
+        );
+        assert_eq!(scan_report.unreadable.len() as u64, unreadable);
         let client = Client::new(&state, &transport);
         client
             .report(&Report {
@@ -109,6 +132,19 @@ async fn pair_report_and_look() {
         let detail = admin.get(&format!("{url}/api/devices/{id}")).json();
         assert_eq!(detail["roots"][0]["scans"].as_array().unwrap().len(), 1);
         assert_eq!(detail["history"][0]["samples"].as_array().unwrap().len(), 1);
+        // The dashboard sees the scan as incomplete, and which folder was missed.
+        let stored = &detail["roots"][0]["scans"][0];
+        assert_eq!(stored["errors"], unreadable);
+        assert_eq!(stored["complete"], true);
+        if unreadable == 1 {
+            assert_eq!(stored["unreadable"], json!(["Movies/private"]));
+        } else {
+            assert_eq!(stored["unreadable"], json!([]));
+        }
+        assert_eq!(
+            detail["info"]["rights"],
+            freesize_core::access::rights().label()
+        );
 
         let top = admin
             .get(&format!("{url}/api/scans/{scan_id}/folders?path="))
@@ -141,6 +177,14 @@ async fn pair_report_and_look() {
                 .unwrap()
                 .is_empty()
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                dir.join("Movies/private"),
+                std::fs::Permissions::from_mode(0o755),
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     })
     .await;

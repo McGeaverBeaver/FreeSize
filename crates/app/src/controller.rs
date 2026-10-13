@@ -27,6 +27,7 @@ use crate::appbubbles;
 use crate::apps::{self, AppReport};
 use crate::changes;
 use crate::cleanup::{self, JunkKind, Place, ReviewKind};
+use crate::elevate;
 use crate::filecleanup::{self, Duplicates, Hidden, Similar};
 use crate::growth::{self, DriveLog};
 use crate::hidden;
@@ -247,6 +248,10 @@ pub struct Controller {
     /// The tree came from a scan file: its files may not be on this device,
     /// so nothing can be opened, deleted or moved.
     imported: bool,
+    /// The window Windows opened as administrator for one scan.
+    elevated: bool,
+    /// A root scan running in the background, to open when it's done.
+    exporting: Option<elevate::Exporting>,
     change_rows: Rc<VecModel<CleanRow>>,
     summary: Option<ScanSummary>,
     scan: Option<RunningScan>,
@@ -368,7 +373,11 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>) -> Hub {
 
 /// Creates the controller and connects it to `ui`. Keep the returned value
 /// alive for as long as the window runs.
-pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controller>> {
+pub fn install(
+    ui: &AppWindow,
+    initial: Option<PathBuf>,
+    elevated: bool,
+) -> Rc<RefCell<Controller>> {
     let hub_junk: Arc<Mutex<Vec<cleanup::Junk>>> = Arc::default();
     let ctl = Rc::new_cyclic(|me| {
         RefCell::new(Controller {
@@ -403,6 +412,8 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
             put_back_job: None,
             move_targets: Vec::new(),
             imported: false,
+            elevated,
+            exporting: None,
             change_rows: Rc::new(VecModel::default()),
             summary: None,
             scan: None,
@@ -451,6 +462,14 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
     ui.set_can_reveal(actions::CAN_REVEAL);
     ui.set_delete_label(actions::DELETE_LABEL.into());
     ui.set_status("Pick a drive or folder, or type a path and press Scan.".into());
+    if elevated {
+        ui.set_window_title("FreeSize (administrator)".into());
+        ui.set_status(
+            "Running as administrator for this scan: other users' folders are read too. \
+             Deleting follows the same rules as always."
+                .into(),
+        );
+    }
 
     let weak = Rc::downgrade(&ctl);
     on!(ui, on_start_scan, weak, |c, path| c
@@ -647,6 +666,21 @@ impl Controller {
         {
             let running = self.deletion.take().expect("deletion is running");
             self.finish_delete(running, result);
+        }
+
+        if let Some(exporting) = &mut self.exporting
+            && let Some(result) = exporting.poll()
+        {
+            let exporting = self.exporting.take().expect("a root scan is running");
+            match result {
+                // The result opens as a saved scan: read-only, as a scan made
+                // with other rights must be.
+                Ok(file) => self.start_scan(file.to_string_lossy().into_owned()),
+                Err(reason) => self.set_status(&format!(
+                    "The scan of {} with more rights didn't happen: {reason}.",
+                    exporting.root.display()
+                )),
+            }
         }
 
         #[cfg(target_os = "android")]
@@ -972,7 +1006,14 @@ impl Controller {
             result,
         });
         ui.set_path(path.as_str().into());
-        ui.set_scan_title(format!("Scanning {path}").into());
+        ui.set_scan_title(
+            if self.elevated {
+                format!("Scanning {path} as administrator")
+            } else {
+                format!("Scanning {path}")
+            }
+            .into(),
+        );
         ui.set_scan_counts("Starting…".into());
         ui.set_scan_current(SharedString::new());
         ui.set_status("Scanning…".into());
@@ -2015,7 +2056,7 @@ impl Controller {
         );
         if summary.errors > 0 {
             status.push_str(&format!(
-                " · {} could not be read",
+                " · {} could not be read, see Clean up",
                 format_count(summary.errors)
             ));
         }
@@ -2254,12 +2295,18 @@ impl Controller {
                     .any(|a| self.rebuildable.contains(&a))
             })
             .collect();
+        let offer = elevate::offer(
+            freesize_core::access::rights(),
+            &tree.path(tree.root()),
+            self.imported,
+        );
         self.cleanup_found = filecleanup::found_rows(
             tree,
             self.mode,
             apps::now() as i64,
             &spots,
             self.hidden.as_ref(),
+            &offer,
         );
         self.show_cleanup();
         self.refresh_changes();
@@ -2299,8 +2346,43 @@ impl Controller {
     fn cleanup_action(&mut self, title: &str) {
         if title == filecleanup::SIMILAR {
             self.photo_action();
+        } else if title == filecleanup::UNREADABLE {
+            self.fuller_scan();
         } else {
             self.duplicate_action();
+        }
+    }
+
+    /// The unreadable-folders button: a scan with more rights, or the
+    /// setting that grants them, as `elevate::offer` worked out.
+    fn fuller_scan(&mut self) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        if self.exporting.is_some() || self.scan.is_some() {
+            return;
+        }
+        let root = tree.path(tree.root());
+        let offer = elevate::offer(freesize_core::access::rights(), &root, self.imported);
+        if offer.action.is_empty() {
+            return;
+        }
+        match elevate::start(&offer.action, &root) {
+            Ok(elevate::Started::NewWindow) => {
+                self.set_status("A FreeSize window as administrator is opening for this scan.");
+            }
+            Ok(elevate::Started::Exporting(exporting)) => {
+                self.set_status(&format!(
+                    "Scanning {} with more rights in the background; it opens here when done.",
+                    root.display()
+                ));
+                self.exporting = Some(exporting);
+                self.ensure_ticking();
+            }
+            Ok(elevate::Started::Opened) => {
+                self.set_status("Turn on Full Disk Access for FreeSize there, then scan again.");
+            }
+            Err(reason) => self.set_status(&format!("Couldn't scan with more rights: {reason}.")),
         }
     }
 

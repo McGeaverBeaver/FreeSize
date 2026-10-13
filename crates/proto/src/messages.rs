@@ -171,6 +171,11 @@ pub struct DeviceInfo {
     /// Grants active on the device.
     #[serde(default)]
     pub grants: Vec<Grant>,
+    /// Whose eyes its scans see with: "root", "administrator" or "user"
+    /// (empty from devices before 0.8.8). A user's scans miss other users'
+    /// folders and the system's own.
+    #[serde(default)]
+    pub rights: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -235,6 +240,10 @@ pub struct ScanReport {
     pub errors: u64,
     #[serde(default = "yes")]
     pub complete: bool,
+    /// The first folders the scan couldn't list, relative to `root` ("" for
+    /// the root itself), so the dashboard can name what's missing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable: Vec<String>,
     /// Folder sizes, paths relative to `root` with `/` between names.
     pub folders: Vec<FolderSize>,
     pub largest: Vec<FileEntry>,

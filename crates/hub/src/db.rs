@@ -233,6 +233,10 @@ const MIGRATIONS: &[&str] = &[
         batches TEXT NOT NULL
     );
     ",
+    // 5: the folders a scan couldn't read, as a JSON list of paths.
+    "
+    ALTER TABLE scans ADD COLUMN unreadable TEXT NOT NULL DEFAULT '[]';
+    ",
 ];
 
 impl Db {

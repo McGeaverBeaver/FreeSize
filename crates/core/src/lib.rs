@@ -14,6 +14,7 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
+pub mod access;
 pub mod bubbles;
 mod format;
 mod kinds;

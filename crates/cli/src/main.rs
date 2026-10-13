@@ -203,6 +203,7 @@ fn scan_and_print(args: Args) -> ExitCode {
         format_size(root.size),
         format_size(root.allocated)
     );
+    print_unreadable(tree, args.import.is_some());
 
     let printer = TreePrinter {
         tree,
@@ -260,6 +261,38 @@ fn scan_and_print(args: Args) -> ExitCode {
 
 const MB: u64 = 1024 * 1024;
 
+/// Names the folders the scan couldn't list, and how to read them.
+fn print_unreadable(tree: &Tree, imported: bool) {
+    let missed = tree.unreadable();
+    if missed.is_empty() {
+        return;
+    }
+    println!(
+        "Couldn't read {} folder{}:",
+        format_count(missed.len() as u64),
+        if missed.len() == 1 { "" } else { "s" }
+    );
+    for &id in missed.iter().take(10) {
+        println!("  {}", tree.path(id).display());
+    }
+    if missed.len() > 10 {
+        println!("  … and {} more", format_count(missed.len() as u64 - 10));
+    }
+    if !imported && !freesize_core::access::rights().sees_everything() {
+        println!(
+            "{}",
+            if cfg!(windows) {
+                "Run freesize from an administrator prompt to read them; System Volume \
+                 Information stays closed even then."
+            } else {
+                "Run it with sudo to read them, or `sudo freesize PATH --export scan.json` and \
+                 open the file in the app."
+            }
+        );
+    }
+    println!();
+}
+
 /// Everything the text output shows, as JSON.
 fn json_report(
     tree: &Tree,
@@ -287,6 +320,13 @@ fn json_report(
         "files": root.files,
         "folders": root.dirs,
         "unreadable": result.errors,
+        "unreadable_folders": tree
+            .unreadable()
+            .into_iter()
+            .take(100)
+            .map(|id| tree.path(id))
+            .collect::<Vec<_>>(),
+        "rights": freesize_core::access::rights().label(),
         "seconds": result.elapsed.as_secs_f64(),
         "complete": !result.cancelled,
         "contents": tree

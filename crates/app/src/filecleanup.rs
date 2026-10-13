@@ -9,6 +9,7 @@ use freesize_core::{
 };
 
 use crate::CleanRow;
+use crate::elevate::Offer;
 use crate::insights::date;
 use crate::similar;
 
@@ -46,9 +47,13 @@ pub enum Similar<'a> {
     ),
 }
 
-/// Titles of the sections with a search button, which tell the buttons apart.
+/// Titles of the sections with a button, which tell the buttons apart.
 pub const DUPLICATES: &str = "Duplicate files";
 pub const SIMILAR: &str = "Similar photos";
+pub const UNREADABLE: &str = "Folders FreeSize couldn't read";
+
+/// Unreadable folders listed under their heading.
+const MAX_UNREADABLE: usize = 20;
 
 /// Space no file accounts for on a scanned drive: the drive's used space
 /// when it was scanned, and what the system said about it.
@@ -61,7 +66,7 @@ pub struct Hidden {
 /// Every row of the tab.
 #[cfg(test)]
 pub fn rows(tree: &Tree, mode: SizeMode, now: i64, duplicates: Duplicates) -> Vec<CleanRow> {
-    let mut rows = found_rows(tree, mode, now, &[], None);
+    let mut rows = found_rows(tree, mode, now, &[], None, &Offer::default());
     rows.extend(duplicate_rows(tree, duplicates));
     rows
 }
@@ -74,10 +79,13 @@ pub fn found_rows(
     now: i64,
     spots: &[Spot],
     hidden: Option<&Hidden>,
+    offer: &Offer,
 ) -> Vec<CleanRow> {
     let root = tree.root();
     let root_path = tree.path(root);
     let mut rows = Vec::new();
+
+    rows.extend(unreadable_rows(tree, &root_path, offer));
 
     if !spots.is_empty() {
         let total: u64 = spots.iter().map(|s| tree.node(s.node).size_in(mode)).sum();
@@ -377,6 +385,43 @@ pub fn similar_rows(tree: &Tree, similar: Similar) -> Vec<CleanRow> {
     rows
 }
 
+/// The folders the scan couldn't list, with what a fuller scan would take.
+fn unreadable_rows(tree: &Tree, root_path: &Path, offer: &Offer) -> Vec<CleanRow> {
+    let missed = tree.unreadable();
+    if missed.is_empty() {
+        return Vec::new();
+    }
+    let mut text = format!(
+        "{} folder{} and what's in {} are missing from this scan, so the totals are low. ",
+        format_count(missed.len() as u64),
+        if missed.len() == 1 { "" } else { "s" },
+        if missed.len() == 1 { "it" } else { "them" },
+    );
+    text.push_str(&offer.note);
+    let mut rows = vec![heading(UNREADABLE, &text, &offer.action)];
+    rows.extend(missed.iter().take(MAX_UNREADABLE).map(|&id| CleanRow {
+        kind: ITEM,
+        id: id as i32,
+        title: tree.name(id).into_owned().into(),
+        subtitle: format!("{} · no access", place(tree, root_path, id)).into(),
+        detail: "".into(),
+        ..Default::default()
+    }));
+    if missed.len() > MAX_UNREADABLE {
+        rows.push(CleanRow {
+            kind: GROUP,
+            id: -1,
+            title: format!(
+                "… and {} more",
+                format_count((missed.len() - MAX_UNREADABLE) as u64)
+            )
+            .into(),
+            ..Default::default()
+        });
+    }
+    rows
+}
+
 fn heading(title: &str, subtitle: &str, action: &str) -> CleanRow {
     CleanRow {
         kind: HEADING,
@@ -413,6 +458,47 @@ mod tests {
         let path = root.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, vec![fill; bytes]).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_folder_is_counted_marked_and_named() {
+        use std::os::unix::fs::PermissionsExt;
+        if freesize_core::access::rights().sees_everything() {
+            return; // root reads it anyway
+        }
+        let dir = std::env::temp_dir().join(format!("freesize-noaccess-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        write(&dir, "open/readme.txt", 10, b'x');
+        write(&dir, "closed/secret.txt", 10, b'x');
+        fs::set_permissions(dir.join("closed"), fs::Permissions::from_mode(0o000)).unwrap();
+        let scanned = scan(&dir, &ScanOptions::default(), &ScanProgress::new()).unwrap();
+        let tree = &scanned.tree;
+        assert_eq!(scanned.errors, 1);
+        let closed = tree.unreadable();
+        assert_eq!(closed.len(), 1);
+        assert!(tree.node(closed[0]).has(flags::ERROR));
+        assert_eq!(tree.name(closed[0]), "closed");
+
+        let offer = Offer {
+            action: "Scan as root".into(),
+            note: "Needs root.".into(),
+        };
+        let rows = found_rows(tree, SizeMode::Logical, 1_790_000_000, &[], None, &offer);
+        assert_eq!(rows[0].title, UNREADABLE);
+        assert!(
+            rows[0]
+                .subtitle
+                .starts_with("1 folder and what's in it are missing")
+        );
+        assert!(rows[0].subtitle.ends_with("Needs root."));
+        assert_eq!(rows[0].action, "Scan as root");
+        assert_eq!(rows[1].title, "closed");
+        assert_eq!(rows[1].subtitle, "closed · no access");
+        assert_eq!(rows[1].id, closed[0] as i32);
+
+        fs::set_permissions(dir.join("closed"), fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

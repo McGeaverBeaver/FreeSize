@@ -227,6 +227,24 @@ function diskRow(disk) {
     bar(fraction, usageLevel(fraction)));
 }
 
+// A scan that couldn't read every folder, or was cut short, is incomplete:
+// a badge, and a line naming what was missed where there's room.
+function incomplete(scan) {
+  if (!scan) return null;
+  if (!scan.complete) return h("span", { class: "badge warn", style: "margin-left:6px" }, "cut short");
+  if (scan.errors > 0) return h("span", { class: "badge warn", style: "margin-left:6px", title: unreadableText(scan) },
+    `incomplete · ${scan.errors.toLocaleString("en-US")} unreadable`);
+  return null;
+}
+
+function unreadableText(scan) {
+  const names = (scan.unreadable || []).map((p) => p === "" ? (scan.label || scan.root) : p);
+  const shown = names.slice(0, 5).join(", ");
+  const more = scan.errors - Math.min(names.length, 5);
+  const list = names.length ? `Couldn't read ${shown}${more > 0 ? ` and ${more.toLocaleString("en-US")} more` : ""}.` : "";
+  return `${list} A scan as administrator or root reads them, except what the system keeps to itself.`.trim();
+}
+
 function seenText(device) {
   if (device.agentless) return `no agent · updated ${ago(device.last_seen)}`;
   return device.online ? "online" : `seen ${ago(device.last_seen)}`;
@@ -247,7 +265,7 @@ function deviceCard(device) {
     (device.disks || []).slice(0, 4).map(diskRow),
     !device.disks.length && !device.agentless ? h("p", { class: "dim small", style: "margin-top:10px" }, "No disks reported yet.") : null,
     latest ? h("p", { class: "dim small", style: "margin:10px 0 0" },
-      `Last scan: ${latest.label || latest.root}, ${size(latest.allocated)}, ${ago(latest.taken)}`) : null);
+      `Last scan: ${latest.label || latest.root}, ${size(latest.allocated)}, ${ago(latest.taken)}`, incomplete(latest)) : null);
 }
 
 PAGES.devices = async () => {
@@ -462,6 +480,7 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
           : info.approver ? ["Nobody is at this device; requests go to its approver, ",
               device.approver_name ? h("strong", {}, device.approver_name) : "a device", " (key ", h("span", { class: "mono" }, info.approver), ")."]
           : "Nobody is at this device and it has no approver yet, so it can't be asked to do anything.",
+        info.rights === "user" && !info.attended ? " The agent scans as its user, so other users' folders and the system's own are missed." : "",
         (info.grants || []).filter((g) => g.expires * 1000 > Date.now()).map((g) =>
           h("span", { class: "badge accent", style: "margin-left:8px" }, `${g.admin_name} may ${g.kind === "delete" ? "delete files" : g.kind === "uninstall" ? "uninstall apps" : g.kind === "restore" ? "put back files" : "clean up"} until ${new Date(g.expires * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)))),
     h("div", { class: "row" },
@@ -545,7 +564,7 @@ async function deviceOverview(device) {
               h("td", {}, r.label || r.root, h("div", { class: "sub" }, r.root)),
               h("td", { class: "num" }, size(s.allocated)),
               h("td", { class: "num hide-narrow" }, Number(s.files).toLocaleString("en-US")),
-              h("td", {}, ago(s.taken), s.complete ? null : h("span", { class: "badge warn", style: "margin-left:6px" }, "partial")),
+              h("td", {}, ago(s.taken), incomplete(s)),
               h("td", { class: "num hide-narrow" }, r.scans.length));
           }))))
     : h("div", { class: "card empty" }, h("h2", {}, "No scans yet"),
@@ -608,7 +627,8 @@ async function deviceFolders(device, scanArg, pathArg = "") {
       h("div", { class: "grow" }, crumbs),
       scanPicker(device, scanId, (id) => { location.hash = `#/device/${encodeURIComponent(device.id)}/folders/${id}`; }),
       exportLinks(`/api/scans/${scanId}/export`)),
-    h("p", { class: "dim small" }, `${size(folder.allocated)} on disk (${size(folder.size)} in files) · scanned ${date(folder.scan.taken)}`),
+    h("p", { class: "dim small" }, `${size(folder.allocated)} on disk (${size(folder.size)} in files) · scanned ${date(folder.scan.taken)}`, incomplete(folder.scan)),
+    folder.scan.errors > 0 && !path ? h("p", { class: "callout warn small" }, unreadableText(folder.scan)) : null,
     h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, rows))),
     pick ? pick.bar : null,
     h("p", { class: "hint" }, "Devices send the sizes of their biggest folders and files, not every file, so small items are added up.",

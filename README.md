@@ -128,9 +128,9 @@ Each part takes over what DiskTree kept, the first time it starts:
 
 | Platform | What gets scanned | Notes |
 |---|---|---|
-| Windows | Any drive or folder your account can open | Folders it can't open are marked "no access" and counted; run FreeSize as administrator to include most of them. Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
-| macOS | Everything your account can open, once Full Disk Access is granted | Grant it in System Settings → Privacy & Security for the full picture. Other users' folders need `sudo freesize / --export scan.json`, which the app opens. Detects iCloud "dataless" files. |
-| Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. `sudo freesize / --export scan.json` scans everything, and the app opens the file. |
+| Windows | Any drive or folder your account can open | Folders it can't open are marked "no access", counted and named under Clean up, with **Scan as administrator**: a new FreeSize window, after Windows asks, that reads them (it turns on the backup privilege, so even folders that keep administrators out are listed). System Volume Information stays closed, and Windows' reserved storage (about 7 GB) is seen by no program. Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
+| macOS | Everything your account can open, once Full Disk Access is granted | Without Full Disk Access the Clean up tab says so and opens the setting. Other users' folders need an administrator: **Scan as administrator** asks for your password, scans in the background and opens the result as a saved scan. (`sudo freesize / --export scan.json` does the same by hand.) Detects iCloud "dataless" files. |
+| Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. **Scan as root** (through `pkexec`) scans everything in the background and opens the result as a saved scan; `sudo freesize / --export scan.json` does the same by hand. The window itself never runs as root. |
 | Android 8.0+ | All shared storage and SD cards, plus sizes for every app and the system | Files need **All files access** (Android 11+). Apps' private data can't be opened as files on Android, so it's measured through Android's storage statistics instead, which need **Usage access**. |
 | iOS | — | Not planned: the iOS sandbox doesn't allow scanning the device. |
 
@@ -198,6 +198,13 @@ ssh server ncdu -o- -x /srv > srv.json && freesize --import srv.json
 
 After a scan, the **Clean up** tab (**Clean** on phones) lists:
 
+- **Folders FreeSize couldn't read**, when there are any: how many, which
+  (select one to see where it is), and the way to a fuller scan on this
+  platform (see [Platform notes](#platform-notes)). A scan with more rights
+  opens read-only on macOS and Linux, since it was made as root; on Windows
+  it's a second window, as administrator, where deleting follows the same
+  rules as always. The status line counts what couldn't be read and points
+  here.
 - **Rebuildable folders**: build output, installed packages and caches that a
   tool makes again when needed, each with the command that does it, for
   example *node_modules · npm install puts them back*. Folders are matched by
@@ -226,7 +233,7 @@ After a scan, the **Clean up** tab (**Clean** on phones) lists:
 - **Not in any file**: after scanning a whole drive, how much of the used
   space no file accounts for, and why: ZFS snapshots, Windows restore points
   and shadow copies, local Time Machine snapshots, space the file system
-  reserves, and folders FreeSize couldn't read.
+  reserves, and folders FreeSize couldn't read (listed above it).
 - **Similar photos**: press *Find similar photos* to group photos that look
   alike, such as bursts, retakes and the same picture saved at another size.
   Each photo gets a small fingerprint of its brightness pattern; most camera

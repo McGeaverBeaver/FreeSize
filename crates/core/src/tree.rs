@@ -252,6 +252,20 @@ impl Tree {
         }
     }
 
+    /// The folders the scan couldn't list, root first and then in storage
+    /// order: what a scan with more rights would add. Files whose details
+    /// couldn't be read are counted in the scan's errors but not listed here,
+    /// since they hold nothing a listing would reveal.
+    pub fn unreadable(&self) -> Vec<NodeId> {
+        std::iter::once(self.root())
+            .chain(self.descendants(self.root()))
+            .filter(|&id| {
+                let node = self.node(id);
+                node.is_dir() && node.has(flags::ERROR)
+            })
+            .collect()
+    }
+
     /// Finds a direct child of `parent` by exact name.
     pub fn child_by_name(&self, parent: NodeId, name: &OsStr) -> Option<NodeId> {
         let wanted = name.as_encoded_bytes();

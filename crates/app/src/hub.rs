@@ -276,6 +276,7 @@ pub fn device_info(name: &str, os: &str, state: Option<&AgentState>) -> DeviceIn
         attended: true,
         approver: None,
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),
+        rights: freesize_core::access::rights().label().into(),
     }
 }
 

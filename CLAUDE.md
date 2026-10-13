@@ -60,7 +60,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.8.7)
+## Where things stand (0.8.8)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -86,7 +86,12 @@ compiling inside Docker.
   and the protocol's wire names keep the old name. 0.8.7: the Hub serves
   HTTPS with its own certificate authority by default, plain http on the
   same port for the health check and for older devices, which are told to
-  move in a signed answer; `FREESIZE_TLS=off` for a reverse proxy.
+  move in a signed answer; `FREESIZE_TLS=off` for a reverse proxy. 0.8.8:
+  scans name the folders they couldn't read (Clean up tab, command line,
+  Hub) and offer the fuller scan: Windows relaunches as administrator
+  through UAC, macOS and Linux scan as root in the background
+  (`freesize-gui --export`, through an administrator prompt or `pkexec`)
+  and open the result read-only; the dashboard flags incomplete scans.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
@@ -99,12 +104,13 @@ compiling inside Docker.
      works since the repository went public. Unraid's own CSS is in
      github.com/unraid/webgui (`emhttp/plugins/dynamix/styles`); render
      the page against it before changing its layout.
-  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.8.8 the
-     whole disk on every platform, 0.9 trust and updates, 0.9.1 Community
-     Applications, 0.10 the junk cleaner, 0.11 where the space goes, 0.12
-     and 0.13 Nextcloud, 0.14 the phone in the background.
-  5. 0.8.6 and 0.8.7 haven't been tried on real devices yet: the Unraid
+  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.9 trust and
+     updates, 0.9.1 Community Applications, 0.10 the junk cleaner, 0.11
+     where the space goes, 0.12 and 0.13 Nextcloud, 0.14 the phone in the
+     background.
+  4. 0.8.6 to 0.8.8 haven't been tried on real devices yet: the Unraid
      update through `disktree.plg`, the phone pairing again under the new
-     package id, HTTPS pairing from the QR code and a 0.8.6 device moving
-     over to https.
-  4. No license chosen yet.
+     package id, HTTPS pairing from the QR code, a 0.8.6 device moving
+     over to https, and the administrator and root scans (UAC on Windows,
+     the password prompts on macOS and Linux).
+  5. No license chosen yet.

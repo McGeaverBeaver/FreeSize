@@ -233,6 +233,7 @@ fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),
+        rights: freesize_core::access::rights().label().into(),
     }
 }
 

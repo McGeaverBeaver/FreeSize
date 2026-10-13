@@ -25,6 +25,7 @@ fn info(name: &str) -> DeviceInfo {
         attended: false,
         approver: None,
         grants: vec![],
+        rights: String::new(),
     }
 }
 

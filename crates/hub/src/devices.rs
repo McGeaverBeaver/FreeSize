@@ -230,6 +230,7 @@ fn clean_info(mut info: DeviceInfo) -> DeviceInfo {
     clip(&mut info.os, 80);
     clip(&mut info.hostname, 120);
     clip(&mut info.app, 80);
+    clip(&mut info.rights, 20);
     info.grants.truncate(50);
     info
 }
@@ -363,6 +364,8 @@ impl<T: DeserializeOwned + Send> FromRequest<AppState> for DeviceRequest<T> {
 const MAX_FILES: usize = 1000;
 /// Most folders kept per scan.
 const MAX_FOLDERS: usize = 20_000;
+/// Most unreadable folders named per scan.
+const MAX_UNREADABLE: usize = 100;
 
 /// `POST /api/v1/report`.
 pub async fn report(
@@ -472,10 +475,11 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
 pub fn store_scan(c: &Connection, device: &str, mut scan: ScanReport) -> rusqlite::Result<i64> {
     scan.folders.truncate(MAX_FOLDERS);
     scan.largest.truncate(MAX_FILES);
+    scan.unreadable.truncate(MAX_UNREADABLE);
     c.execute(
         "INSERT INTO scans (device_id, root, label, taken, size, allocated, files, dirs, errors,
-                            complete, folders, types, received)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                            complete, folders, types, received, unreadable)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             device,
             scan.root,
@@ -490,6 +494,7 @@ pub fn store_scan(c: &Connection, device: &str, mut scan: ScanReport) -> rusqlit
             gzip_json(&scan.folders),
             serde_json::to_string(&scan.types).unwrap_or_default(),
             now(),
+            serde_json::to_string(&scan.unreadable).unwrap_or_default(),
         ],
     )?;
     let id = c.last_insert_rowid();

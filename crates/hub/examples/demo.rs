@@ -88,6 +88,7 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
         },
         attended,
         approver: None,
+        rights: if attended { "user" } else { "root" }.into(),
         grants: vec![],
     }
 }
@@ -135,6 +136,7 @@ fn scan(
         dirs: 6_120,
         errors: 0,
         complete: true,
+        unreadable: Vec::new(),
         folders,
         largest: files,
         types: vec![

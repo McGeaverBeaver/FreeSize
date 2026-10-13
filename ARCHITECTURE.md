@@ -78,7 +78,20 @@ Rules shared by every platform:
 - **Hard links**: a file with more than one link is counted only the first
   time its `(device, inode)` is seen.
 - **Errors**: unreadable entries are flagged and counted; they never abort the
-  scan. Only an unreadable root fails it.
+  scan. Only an unreadable root fails it. `Tree::unreadable` lists the
+  folders that couldn't be listed, which is what a scan with more rights
+  would add.
+
+### Rights (`access.rs`)
+
+`rights()` says whose eyes a scan sees with: the user's, an elevated
+administrator's (Windows, from the token's elevation) or root's (Unix,
+`geteuid`). Reports carry its label so the Hub can say a Windows agent
+sees only what its user sees. `enable_backup_privilege()` turns on
+`SeBackupPrivilege` for the process; administrators hold it, and with it
+on, listing a folder succeeds whatever its permissions say. `beyond_reach`
+names what no right reaches on Windows (System Volume Information, the
+reserved storage).
 
 ### Platform specifics (`platform.rs`, `space.rs`)
 
@@ -248,6 +261,22 @@ a snapshot and records it (`scans.rs`, the last 12 per scanned folder in
 when the scan covers a whole drive, asks the system about hidden space. A
 path ending in `.json` is read as a scan file instead (`imported`), which
 turns off Open, Delete and Collect.
+
+A scan that missed folders gets a card at the top of the Clean up tab
+(`filecleanup::unreadable_rows`) naming them, with the way to a fuller scan
+that `elevate.rs` works out per platform. Windows: `ShellExecuteW` with
+`runas` starts `freesize-gui --administrator PATH`, a second window that
+turns on the backup privilege, scans PATH and says "administrator" in its
+title; the original window stays, since an elevated program doesn't see
+the user's mapped drives. macOS: first Full Disk Access, checked by opening
+TCC's own database and granted in System Settings (`Privacy_AllFiles`,
+opened for the user); then `osascript … with administrator privileges`.
+Linux: `pkexec`. Both run `freesize-gui --export FILE PATH` as root, with
+no window, into `root-scans/` in the data folder (older files removed
+first); the controller polls the child on its timer and opens the file as
+a saved scan, so nothing from a root's scan can be opened or deleted. The
+window itself never runs as root. Android gets no button: apps' private
+data is measured through Usage access instead.
 
 ### Scan view extras
 
@@ -556,8 +585,9 @@ line), and the server (`hub`).
   the Hub stores only their hash, for 10 minutes and one use, and allows 20
   wrong guesses a minute.
 - **Messages** (`messages.rs`): `DeviceInfo` (name, platform, what it can
-  do, whether someone is at it, its approver and grants), `Report` (info,
-  disks, a scan summary, Android's apps), `PollResponse` (commands, approval
+  do, whether someone is at it, its approver and grants, and `rights`: whose
+  eyes its scans see with), `Report` (info, disks, a scan summary with the
+  count and the first paths of folders it couldn't read, Android's apps), `PollResponse` (commands, approval
   requests for another device, decisions, withdrawals), `Command` with its
   `Action` (`delete`, `uninstall`, `clean_junk`, `restore`,
   `empty_quarantine`, `docker_cleanup`) and `CommandUpdate`. Each action
@@ -639,7 +669,11 @@ once each (`PRAGMA user_version`): devices, pairing codes, nonces, disks
 and their daily samples, scans (folders as gzipped JSON) and their files,
 apps, commands, approvals, the audit log, sessions and sign-ins; then
 devices without an agent and saved searches; then alerts and their
-channels.
+channels; then what Unraid servers report and the quarantine; then the
+folders a scan couldn't read. The dashboard marks such a scan incomplete,
+with the count, on the device card, the scans table and the folders page
+(which names them), as does the HTML report; a Windows agent's page says
+it scans as its user.
 
 - `auth.rs`: OpenID Connect with PKCE (S256), state and nonce. The ID token
   is checked against the provider's keys (JWKS, or HS256 with the client

@@ -89,6 +89,8 @@ pub struct ScanRow {
     pub dirs: i64,
     pub errors: i64,
     pub complete: bool,
+    /// The first folders the scan couldn't read, relative to `root`.
+    pub unreadable: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -148,11 +150,12 @@ pub(crate) fn scan_row(r: &rusqlite::Row) -> rusqlite::Result<ScanRow> {
         dirs: r.get(7)?,
         errors: r.get(8)?,
         complete: r.get(9)?,
+        unreadable: serde_json::from_str(&r.get::<_, String>(10)?).unwrap_or_default(),
     })
 }
 
 pub(crate) const SCAN_COLUMNS: &str =
-    "id, root, label, taken, size, allocated, files, dirs, errors, complete";
+    "id, root, label, taken, size, allocated, files, dirs, errors, complete, unreadable";
 
 pub(crate) fn latest_scans(c: &Connection, device: &str) -> rusqlite::Result<Vec<ScanRow>> {
     let mut stmt = c.prepare(&format!(
@@ -486,7 +489,7 @@ pub(crate) fn find_scan(
         .query_row(
             &format!("SELECT {SCAN_COLUMNS}, device_id FROM scans WHERE id = ?1"),
             [scan],
-            |r| Ok((scan_row(r)?, r.get::<_, String>(10)?)),
+            |r| Ok((scan_row(r)?, r.get::<_, String>(11)?)),
         )
         .optional()?
         .ok_or_else(|| ApiError::not_found("no such scan"))?;

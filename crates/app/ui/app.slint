@@ -1547,7 +1547,8 @@ component ScanningPane inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    title: "FreeSize";
+    title: root.window-title;
+    in property <string> window-title: "FreeSize";
     icon: @image-url("icon.png");
     preferred-width: 1180px;
     preferred-height: 760px;
