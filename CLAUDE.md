@@ -24,8 +24,8 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
 
 ## How we work
 
-- One branch, `santaslittlehelper/nifty-darwin-a8pxxr`: commit and push
-  there. No pull requests unless asked.
+- One branch, `master`: commit and push there. The owner wants no other
+  branches (2026-10-13). No pull requests unless asked.
 - Before pushing: `cargo fmt --all`, `cargo clippy --workspace --all-targets
   -- -D warnings`, `cargo test --workspace`. For changes to shared code,
   also clippy for Windows (`--target x86_64-pc-windows-gnu`) and macOS
