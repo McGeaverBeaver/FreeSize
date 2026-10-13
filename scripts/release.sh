@@ -243,7 +243,7 @@ fi
 free_gb="$(df -P -BG . | awk 'NR == 2 { sub("G", "", $4); print $4 }')"
 if [ "${free_gb:-0}" -lt 15 ]; then
     echo "warning: only ${free_gb} GB free here; a release build needs about 15 GB." >&2
-    echo "         If it fails with \"Bus error\" or \"No space left\", see \"Disk space\" in the README." >&2
+    echo "         If it fails with \"Bus error\" or \"No space left\", see \"Disk space\" in docs/DEVELOPING.md." >&2
 fi
 
 dist="dist/$tag"

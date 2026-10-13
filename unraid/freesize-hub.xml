@@ -14,7 +14,8 @@
 Nothing is ever deleted automatically. The dashboard can only ask: each request is shown on the device itself, with every path, to approve or deny. Servers without a screen send their requests to an approver phone, which can only be chosen on the server (freesize approver set), never from the dashboard.&#xD;
 &#xD;
 Sign-in is OpenID Connect against Authentik: make an OAuth2/OpenID provider and application there, with the redirect URI [Hub address]/auth/callback, and fill in the fields below.</Overview>
-  <Category>Tools: Status:Stable</Category>
+  <Category>Tools:System Tools:Utilities Status:Stable</Category>
+  <License>GPL-3.0-or-later</License>
   <WebUI>http://[IP]:[PORT:9090]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/freesize-hub.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/freesize-hub.png</Icon>

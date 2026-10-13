@@ -821,6 +821,13 @@ the same with made-up devices for trying the dashboard.
 
 ## Unraid
 
+`unraid/freesize-hub.xml` is the Hub's Docker template and `unraid/ca/`
+holds what Community Applications reads besides it: `ca_profile.xml` (the
+maintainer) and `freesize.xml` (the plugin's entry, pointing at the
+release's `.plg`). CA scans the whole repository for XML, so the Android
+resource files show up as non-templates in its statistics and nothing
+else; the owner submits the repository through CA's form.
+
 The plugin is the command line, built statically with musl so it runs on
 any Unraid version, plus a page in Unraid's web UI. `crates/unraid` knows
 the server; every module reads Unraid's own files through `System`, the

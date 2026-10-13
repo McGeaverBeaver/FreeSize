@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Community Applications: who this repository's templates come from.
+     CA reads this file and every template XML in the repository
+     (unraid/freesize-hub.xml for the Hub, unraid/ca/freesize.xml for the
+     plugin). -->
+<Maintainer>
+  <Icon>https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/freesize-hub.png</Icon>
+  <Profile>
+    FreeSize: a disk space analyzer for Windows, macOS, Linux and Android, with a self-hosted Hub for all your devices and a plugin for Unraid. Free software (GPL-3.0-or-later). Nothing is ever deleted automatically: every request is approved on the device itself, and deletes go to a quarantine first.
+  </Profile>
+</Maintainer>

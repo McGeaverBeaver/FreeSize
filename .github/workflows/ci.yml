@@ -3,7 +3,7 @@ name: CI
 # Formatting, clippy and the tests run on every push and pull request, on
 # Windows, macOS and Linux. The APK and the Unraid plugin are built when
 # started by hand (Actions → CI → Run workflow); releases are built locally
-# by scripts/release.sh (see "Releases" in the README).
+# by scripts/release.sh (see "Releases" in docs/DEVELOPING.md).
 on:
   push:
   pull_request:

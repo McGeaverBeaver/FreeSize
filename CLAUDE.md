@@ -32,7 +32,8 @@ for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
   (`--target aarch64-apple-darwin --exclude freesize-hub`). For Android
   changes, `scripts/android/build-apk.sh dist/test.apk` builds and checks
   the APK.
-- Keep README.md, ARCHITECTURE.md and docs/ROADMAP.md in step with changes.
+- Keep README.md (the user page), docs/DEVELOPING.md (the developer page),
+  ARCHITECTURE.md and docs/ROADMAP.md in step with changes.
 - The repository is public, history included: never commit keys, tokens,
   passwords, or the owner's addresses, hostnames or other personal details.
 - Each release bumps `version` in the root `Cargo.toml`; Android won't
@@ -60,7 +61,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.9.0)
+## Where things stand (0.9.1)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -99,7 +100,10 @@ compiling inside Docker.
   Hub checks with `FREESIZE_UPDATE_CHECK=on` and tells older devices);
   the quarantine in the desktop and Android apps; Hub limits on pairing
   and sign-in, `FREESIZE_RETENTION_DAYS`, the audit head in the log and in
-  alerts, "older version" on device cards.
+  alerts, "older version" on device cards. 0.9.1: the Community
+  Applications files in `unraid/ca/` (plus categories and the license in
+  the Hub's template) and the README split into the user page and
+  `docs/DEVELOPING.md`.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
@@ -112,10 +116,11 @@ compiling inside Docker.
      works since the repository went public. Unraid's own CSS is in
      github.com/unraid/webgui (`emhttp/plugins/dynamix/styles`); render
      the page against it before changing its layout.
-  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.9.1
-     Community Applications, 0.10 the junk cleaner, 0.11 where the space
-     goes, 0.12 and 0.13 Nextcloud, 0.14 the phone in the background. 0.9
-     leaves the owner three things: `freesize release key` on the build
+  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.10 the junk
+     cleaner, 0.11 where the space goes, 0.12 and 0.13 Nextcloud, 0.14 the
+     phone in the background. 0.9.1 leaves the owner the CA submission
+     (Squid's form, 2FA on GitHub, a forum support thread if asked) and a
+     check on a clean Unraid 7.3. 0.9 leaves the owner three things: `freesize release key` on the build
      machine and commit `release/public-key.txt`; register the package
      and the Android key with Google; try the updater and the phone's
      quarantine on real devices (TESTING.md).

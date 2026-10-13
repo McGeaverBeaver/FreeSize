@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Community Applications entry for the FreeSize plugin. It points at the
+     release's .plg, which Unraid installs and updates like any plugin. -->
+<Containers>
+  <PluginURL>https://github.com/McGeaverBeaver/FreeSize/releases/latest/download/freesize.plg</PluginURL>
+  <PluginAuthor>McGeaverBeaver</PluginAuthor>
+  <Category>Tools:System Tools:Utilities</Category>
+  <Name>FreeSize</Name>
+  <MinVer>6.12.0</MinVer>
+  <Description>
+Where the space goes on your Unraid server: the array and pools per share and per disk, without waking sleeping disks; what keeps disks spun up; a permissions report; and moving shares between disks with checked copies. Docker and VMs: what's safe to remove, what to check first, and what's in use and never offered. Deleting moves things to a quarantine on the same disk, where they can be put back; nothing is deleted until you empty it, and nothing is ever deleted automatically.
+
+Paired with a FreeSize Hub (the freesize-hub container, or anywhere Docker runs), the server reports its disks, scans, shares, Docker and VMs to one dashboard beside your PCs and phones. The Hub can only ask: each request is shown, with every path, on the approver phone you choose on the server itself, never from the dashboard.
+
+Free software, GPL-3.0-or-later. Runs at the lowest CPU and disk priority and stops with the array.
+  </Description>
+  <Support>https://github.com/McGeaverBeaver/FreeSize/issues</Support>
+  <Project>https://github.com/McGeaverBeaver/FreeSize</Project>
+  <Icon>https://raw.githubusercontent.com/McGeaverBeaver/FreeSize/HEAD/unraid/freesize-hub.png</Icon>
+  <License>GPL-3.0-or-later</License>
+</Containers>

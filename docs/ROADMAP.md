@@ -295,10 +295,24 @@ Parked, each with its reason:
   key with Google under a limited distribution account; and tries a 0.9.0
   phone, Windows PC and Linux box updating to 0.9.1, an edited sums file
   being refused, and Put back on the phone restoring byte for byte.
+- 0.9.1: out in the open. The Community Applications files: `unraid/ca/
+  ca_profile.xml` (who the templates come from), `unraid/ca/freesize.xml`
+  (the plugin's entry, pointing at the release's `freesize.plg`, support
+  on GitHub issues) and the Hub's template with its categories and
+  license; CA scans the repository for them once the owner submits it
+  through Squid's form (forums.unraid.net, "CA Application Policies"),
+  which also wants 2FA on the GitHub account. The README is the user page
+  now (installing, the command line, using the app, the phone, updates,
+  the Hub, Unraid, licensing) and `docs/DEVELOPING.md` the developer page
+  (building, trying the Hub, releases, the keys, the project layout).
+  Still to do by hand: submit the repository, open a support thread on the
+  forum if CA asks for one (then put its address in the entry and the
+  `.plg`), and check both appear in the Apps tab on a clean Unraid 7.3 and
+  install from there.
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what
-"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk) and 0.9 (trust and updates) are under Done. Trust and the quarantine come before any new way to delete;
+"done" means. 0.8.6 (the rename), 0.8.7 (HTTPS), 0.8.8 (the whole disk), 0.9 (trust and updates) and 0.9.1 (Community Applications) are under Done. Trust and the quarantine come before any new way to delete;
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
@@ -320,7 +334,7 @@ half ships even if an action stalls on a device nobody has.
   each update themselves to 0.9.1 from the app, an edited sums file is
   refused, and a delete on the phone lands in a quarantine that Put back
   restores byte for byte.
-- **0.9.1, out in the open.** Community Applications submission for the
+- **0.9.1, out in the open.** Under Done. Community Applications submission for the
   plugin and the Hub template (the license, a `ca_profile.xml`, the plugin
   wrapper XML pointing at the raw `.plg`, a support thread on the forum);
   the README split into a user page and a developer page. Done when both

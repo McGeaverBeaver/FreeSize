@@ -136,39 +136,29 @@ Each part takes over what DiskTree kept, the first time it starts:
 | Android 8.0+ | All shared storage and SD cards, plus sizes for every app and the system | Files need **All files access** (Android 11+). Apps' private data can't be opened as files on Android, so it's measured through Android's storage statistics instead, which need **Usage access**. |
 | iOS | — | Not planned: the iOS sandbox doesn't allow scanning the device. |
 
-## Building
+## Installing
 
-Everything builds on your own machine. You need a recent stable Rust (1.92+)
-from [rustup.rs](https://rustup.rs).
+- **Windows and Linux**: download `freesize-windows-x86_64.zip` or
+  `freesize-linux-x86_64.tar.gz` from the
+  [latest release](https://github.com/McGeaverBeaver/FreeSize/releases/latest),
+  unpack it anywhere and run `freesize-gui` (`freesize-gui.exe`). It's a
+  single file with no installer; the `freesize` command line is beside it.
+  On Windows, SmartScreen may warn about a download it hasn't seen before:
+  *More info → Run anyway*. Linux needs fontconfig, which every desktop has.
+  Later releases install from the app: see [Updates](#updates).
+- **Android**: see [Installing on an Android phone](#installing-on-an-android-phone).
+- **Unraid**: the plugin and the Hub's container are in Community
+  Applications; see [FreeSize for Unraid](#freesize-for-unraid).
+- **macOS**: no download yet; build it yourself (nobody here has a Mac to
+  test on). Building anything from source is in
+  [docs/DEVELOPING.md](docs/DEVELOPING.md).
 
-- **Windows**: run `rustup-init.exe` and let it install the Visual Studio C++
-  build tools when it asks.
-- **Linux** also needs a C compiler and the fontconfig headers:
+## Command line
 
-  ```sh
-  sudo apt install build-essential pkg-config libfontconfig1-dev   # Debian/Ubuntu
-  sudo dnf install gcc pkgconf fontconfig-devel                    # Fedora
-  ```
-
-Get the code with `git clone https://github.com/McGeaverBeaver/FreeSize`
-and run the commands below inside that folder. `git pull` fetches updates.
-
-### Desktop app
-
-```sh
-cargo run --release -p freesize-app            # opens the drive picker
-cargo run --release -p freesize-app -- ~/Videos   # scans a folder right away
-```
-
-The binary is `target/release/freesize-gui` (`freesize-gui.exe` on Windows).
-It's a single file you can copy anywhere. On Windows, release builds don't open
-a console window. `cargo build --release -p freesize-app -p freesize-cli`
-builds the app and the command line without starting anything.
-
-### Command line
+The `freesize` command line is in every desktop download, beside the app.
 
 ```sh
-cargo run --release -p freesize-cli -- /usr --depth 2 --top 10
+freesize /usr --depth 2 --top 10
 ```
 
 ```
@@ -195,6 +185,8 @@ freesize / --export root-scan.json       # save the scan (ncdu's format)
 freesize --import root-scan.json         # look at a saved scan again
 ssh server ncdu -o- -x /srv > srv.json && freesize --import srv.json
 ```
+
+## Using the app
 
 ### Clean up tab
 
@@ -336,7 +328,7 @@ scripts/android/build-apk.sh      # -> target/release/apk/FreeSize.apk
 
 The first build takes several minutes; later ones only rebuild what changed.
 It also creates the signing key that every later build reuses (see
-[Android signing key](#android-signing-key)), so new builds install over the
+[Android signing key](docs/DEVELOPING.md#android-signing-key)), so new builds install over the
 old one and keep FreeSize's permissions. Releases up to 0.1.3 were signed
 with a different key, so uninstall such a copy once first.
 
@@ -387,40 +379,6 @@ F-Droid don't have that step.
    fingerprint. Then repeat step 5. You only need to do this once per install.
 
 Later releases install from the app: see [Updates](#updates).
-
-## Updates
-
-The home screen's **Updates** section is off until you turn it on; then
-FreeSize asks GitHub once a day whether a newer release is out (that's the
-only thing it ever asks anyone, and only the version is sent, in the
-request's user agent). **Pre-releases too** follows the beta channel. A
-FreeSize Hub with `FREESIZE_UPDATE_CHECK=on` checks once for all its
-devices and tells those running an older version, so the devices needn't
-ask GitHub themselves.
-
-**Update** downloads the release's `SHA256SUMS.txt` and its signature,
-checks the signature with the release key built into FreeSize (the public
-half is `release/public-key.txt` in the repository), downloads the file for
-this platform and checks it against the sums. Anything that doesn't verify
-is refused and nothing is installed; a build made without the key in that
-file can't update itself at all.
-
-- **Windows and Linux**: the archive's `freesize-gui` and `freesize` are
-  swapped in beside the running ones (the old files stay as `.old` until the
-  next start) and FreeSize starts again. On Windows, SmartScreen may warn
-  about the new executable, as it does for any download: *More info → Run
-  anyway*.
-- **Android**: the verified APK is saved in `Download/FreeSize` and handed to
-  Android's installer, which asks (the first time, Android sends you to
-  allow FreeSize to install apps). Android also refuses an APK signed with
-  another key, so a release not built with the project's Android key never
-  installs over FreeSize.
-- **The command line**: `freesize update` says whether a newer release is
-  out; `freesize update --install` installs it over itself the same way.
-- **The Hub** doesn't update itself: Settings says when a newer release is
-  out, and the device cards mark devices older than the Hub. Pull the new
-  image (or package) yourself.
-- **The Unraid plugin** updates through Unraid's Plugins page.
 
 ### Why a file scan finds less than the phone uses
 
@@ -548,6 +506,40 @@ than the day you removed it.
 | "App blocked" because the developer isn't verified | Google is rolling out developer verification region by region. | `adb install` still works. Registering the developer and package `io.github.mcgeaverbeaver.freesize` with Google removes the block for everyone. |
 | A folder shows "no access" | `Android/data`, `Android/obb` and other apps' private files are off limits to every app on Android 11+. | Nothing to fix; that's an Android rule. |
 
+## Updates
+
+The home screen's **Updates** section is off until you turn it on; then
+FreeSize asks GitHub once a day whether a newer release is out (that's the
+only thing it ever asks anyone, and only the version is sent, in the
+request's user agent). **Pre-releases too** follows the beta channel. A
+FreeSize Hub with `FREESIZE_UPDATE_CHECK=on` checks once for all its
+devices and tells those running an older version, so the devices needn't
+ask GitHub themselves.
+
+**Update** downloads the release's `SHA256SUMS.txt` and its signature,
+checks the signature with the release key built into FreeSize (the public
+half is `release/public-key.txt` in the repository), downloads the file for
+this platform and checks it against the sums. Anything that doesn't verify
+is refused and nothing is installed; a build made without the key in that
+file can't update itself at all.
+
+- **Windows and Linux**: the archive's `freesize-gui` and `freesize` are
+  swapped in beside the running ones (the old files stay as `.old` until the
+  next start) and FreeSize starts again. On Windows, SmartScreen may warn
+  about the new executable, as it does for any download: *More info → Run
+  anyway*.
+- **Android**: the verified APK is saved in `Download/FreeSize` and handed to
+  Android's installer, which asks (the first time, Android sends you to
+  allow FreeSize to install apps). Android also refuses an APK signed with
+  another key, so a release not built with the project's Android key never
+  installs over FreeSize.
+- **The command line**: `freesize update` says whether a newer release is
+  out; `freesize update --install` installs it over itself the same way.
+- **The Hub** doesn't update itself: Settings says when a newer release is
+  out, and the device cards mark devices older than the Hub. Pull the new
+  image (or package) yourself.
+- **The Unraid plugin** updates through Unraid's Plugins page.
+
 ## FreeSize Hub
 
 One dashboard for the storage of all your devices: phones, PCs, servers and
@@ -674,8 +666,9 @@ by themselves; the browser is sent to `https://`. Pairing over plain
 `http://` is still possible with `FREESIZE_TLS=off`; devices warn then,
 since anyone on the network can read what they send.
 
-**Unraid**: the template is in `unraid/freesize-hub.xml`. Until it's in
-Community Applications, add it from the Unraid terminal, then pick
+**Unraid**: in the **Apps** tab, search for *FreeSize Hub* and install it
+(the template is `unraid/freesize-hub.xml` in this repository). If it
+isn't there yet, add it from the Unraid terminal, then pick
 **freesize-hub** under Docker → Add Container → Template:
 
 ```sh
@@ -849,16 +842,6 @@ sensor:
     scan_interval: 300
 ```
 
-### Trying the Hub without devices
-
-```sh
-cargo run -p freesize-hub --example demo
-```
-
-starts a Hub on http://127.0.0.1:9090 with a stand-in sign-in (it signs you
-straight in as an admin) and a few made-up devices, scans, requests and
-alerts.
-
 ## FreeSize for Unraid
 
 A plugin for Unraid 6.12 and newer: a page under **Tools → FreeSize** and a
@@ -918,14 +901,15 @@ stopped, everything they could use counts as in use.
 
 ### Installing the plugin
 
-In Unraid, **Plugins → Install Plugin**, and paste:
+In Unraid's **Apps** tab (Community Applications), search for *FreeSize*
+and install the plugin. Or, in **Plugins → Install Plugin**, paste:
 
 ```
 https://github.com/McGeaverBeaver/FreeSize/releases/latest/download/freesize.plg
 ```
 
-(Unraid downloads it without logging in, so the repository has to be
-public.) Updates show on the Plugins page like any other plugin's.
+Either way Unraid downloads it from the GitHub release, and updates show
+on the Plugins page like any other plugin's.
 
 The background part runs at the lowest CPU and disk priority, stops when
 the array stops so it never holds a disk, and logs to
@@ -972,211 +956,6 @@ pairing on the flash drive; pairing there is picked up by the plugin
 straight away. The plugin's log is `/var/log/freesize.log`, with every
 pairing attempt from the page.
 
-## Releases
-
-Releases are built on your own Linux machine (an Ubuntu VM works well) and
-published as GitHub releases, with the APK signed by your own key so every
-release installs over the previous one.
-
-### Setting up a build machine (once)
-
-On a fresh Ubuntu Server (24.04 or newer):
-
-```sh
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y build-essential pkg-config git curl unzip zip gh mingw-w64 \
-    musl-tools openjdk-21-jdk-headless libfontconfig1-dev
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-git clone https://github.com/McGeaverBeaver/FreeSize.git
-cd FreeSize
-scripts/android/setup-linux.sh   # Android SDK, NDK, cargo-apk
-gh auth login                    # GitHub.com, HTTPS, log in with a web browser
-```
-
-`gh auth login` shows a code and a link; open the link on any computer, enter
-the code, and the machine can publish releases to your repositories.
-
-### Disk space
-
-Give the build machine at least 40 GB of disk and 8 GB of RAM. A release needs
-about 15 GB for build files: Rust builds for Linux, Windows and two Android
-targets, plus the Android SDK and NDK. When the disk fills up during a build,
-the linker fails with "Bus error" or "No space left on device".
-
-`df -h ~` shows how much is free. To make room:
-
-- **The virtual disk is too small** (the filesystem is a partition such as
-  `/dev/vda2` or `/dev/sda2` and fills the whole disk): enlarge the disk in
-  your VM software, then grow the partition and filesystem into the new
-  space. `lsblk` shows the names; the system partition must be the last one
-  on the disk.
-
-  ```sh
-  sudo growpart /dev/vda 2      # disk, then partition number
-  sudo resize2fs /dev/vda2      # ext4; for XFS: sudo xfs_growfs /
-  ```
-
-- **Ubuntu Server left part of the disk unused** (the filesystem is
-  `/dev/mapper/ubuntu--vg-ubuntu--lv`, which the installer sizes to part of
-  the disk by default):
-
-  ```sh
-  sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
-  ```
-
-`cargo clean` deletes all build files when space runs low; the next build
-then takes longer.
-
-**Building on a shared folder.** A VM can keep the project on a folder its
-host shares over 9p, such as an Unraid share with mount tag `ssdbobbybuilds`.
-Mount it with `cache=mmap`: the linker needs memory-mapped files, which 9p
-doesn't fully support without caching, while `cache=loose` (which also
-caches writes) returned corrupted file contents in a real build.
-
-```sh
-sudo mkdir -p /mnt/ssdbuilds
-echo 'ssdbobbybuilds /mnt/ssdbuilds 9p trans=virtio,version=9p2000.L,msize=262144,cache=mmap,nofail 0 0' | sudo tee -a /etc/fstab
-sudo systemctl daemon-reload && sudo mount /mnt/ssdbuilds
-git clone https://github.com/McGeaverBeaver/FreeSize.git /mnt/ssdbuilds/FreeSize
-ln -s /mnt/ssdbuilds/FreeSize ~/FreeSize
-```
-
-To check that every file arrived intact, make git re-read them all; this
-should print nothing:
-
-```sh
-cd ~/FreeSize
-find . -path ./.git -prune -o -type f -exec touch {} +
-git status --short
-```
-
-Rust, the Android SDK and the signing key stay on the VM's own disk.
-
-### Publishing a release
-
-1. Bump `version` in the root `Cargo.toml` (for example to `0.2.1`) and push.
-   The Android version code is derived from it, and Android won't install a
-   lower version over a higher one.
-2. On the build machine:
-
-   ```sh
-   cd ~/FreeSize
-   git pull
-   scripts/release.sh
-   ```
-
-`scripts/release.sh` runs the tests, builds `freesize-android.apk`,
-`freesize-linux-x86_64.tar.gz`, `freesize-hub-linux-x86_64.tar.gz`,
-`freesize-windows-x86_64.zip` (the Windows build is cross-compiled with
-MinGW) and the Unraid plugin, `freesize.plg` with its package
-`freesize-<version>-x86_64-1.txz` (a static musl build, so it runs on every
-Unraid version), writes `SHA256SUMS.txt`, and creates the GitHub release `v<version>`
-for the checked-out commit with those files and notes listing the changes.
-With `gcc-aarch64-linux-gnu` installed it adds the Hub and command line for
-ARM boards (`*-linux-aarch64.tar.gz`).
-
-It also publishes the Hub's Docker image, as a GitHub Actions workflow
-would but without using Actions minutes: `ghcr.io/mcgeaverbeaver/freesize-hub`,
-a package of the repository, for amd64 and arm64. The image takes the Hub
-the release has just built, so Docker compiles nothing and needs only a few
-hundred MB. It logs in to GitHub's registry with the GitHub CLI's token
-(which needs the `write:packages` scope), in a throwaway Docker config so
-the token isn't left on disk. Once, on the build machine:
-
-```sh
-sudo apt install docker.io docker-buildx gcc-aarch64-linux-gnu
-sudo usermod -aG docker $USER   # then log in again
-```
-
-and the first time the image is pushed, make the package public on GitHub
-(Packages → freesize-hub → Package settings → Change visibility) so Unraid
-can pull it without logging in; the script reminds you while it's private.
-`FREESIZE_IMAGE` names another image, and `--no-image` leaves it out.
-
-The script refuses to publish uncommitted or unpushed code, or a version
-that's already released. The image is tagged `<version>` and `latest` (the
-one Unraid pulls) on every release, drafts included, so publishing a draft
-on GitHub's website needs nothing more. `--draft` publishes a draft to
-check first; `scripts/release.sh --publish` makes it public and points
-`latest` at it again, also when it was made public on the website. `--build-only` just builds into `dist/` (and builds the image
-without pushing it). macOS builds need a Mac, so releases have none.
-
-The GitHub Actions CI workflow (`.github/workflows/ci.yml`) no longer runs on
-its own. It runs formatting, clippy and tests on Windows, macOS and Linux,
-builds the APK and the Unraid plugin, when started by hand from the Actions
-tab. The same checks locally:
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
-### Release key
-
-Releases are signed, so the apps can tell a release that came from the
-build machine from one that didn't. Once, on the build machine:
-
-```sh
-freesize release key          # makes ~/.freesize/release-key, prints the public half
-```
-
-Paste the printed public half into `release/public-key.txt` and commit it;
-from then on `release.sh` signs every release's `SHA256SUMS.txt`
-(`SHA256SUMS.txt.sig` beside it) with `freesize release sign` and checks
-it with `freesize release verify`. Without the key file, the release is
-built unsigned and the script says so: it still works, but apps won't
-install it themselves. `freesize release verify SHA256SUMS.txt` checks a
-download by hand. The private key never leaves the build machine (mode
-0600, outside the repository); if it's lost or leaks, make a new one and
-commit the new public half, and the next release is installed by hand once.
-See [release/README.md](release/README.md).
-
-### Android signing key
-
-Android only installs an update if it's signed with the same key as the
-installed app. On the first build, `build-apk.sh` creates
-`~/.android/disktree-release.keystore` and a random password in
-`~/.android/disktree-release.keystore.password`, and signs every later build
-and release with them.
-
-**Back up both files** (a password manager, a USB stick). If you lose them,
-nobody can publish an update that installs over the app: everyone would have
-to uninstall it and set up its permissions again. To build on another
-machine, copy both files into its `~/.android/`. From Windows:
-
-```powershell
-scp you@build-machine:~/.android/disktree-release.keystore* .
-```
-
-To sign with a different key, set `CARGO_APK_RELEASE_KEYSTORE` and
-`CARGO_APK_RELEASE_KEYSTORE_PASSWORD`.
-
-## Project layout
-
-```
-crates/core   scanner, tree model, stats, treemap and bubble layout,
-              snapshots, scan files (no UI)
-crates/cli    `freesize` command-line tool and Hub agent
-crates/app    Slint app; ui/app.slint is the whole UI, src/controller.rs the logic
-crates/proto  what devices and the Hub say to each other: keys, signatures,
-              pairing links, reports, commands
-crates/agent  the device side of the Hub, shared by the app and the agent
-crates/hub    FreeSize Hub: web server, dashboard (web/), SQLite, alerts
-crates/unraid Unraid: the array, shares, Docker, VMs, what to protect,
-              disk activity, permissions, moves between disks
-unraid/       the Hub's Unraid template, and plugin/: the .plg and the
-              package (page, start script)
-packaging/    the Hub's Docker entrypoint, systemd units
-```
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces work,
-[docs/ROADMAP.md](docs/ROADMAP.md) for what's planned, [TESTING.md](TESTING.md)
-for what to try by hand before a release, and [SECURITY.md](SECURITY.md)
-for what leaves a device and how to report a problem. Bug reports and ideas
-go in GitHub issues, which have templates for both.
-
 ## Licensing
 
 FreeSize is free software: you can redistribute it and modify it under the
@@ -1189,4 +968,11 @@ royalty-free license: *Made with Slint*. The signatures, the pairing codes
 and the Hub's certificates use Ed25519, SHA-256 and rcgen; the full list of
 dependencies and their licenses is in `Cargo.lock` and on crates.io.
 
-Found a security problem? See [SECURITY.md](SECURITY.md).
+Found a security problem? See [SECURITY.md](SECURITY.md). Bug reports and
+ideas go in GitHub issues, which have templates for both.
+
+## Developing
+
+Building from source, releases, the project's layout and how the pieces
+work: [docs/DEVELOPING.md](docs/DEVELOPING.md), then
+[ARCHITECTURE.md](ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
