@@ -2,7 +2,7 @@
 //! for a few minutes, and shows it as a link (and a QR code of the link):
 //!
 //! ```text
-//! disktree://pair?hub=https%3A%2F%2Fhub.home.lan&code=7KQ2-M9XD-4HRT&key=ABCD-EFGH-JKMN-PQRS
+//! freesize://pair?hub=https%3A%2F%2Fhub.home.lan&code=7KQ2-M9XD-4HRT&key=ABCD-EFGH-JKMN-PQRS
 //! ```
 //!
 //! `key` is the fingerprint of the Hub's key. A device that got the link
@@ -24,10 +24,19 @@ pub struct PairingLink {
     pub key: Option<String>,
 }
 
+/// The link's scheme, and DiskTree's from before the rename, still read
+/// so links and QR codes from a Hub that isn't updated yet work.
+const SCHEMES: [&str; 2] = ["freesize://", "disktree://"];
+
+/// Whether `text` is meant as a pairing link, complete or not.
+pub fn is_link(text: &str) -> bool {
+    SCHEMES.iter().any(|s| text.trim_start().starts_with(s))
+}
+
 impl PairingLink {
     pub fn to_uri(&self) -> String {
         let mut uri = format!(
-            "disktree://pair?hub={}&code={}",
+            "freesize://pair?hub={}&code={}",
             encode(&self.hub),
             encode(&self.code)
         );
@@ -39,7 +48,10 @@ impl PairingLink {
 
     /// Reads a pairing link.
     pub fn parse(text: &str) -> Option<PairingLink> {
-        let query = text.trim().strip_prefix("disktree://pair?")?;
+        let text = text.trim();
+        let query = SCHEMES
+            .iter()
+            .find_map(|scheme| text.strip_prefix(scheme)?.strip_prefix("pair?"))?;
         let (mut hub, mut code, mut key) = (None, None, None);
         for pair in query.split('&') {
             let (name, value) = pair.split_once('=')?;
@@ -163,10 +175,23 @@ mod tests {
             key: Some("ABCD-EFGH-JKMN-PQRS".into()),
         };
         let uri = link.to_uri();
-        assert!(uri.starts_with("disktree://pair?hub=https%3A%2F%2Fhub.home.lan%3A9090&code="));
+        assert!(uri.starts_with("freesize://pair?hub=https%3A%2F%2Fhub.home.lan%3A9090&code="));
         assert_eq!(PairingLink::parse(&uri), Some(link));
         assert_eq!(PairingLink::parse("https://example.com"), None);
-        assert_eq!(PairingLink::parse("disktree://pair?hub=x"), None);
+        assert_eq!(PairingLink::parse("freesize://pair?hub=x"), None);
+    }
+
+    #[test]
+    fn links_from_before_the_rename_still_pair() {
+        let link = PairingLink {
+            hub: "https://hub.home.lan".into(),
+            code: new_code(),
+            key: None,
+        };
+        let old = link.to_uri().replacen("freesize://", "disktree://", 1);
+        assert!(is_link(&old) && is_link(&format!(" {}", link.to_uri())));
+        assert_eq!(PairingLink::parse(&old), Some(link));
+        assert!(!is_link("https://hub.home.lan"));
     }
 
     #[test]

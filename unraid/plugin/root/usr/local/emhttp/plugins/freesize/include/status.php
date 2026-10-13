@@ -1,5 +1,5 @@
 <?php
-// DiskTree for Unraid: what the background part found, for the page.
+// FreeSize for Unraid: what the background part found, for the page.
 require_once __DIR__.'/common.php';
 
 $text = @file_get_contents("$dt_data/status.json");

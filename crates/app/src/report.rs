@@ -3,7 +3,7 @@
 
 use std::fmt::Write;
 
-use disktree_core::{
+use freesize_core::{
     NodeId, SizeMode, SortKey, Tree, age_bins, extension_stats, flags, format_count, format_size,
     largest_files,
 };
@@ -62,9 +62,9 @@ pub fn html(tree: &Tree, focus: NodeId, mode: SizeMode, extras: &Extras) -> Stri
         page,
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>DiskTree: {title}</title><style>{STYLE}</style></head><body>\
+         <title>FreeSize: {title}</title><style>{STYLE}</style></head><body>\
          <h1>{title}</h1><p class=\"dim\">{path}<br>{size} in {files} files and {dirs} folders, \
-         scanned {date} by DiskTree</p>",
+         scanned {date} by FreeSize</p>",
         title = escape(extras.title),
         path = escape(&tree.path(focus).to_string_lossy()),
         size = format_size(node.size_in(mode)),
@@ -224,7 +224,7 @@ pub fn csv(tree: &Tree, focus: NodeId) -> String {
 mod tests {
     use std::fs;
 
-    use disktree_core::{ScanOptions, ScanProgress, scan};
+    use freesize_core::{ScanOptions, ScanProgress, scan};
 
     use super::*;
 
@@ -262,7 +262,7 @@ mod tests {
     }
 
     fn tempfile_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("disktree-report-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-report-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

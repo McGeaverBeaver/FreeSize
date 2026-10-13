@@ -1,5 +1,0 @@
-Menu="DiskTree:5"
-Title="Quarantine"
----
-<?require_once "$docroot/plugins/disktree/include/page.php";?>
-<div class="disktree" id="dt-quarantine"><p class="dt-muted">Loading…</p></div>

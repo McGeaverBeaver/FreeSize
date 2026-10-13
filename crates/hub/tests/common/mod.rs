@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
-use disktree_hub::{AppState, Config};
+use freesize_hub::{AppState, Config};
 use serde_json::Value;
 
 use idp::{CLIENT_ID, CLIENT_SECRET, MockIdp};
@@ -36,10 +36,10 @@ pub async fn start_hub_with(name: &str, extra: &[&str]) -> TestHub {
     let idp = MockIdp::start().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let dir = std::env::temp_dir().join(format!("disktree-hub-test-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("freesize-hub-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let mut args = vec![
-        "disktree-hub",
+        "freesize-hub",
         "--data",
         dir.to_str().unwrap(),
         "--url",
@@ -54,7 +54,7 @@ pub async fn start_hub_with(name: &str, extra: &[&str]) -> TestHub {
     args.extend_from_slice(extra);
     let config = Config::parse_from(args);
     let state = AppState::open(config).unwrap();
-    tokio::spawn(disktree_hub::serve(listener, state.clone()));
+    tokio::spawn(freesize_hub::serve(listener, state.clone()));
     TestHub {
         url,
         state,

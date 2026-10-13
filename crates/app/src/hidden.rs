@@ -8,7 +8,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use disktree_core::format_size;
+use freesize_core::format_size;
 
 /// Whether `path` is the top of its file system, so a scan of it covers the
 /// whole drive.

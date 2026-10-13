@@ -4,21 +4,36 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::Parser;
-use disktree_hub::Config;
+use freesize_hub::Config;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    // Settings named for DiskTree (an Unraid template from before the
+    // rename) count until they're renamed. Before any thread starts.
+    for (key, value) in freesize_core::renamed::old_env() {
+        // SAFETY: nothing else runs yet, so nothing reads the environment.
+        unsafe { std::env::set_var(key, value) };
+    }
     if std::env::args().nth(1).as_deref() == Some("health") {
         return health();
     }
+    match tokio::runtime::Runtime::new() {
+        Ok(runtime) => runtime.block_on(serve()),
+        Err(err) => {
+            eprintln!("freesize-hub: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn serve() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("DISKTREE_HUB_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("FREESIZE_HUB_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
     let config = Config::parse();
-    match disktree_hub::run(config).await {
+    match freesize_hub::run(config).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             tracing::error!("{err}");
@@ -27,10 +42,10 @@ async fn main() -> ExitCode {
     }
 }
 
-/// `disktree-hub health`: whether the Hub on this machine answers, for the
+/// `freesize-hub health`: whether the Hub on this machine answers, for the
 /// container's health check. Reads the listen address like the Hub does.
 fn health() -> ExitCode {
-    let listen: SocketAddr = std::env::var("DISKTREE_HUB_LISTEN")
+    let listen: SocketAddr = std::env::var("FREESIZE_HUB_LISTEN")
         .ok()
         .and_then(|a| a.parse().ok())
         .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 9090)));

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use disktree_core::{
+use freesize_core::{
     DuplicateGroup, NodeId, Safety, SizeMode, Spot, Tree, flags, format_count, format_size,
     old_files, rebuildable,
 };
@@ -133,7 +133,7 @@ pub fn found_rows(
             );
             if unreadable > 0 {
                 text.push_str(&format!(
-                    ", and {unreadable} folder{} DiskTree couldn't read",
+                    ", and {unreadable} folder{} FreeSize couldn't read",
                     if unreadable == 1 { "" } else { "s" }
                 ));
             }
@@ -405,7 +405,7 @@ fn place(tree: &Tree, root_path: &Path, id: NodeId) -> String {
 mod tests {
     use std::fs;
 
-    use disktree_core::{DuplicateProgress, ScanOptions, ScanProgress, find_duplicates, scan};
+    use freesize_core::{DuplicateProgress, ScanOptions, ScanProgress, find_duplicates, scan};
 
     use super::*;
 
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn lists_folders_and_duplicates() {
         const MB: usize = 1024 * 1024;
-        let dir = std::env::temp_dir().join(format!("disktree-clean-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-clean-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         write(&dir, "web/package.json", 2, b'{');
         write(&dir, "web/node_modules/big.js", 2 * MB, 1);

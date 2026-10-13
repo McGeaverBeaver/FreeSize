@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn steam_games_by_manifest() {
-        let dir = std::env::temp_dir().join(format!("disktree-steam-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-steam-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let steamapps = dir.join("steamapps");
         fs::create_dir_all(steamapps.join("common/Hades")).unwrap();
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn linux_folders_match_desktop_entries() {
         use platform::{Desktop, find_icon};
-        let dir = std::env::temp_dir().join(format!("disktree-xdg-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-xdg-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let apps = dir.join("applications");
         fs::create_dir_all(&apps).unwrap();

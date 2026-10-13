@@ -1,4 +1,4 @@
-//! The app as a device of a DiskTree Hub: connecting with a pairing link,
+//! The app as a device of a FreeSize Hub: connecting with a pairing link,
 //! reporting after scans, and asking here before doing anything the Hub
 //! requests. The app can also be the designated approver of servers: their
 //! requests come here too, and the answer is signed with this device's key.
@@ -12,9 +12,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use disktree_agent::commands::{self, Choice, Executor, Policy, Request, Verdict};
-use disktree_agent::{AgentError, AgentState, Client, Transport, now};
-use disktree_proto::{
+use freesize_agent::commands::{self, Choice, Executor, Policy, Request, Verdict};
+use freesize_agent::{AgentError, AgentState, Client, Transport, now};
+use freesize_proto::{
     ActionKind, ApprovalRequest, ApprovedBy, Command, CommandState, CommandUpdate, Decision,
     DeviceInfo, Hello, PairingLink, Platform, PollResponse, Purpose, Report,
 };
@@ -149,7 +149,7 @@ impl Hub {
             asked: HashSet::new(),
         };
         let spawned = std::thread::Builder::new()
-            .name("disktree-hub".into())
+            .name("freesize-hub".into())
             .spawn(move || worker.run(jobs, inbox));
         if spawned.is_err() {
             self.jobs = None;
@@ -186,7 +186,7 @@ impl Hub {
         let transport = self.transport.clone();
         let path = self.path.clone();
         let state = self.state.clone();
-        if disktree_proto::pairing::plain_http_over_network(&link.hub) {
+        if freesize_proto::pairing::plain_http_over_network(&link.hub) {
             let _ = events.send(Event::Status(format!(
                 "{} is plain http: what this device reports (folder and file names) can be read \
                  on the network. Put HTTPS in front of the Hub.",
@@ -203,7 +203,7 @@ impl Hub {
                     false
                 }
             };
-            match disktree_agent::pair(&*transport, &link, info, &mut confirm) {
+            match freesize_agent::pair(&*transport, &link, info, &mut confirm) {
                 Ok(paired) => {
                     let name = paired.hub_name.clone();
                     let saved = paired.save(&path);
@@ -265,8 +265,8 @@ pub fn device_info(name: &str, os: &str, state: Option<&AgentState>) -> DeviceIn
         name: name.to_string(),
         platform,
         os: os.to_string(),
-        hostname: disktree_agent::hostname(),
-        app: format!("DiskTree app {}", env!("CARGO_PKG_VERSION")),
+        hostname: freesize_agent::hostname(),
+        app: format!("FreeSize app {}", env!("CARGO_PKG_VERSION")),
         actions: if platform == Platform::Android {
             vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]
         } else {
@@ -354,7 +354,7 @@ impl Worker {
             jobs,
         };
         if std::thread::Builder::new()
-            .name("disktree-hub-poll".into())
+            .name("freesize-hub-poll".into())
             .spawn(move || poller.run())
             .is_err()
         {
@@ -455,7 +455,7 @@ impl Worker {
                         // describe() says permanently, which is right here.
                     } else if matches!(
                         request.command.action,
-                        disktree_proto::Action::Delete { .. }
+                        freesize_proto::Action::Delete { .. }
                     ) {
                         lines[0] = lines[0].replace("permanently delete", "move to the Trash");
                     }
@@ -494,11 +494,11 @@ impl Worker {
         }
     }
 
-    fn carry_out(&self, request: &Request, approval: disktree_proto::Approval) {
+    fn carry_out(&self, request: &Request, approval: freesize_proto::Approval) {
         self.update(&request.command.id, &plain(CommandState::Running, ""));
         let update = commands::run(request, &*self.executor, approval);
         let deleted = match request.command.action {
-            disktree_proto::Action::Delete { .. } => request
+            freesize_proto::Action::Delete { .. } => request
                 .targets
                 .iter()
                 .filter(|t| t.symlink_metadata().is_err())
@@ -625,12 +625,12 @@ impl Executor for AppExecutor {
 /// link, as a pairing link.
 pub fn link_from(text: &str, code: &str) -> Result<PairingLink, String> {
     let text = text.trim();
-    if text.starts_with("disktree://") {
+    if freesize_proto::pairing::is_link(text) {
         return PairingLink::parse(text).ok_or_else(|| "That pairing link isn't complete.".into());
     }
-    let hub = disktree_proto::pairing::normalize_hub(text)
+    let hub = freesize_proto::pairing::normalize_hub(text)
         .ok_or("Type the Hub's address, or paste the pairing link.")?;
-    let code = disktree_proto::pairing::format_code(code)
+    let code = freesize_proto::pairing::format_code(code)
         .ok_or("A pairing code has 12 letters and digits.")?;
     Ok(PairingLink {
         hub,
@@ -640,11 +640,11 @@ pub fn link_from(text: &str, code: &str) -> Result<PairingLink, String> {
 }
 
 /// Android's apps and storage as the Hub stores them.
-pub fn apps_report(report: &crate::apps::AppReport) -> disktree_proto::AppsReport {
+pub fn apps_report(report: &crate::apps::AppReport) -> freesize_proto::AppsReport {
     use crate::cleanup::JunkKind;
-    let breakdown = disktree_core::disk_space(&crate::locations::default_path()).map(|space| {
+    let breakdown = freesize_core::disk_space(&crate::locations::default_path()).map(|space| {
         let b = report.breakdown(space);
-        disktree_proto::Breakdown {
+        freesize_proto::Breakdown {
             total: b.total,
             free: b.free,
             apps: b.apps,
@@ -652,13 +652,13 @@ pub fn apps_report(report: &crate::apps::AppReport) -> disktree_proto::AppsRepor
             system: b.system,
         }
     });
-    disktree_proto::AppsReport {
+    freesize_proto::AppsReport {
         taken: report.now as i64,
         breakdown,
         apps: report
             .apps
             .iter()
-            .map(|app| disktree_proto::AppEntry {
+            .map(|app| freesize_proto::AppEntry {
                 package: app.package.clone(),
                 label: app.label.clone(),
                 code: app.code_bytes,
@@ -677,7 +677,7 @@ pub fn apps_report(report: &crate::apps::AppReport) -> disktree_proto::AppsRepor
         junk: report
             .junk
             .iter()
-            .map(|junk| disktree_proto::JunkEntry {
+            .map(|junk| freesize_proto::JunkEntry {
                 kind: junk.kind.id().to_string(),
                 label: match junk.kind {
                     JunkKind::Trash => "Trash",
@@ -704,7 +704,7 @@ mod tests {
         assert_eq!(link.code, "ABCD-EFGH-JKMN");
         assert!(link.key.is_none());
         let pasted = link_from(
-            " disktree://pair?hub=http%3A%2F%2Fx%3A9090&code=ABCDEFGHJKMN&key=AAAA-BBBB-CCCC-DDDD ",
+            " freesize://pair?hub=http%3A%2F%2Fx%3A9090&code=ABCDEFGHJKMN&key=AAAA-BBBB-CCCC-DDDD ",
             "",
         )
         .unwrap();

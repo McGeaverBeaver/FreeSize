@@ -1,4 +1,4 @@
-//! `disktree unraid`: the Unraid plugin's background work, and the commands
+//! `freesize unraid`: the Unraid plugin's background work, and the commands
 //! its page in the web UI uses.
 //!
 //! The daemon scans the disks that are awake on a schedule, watches what
@@ -15,30 +15,30 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
-use disktree_agent::commands::{Deleted, Executor, Guards, Policy, Request};
-use disktree_agent::guard::OpenFiles;
-use disktree_agent::quarantine::{Quarantine, QuarantineExecutor};
-use disktree_agent::{AgentError, AgentState, Client, UreqTransport, now};
-use disktree_core::format_size;
-use disktree_proto::unraid::{MoveJob, QuarantineBatch, UnraidReport};
-use disktree_proto::{ActionKind, Command, DeviceInfo, Platform, PollResponse, Report, ScanReport};
-use disktree_unraid::activity::{self, Monitor};
-use disktree_unraid::array::{self, Array};
-use disktree_unraid::docker::{self, Engine, Inventory};
-use disktree_unraid::protect::{self, Rule, UnraidGuard, UnraidPlaces};
-use disktree_unraid::round::{self, Round, Settings};
-use disktree_unraid::shares::DiskTops;
-use disktree_unraid::{System, ini, mover};
+use freesize_agent::commands::{Deleted, Executor, Guards, Policy, Request};
+use freesize_agent::guard::OpenFiles;
+use freesize_agent::quarantine::{Quarantine, QuarantineExecutor};
+use freesize_agent::{AgentError, AgentState, Client, UreqTransport, now};
+use freesize_core::format_size;
+use freesize_proto::unraid::{MoveJob, QuarantineBatch, UnraidReport};
+use freesize_proto::{ActionKind, Command, DeviceInfo, Platform, PollResponse, Report, ScanReport};
+use freesize_unraid::activity::{self, Monitor};
+use freesize_unraid::array::{self, Array};
+use freesize_unraid::docker::{self, Engine, Inventory};
+use freesize_unraid::protect::{self, Rule, UnraidGuard, UnraidPlaces};
+use freesize_unraid::round::{self, Round, Settings};
+use freesize_unraid::shares::DiskTops;
+use freesize_unraid::{System, ini, mover};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Outcome, handle, log};
 
 /// Where the plugin keeps its settings and the Hub pairing (flash drive).
-const PLUGIN_CONFIG: &str = "/boot/config/plugins/disktree";
+const PLUGIN_CONFIG: &str = "/boot/config/plugins/freesize";
 /// Where the plugin's page and background part talk (in memory).
-const PLUGIN_DATA: &str = "/var/local/disktree";
+const PLUGIN_DATA: &str = "/var/local/freesize";
 
-/// The plugin's Hub pairing, so `disktree agent` and `disktree approver`
+/// The plugin's Hub pairing, so `freesize agent` and `freesize approver`
 /// on Unraid use the same file as the page without `--state`.
 pub fn plugin_state() -> PathBuf {
     Path::new(PLUGIN_CONFIG).join("agent.json")
@@ -204,7 +204,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// The plugin's settings, from `disktree.cfg`.
+/// The plugin's settings, from `freesize.cfg`.
 #[derive(Clone, Debug, Serialize)]
 struct Config {
     scan_hours: u64,
@@ -214,7 +214,7 @@ struct Config {
 }
 
 fn read_config(dirs: &Dirs) -> Config {
-    let cfg = std::fs::read_to_string(dirs.config.join("disktree.cfg"))
+    let cfg = std::fs::read_to_string(dirs.config.join("freesize.cfg"))
         .map(|t| ini::parse_cfg(&t))
         .unwrap_or_default();
     let number = |k: &str, default: u64| cfg.get(k).and_then(|v| v.parse().ok()).unwrap_or(default);
@@ -310,7 +310,7 @@ fn refuse(system: &System, rules: &[Rule], path: &str, places: &[PathBuf]) -> Op
     if !path.starts_with("/mnt/") || path.contains("/../") || path.ends_with("/..") {
         return Some("only files on the array or a pool".into());
     }
-    if let Some(why) = disktree_agent::commands::protected_text(path, false, false) {
+    if let Some(why) = freesize_agent::commands::protected_text(path, false, false) {
         return Some(why.into());
     }
     if let Some(why) = protect::check(rules, path) {
@@ -322,7 +322,7 @@ fn refuse(system: &System, rules: &[Rule], path: &str, places: &[PathBuf]) -> Op
     let open = OpenFiles {
         proc: system.file("/proc"),
     };
-    use disktree_agent::commands::Guard;
+    use freesize_agent::commands::Guard;
     places.iter().find_map(|p| open.check(p)).or_else(|| {
         let user = system.file(path);
         open.check(&user)
@@ -425,7 +425,7 @@ fn estimate(dirs: &Dirs, paths: &[String], json: bool) -> Result<(), String> {
         .iter()
         .flat_map(|p| real_places(system, &array, p.trim_end_matches('/')))
         .collect();
-    let estimate = disktree_agent::estimate::estimate(&real);
+    let estimate = freesize_agent::estimate::estimate(&real);
     if json {
         println!(
             "{}",
@@ -626,7 +626,7 @@ fn status(dirs: &Dirs, json: bool) -> Result<(), String> {
     }
     let status: Status = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     println!(
-        "DiskTree {} on Unraid {}",
+        "FreeSize {} on Unraid {}",
         status.version, status.report.version
     );
     println!("Now: {}", status.doing);
@@ -711,7 +711,7 @@ struct Daemon {
     round_running: bool,
     next_round: Instant,
     monitor: Monitor,
-    open: BTreeMap<String, Vec<disktree_proto::unraid::OpenFile>>,
+    open: BTreeMap<String, Vec<freesize_proto::unraid::OpenFile>>,
     moves: Vec<MoveJob>,
     cancels: HashMap<String, Arc<AtomicBool>>,
     doing: String,
@@ -750,7 +750,7 @@ impl Daemon {
         };
         let events = self.events.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-round".into())
+            .name("freesize-round".into())
             .spawn(move || {
                 let progress = |what: &str| {
                     let _ = events.send(Event::Progress(what.to_string()));
@@ -944,7 +944,7 @@ impl Daemon {
             let events = self.events.clone();
             let array = self.array();
             let _ = std::thread::Builder::new()
-                .name("disktree-move".into())
+                .name("freesize-move".into())
                 .spawn(move || {
                     let quarantine = quarantine_for(&system, &array);
                     let mut progress = |job: &MoveJob| {
@@ -1132,8 +1132,8 @@ pub fn device_info(system: &System, name: &str, state: Option<&AgentState>) -> D
         name: name.to_string(),
         platform: Platform::Linux,
         os: format!("Unraid {}", system.version()),
-        hostname: disktree_agent::hostname(),
-        app: format!("DiskTree for Unraid {}", env!("CARGO_PKG_VERSION")),
+        hostname: freesize_agent::hostname(),
+        app: format!("FreeSize for Unraid {}", env!("CARGO_PKG_VERSION")),
         actions: vec![
             ActionKind::Delete,
             ActionKind::Restore,
@@ -1219,12 +1219,12 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
             .map(|mut job| {
                 if job.state == "running" || job.state == "planned" {
                     job.state = "failed".into();
-                    job.detail = "stopped when DiskTree restarted; the copies made so far are on \
+                    job.detail = "stopped when FreeSize restarted; the copies made so far are on \
                                   the target disk, the originals untouched"
                         .into();
                 } else if job.state == "queued" {
                     job.state = "cancelled".into();
-                    job.detail = "not started: DiskTree restarted".into();
+                    job.detail = "not started: FreeSize restarted".into();
                 }
                 job
             })
@@ -1236,7 +1236,7 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
         events: events_tx.clone(),
     };
     log(&format!(
-        "DiskTree {} for Unraid {} started",
+        "FreeSize {} for Unraid {} started",
         env!("CARGO_PKG_VERSION"),
         system.version()
     ));
@@ -1244,7 +1244,7 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
         let state_path = dirs.state();
         let events = events_tx.clone();
         std::thread::Builder::new()
-            .name("disktree-hub".into())
+            .name("freesize-hub".into())
             .spawn(move || poll_hub(state_path, events))
             .map_err(|e| e.to_string())?;
     }

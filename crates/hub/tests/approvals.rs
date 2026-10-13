@@ -4,10 +4,10 @@
 mod common;
 
 use common::{Browser, blocking, start_hub};
-use disktree_agent::commands::{self, Choice, FsExecutor, Policy, Verdict};
-use disktree_agent::{AgentState, Approver, Client, UreqTransport, pair};
-use disktree_core::{ScanOptions, ScanProgress, scan};
-use disktree_proto::{
+use freesize_agent::commands::{self, Choice, FsExecutor, Policy, Verdict};
+use freesize_agent::{AgentState, Approver, Client, UreqTransport, pair};
+use freesize_core::{ScanOptions, ScanProgress, scan};
+use freesize_proto::{
     ActionKind, ApprovedBy, AppsReport, CommandState, CommandUpdate, Decision, DeviceInfo,
     JunkEntry, PairingLink, Platform, Purpose, Report,
 };
@@ -71,7 +71,7 @@ async fn the_approver_decides_for_a_server() {
         assert_eq!(found.name, "Phone");
         server.approver = Some(Approver { device: found.id, name: found.name, key: found.key });
 
-        let dir = std::env::temp_dir().join(format!("disktree-hub-approve-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-hub-approve-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("share/isos")).unwrap();
         std::fs::write(dir.join("share/isos/old.iso"), vec![1u8; 70_000]).unwrap();
@@ -81,7 +81,7 @@ async fn the_approver_decides_for_a_server() {
         Client::new(&server, &transport)
             .report(&Report {
                 info: Some(info("Tower", false, vec![ActionKind::Delete], Some(phone.fingerprint()))),
-                scan: Some(disktree_agent::report::scan_report(&tree, "share", 1_790_000_000, 0, true)),
+                scan: Some(freesize_agent::report::scan_report(&tree, "share", 1_790_000_000, 0, true)),
                 ..Report::default()
             })
             .unwrap();
@@ -114,7 +114,7 @@ async fn the_approver_decides_for_a_server() {
         // The server gets it and asks its approver.
         let poll = Client::new(&server, &transport).poll(1).unwrap();
         assert_eq!(poll.commands.len(), 1);
-        let Verdict::AskApprover(request) = commands::consider(&server, &poll.commands[0], &policy, disktree_agent::now()) else {
+        let Verdict::AskApprover(request) = commands::consider(&server, &poll.commands[0], &policy, freesize_agent::now()) else {
             panic!("the server should ask its approver");
         };
         assert!(request.command.action.summary().contains("old.iso"));
@@ -135,7 +135,7 @@ async fn the_approver_decides_for_a_server() {
             device: server.device.clone(),
             allow: true,
             minutes: 10,
-            time: disktree_agent::now(),
+            time: freesize_agent::now(),
         };
         let stranger = paired(&mut admin, &url, info("Laptop", true, vec![], None));
         let refused = Client::new(&stranger, &transport).decide(&decision).unwrap_err();
@@ -160,7 +160,7 @@ async fn the_approver_decides_for_a_server() {
             &request,
             choice,
             ApprovedBy::Approver { fingerprint: phone.fingerprint() },
-            disktree_agent::now(),
+            freesize_agent::now(),
         )
         .unwrap();
         let update = commands::run(&request, &FsExecutor, approval);
@@ -178,7 +178,7 @@ async fn the_approver_decides_for_a_server() {
         // The grant covers the next delete by the same admin.
         assert_eq!(ask(&mut admin, "isos/older.iso").status, 200);
         let poll = Client::new(&server, &transport).poll(1).unwrap();
-        let Verdict::Run(next, approval) = commands::consider(&server, &poll.commands[0], &policy, disktree_agent::now()) else {
+        let Verdict::Run(next, approval) = commands::consider(&server, &poll.commands[0], &policy, freesize_agent::now()) else {
             panic!("the grant should cover it");
         };
         let update = commands::run(&next, &FsExecutor, approval);
@@ -191,7 +191,7 @@ async fn the_approver_decides_for_a_server() {
         for expected in ["request made", "waiting for the approver", "approver allowed", "request done"] {
             assert!(actions.contains(&expected), "{expected} missing from {actions:?}");
         }
-        let check = state.db.now(|c| disktree_hub::audit::verify(c).unwrap());
+        let check = state.db.now(|c| freesize_hub::audit::verify(c).unwrap());
         assert_eq!(check.broken_at, None);
         let _ = std::fs::remove_dir_all(&dir);
     })
@@ -286,7 +286,7 @@ async fn devices_deny_and_admins_withdraw() {
             ..Policy::default()
         };
         let Verdict::Ask(request) =
-            commands::consider(&phone, &poll.commands[0], &policy, disktree_agent::now())
+            commands::consider(&phone, &poll.commands[0], &policy, freesize_agent::now())
         else {
             panic!("should ask");
         };
@@ -417,7 +417,7 @@ async fn polls_wake_up_for_new_requests() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unraid_requests_name_only_what_the_server_reported() {
-    use disktree_proto::unraid::{
+    use freesize_proto::unraid::{
         DockerReport, Finding, QuarantineBatch, QuarantineItem, Safety, UnraidReport, VmReport,
     };
     let hub = start_hub("unraid").await;

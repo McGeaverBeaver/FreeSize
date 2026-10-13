@@ -1,14 +1,14 @@
 //! How fast storage fills up: what grew over the last month, when a drive
 //! will be full at that rate, and the shapes of the storage chart.
 //!
-//! Drives are sampled once a day into `drive-history.json` in DiskTree's
+//! Drives are sampled once a day into `drive-history.json` in FreeSize's
 //! data folder; apps and the phone's storage breakdown are sampled into the
 //! app history (see `history`).
 
 use std::fs;
 use std::path::PathBuf;
 
-use disktree_core::{DiskSpace, format_size};
+use freesize_core::{DiskSpace, format_size};
 use serde::{Deserialize, Serialize};
 
 use crate::history::{StorageSample, write_atomically};
@@ -184,7 +184,7 @@ pub fn storage_summary(samples: &[StorageSample]) -> String {
         .map(|s| (s.day, s.total.saturating_sub(s.free)))
         .collect();
     let Some(change) = change(&used) else {
-        return "The chart fills in as DiskTree is used on more days.".into();
+        return "The chart fills in as FreeSize is used on more days.".into();
     };
     let total = samples.last().map_or(0, |s| s.total);
     let mut text = format!("Used space {}.", used_change_text(change, total));
@@ -269,23 +269,31 @@ fn capitalized(text: &str) -> String {
 
 const DRIVE_LOG: &str = "drive-history.json";
 
-/// Where DiskTree keeps its own files.
+/// Where FreeSize keeps its own files. On desktops, DiskTree's folder from
+/// before the rename is moved into place the first time.
 pub fn data_dir() -> Option<PathBuf> {
+    let dir = data_dir_named()?;
+    #[cfg(not(target_os = "android"))]
+    let dir = freesize_core::renamed::adopt_dir(dir);
+    Some(dir)
+}
+
+fn data_dir_named() -> Option<PathBuf> {
     if crate::apps::demo_enabled() {
-        return Some(std::env::temp_dir().join("disktree-demo"));
+        return Some(std::env::temp_dir().join("freesize-demo"));
     }
     #[cfg(target_os = "android")]
     return crate::android::private_dir();
     #[cfg(windows)]
-    return std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join("DiskTree"));
+    return std::env::var_os("LOCALAPPDATA").map(|dir| PathBuf::from(dir).join("FreeSize"));
     #[cfg(target_os = "macos")]
-    return std::env::home_dir().map(|home| home.join("Library/Application Support/DiskTree"));
+    return std::env::home_dir().map(|home| home.join("Library/Application Support/FreeSize"));
     #[cfg(all(unix, not(target_os = "android"), not(target_os = "macos")))]
     return std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|dir| dir.is_absolute())
         .or_else(|| std::env::home_dir().map(|home| home.join(".local/share")))
-        .map(|dir| dir.join("disktree"));
+        .map(|dir| dir.join("freesize"));
     #[allow(unreachable_code)]
     None
 }

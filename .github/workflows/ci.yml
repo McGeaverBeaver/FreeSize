@@ -46,18 +46,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools php-cli
       - name: Check the page's PHP and script
         run: |
-          for f in unraid/plugin/root/usr/local/emhttp/plugins/disktree/include/*.php; do php -l "$f"; done
-          node --check unraid/plugin/root/usr/local/emhttp/plugins/disktree/disktree.js
-          bash -n unraid/plugin/root/etc/rc.d/rc.disktree
+          for f in unraid/plugin/root/usr/local/emhttp/plugins/freesize/include/*.php; do php -l "$f"; done
+          node --check unraid/plugin/root/usr/local/emhttp/plugins/freesize/freesize.js
+          bash -n unraid/plugin/root/etc/rc.d/rc.freesize
       - name: Test the page's PHP as Unraid runs it
         run: php unraid/tests/page_test.php
       - name: Build the plugin
         run: |
-          cargo build --release --target x86_64-unknown-linux-musl -p disktree-cli
-          scripts/unraid-plugin.sh target/x86_64-unknown-linux-musl/release/disktree dist
+          cargo build --release --target x86_64-unknown-linux-musl -p freesize-cli
+          scripts/unraid-plugin.sh target/x86_64-unknown-linux-musl/release/freesize dist
       - uses: actions/upload-artifact@v4
         with:
-          name: disktree-unraid
+          name: freesize-unraid
           path: dist/
 
   android:
@@ -80,8 +80,8 @@ jobs:
       - name: Build and check APK
         run: |
           export ANDROID_NDK_ROOT="$ANDROID_NDK_LATEST_HOME"
-          scripts/android/build-apk.sh dist/disktree-android.apk
+          scripts/android/build-apk.sh dist/freesize-android.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: disktree-android
-          path: dist/disktree-android.apk
+          name: freesize-android
+          path: dist/freesize-android.apk

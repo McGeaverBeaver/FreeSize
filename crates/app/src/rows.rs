@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 
-use disktree_core::{NodeId, SizeMode, SortKey, Tree, flags, format_size};
+use freesize_core::{NodeId, SizeMode, SortKey, Tree, flags, format_size};
 use slint::{Model, ModelNotify, ModelTracker, SharedString};
 
 use crate::TreeRow;
@@ -170,7 +170,7 @@ fn push_children(
 
 fn fraction_of_parent(tree: &Tree, mode: SizeMode, id: NodeId, size: u64) -> f32 {
     let parent = tree.node(id).parent;
-    if parent == disktree_core::NO_NODE {
+    if parent == freesize_core::NO_NODE {
         return 1.0;
     }
     let total = tree.node(parent).size_in(mode);
@@ -236,7 +236,7 @@ fn summary_row(
         depth: i32::from(depth),
         name: format!(
             "… {} smaller items",
-            disktree_core::format_count(hidden.len() as u64)
+            freesize_core::format_count(hidden.len() as u64)
         )
         .into(),
         size: format_size(size).into(),

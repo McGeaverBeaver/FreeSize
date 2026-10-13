@@ -1332,116 +1332,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "disktree-agent"
-version = "0.8.5"
-dependencies = [
- "base64 0.23.1",
- "disktree-core",
- "disktree-proto",
- "serde",
- "serde_json",
- "tempfile",
- "ureq",
-]
-
-[[package]]
-name = "disktree-app"
-version = "0.8.5"
-dependencies = [
- "disktree-agent",
- "disktree-core",
- "disktree-proto",
- "icns",
- "image",
- "jni 0.22.4",
- "plist",
- "rfd",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "trash",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "disktree-cli"
-version = "0.8.5"
-dependencies = [
- "clap",
- "disktree-agent",
- "disktree-core",
- "disktree-proto",
- "disktree-unraid",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "disktree-core"
-version = "0.8.5"
-dependencies = [
- "crossbeam-channel",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
- "windows-sys 0.61.2",
- "xxhash-rust",
-]
-
-[[package]]
-name = "disktree-hub"
-version = "0.8.5"
-dependencies = [
- "axum",
- "base64 0.23.1",
- "clap",
- "disktree-agent",
- "disktree-core",
- "disktree-proto",
- "flate2",
- "jsonwebtoken",
- "qrcode",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "ureq",
-]
-
-[[package]]
-name = "disktree-proto"
-version = "0.8.5"
-dependencies = [
- "base64 0.23.1",
- "disktree-core",
- "ed25519-dalek 3.0.0",
- "getrandom 0.4.3",
- "serde",
- "serde_json",
- "sha2 0.11.0",
-]
-
-[[package]]
-name = "disktree-unraid"
-version = "0.8.5"
-dependencies = [
- "disktree-agent",
- "disktree-core",
- "disktree-proto",
- "libc",
- "roxmltree",
- "serde",
- "serde_json",
- "tempfile",
- "xxhash-rust",
-]
-
-[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1955,6 +1845,116 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "freesize-agent"
+version = "0.8.6"
+dependencies = [
+ "base64 0.23.1",
+ "freesize-core",
+ "freesize-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
+name = "freesize-app"
+version = "0.8.6"
+dependencies = [
+ "freesize-agent",
+ "freesize-core",
+ "freesize-proto",
+ "icns",
+ "image",
+ "jni 0.22.4",
+ "plist",
+ "rfd",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "trash",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "freesize-cli"
+version = "0.8.6"
+dependencies = [
+ "clap",
+ "freesize-agent",
+ "freesize-core",
+ "freesize-proto",
+ "freesize-unraid",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "freesize-core"
+version = "0.8.6"
+dependencies = [
+ "crossbeam-channel",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows-sys 0.61.2",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "freesize-hub"
+version = "0.8.6"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "clap",
+ "flate2",
+ "freesize-agent",
+ "freesize-core",
+ "freesize-proto",
+ "jsonwebtoken",
+ "qrcode",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "ureq",
+]
+
+[[package]]
+name = "freesize-proto"
+version = "0.8.6"
+dependencies = [
+ "base64 0.23.1",
+ "ed25519-dalek 3.0.0",
+ "freesize-core",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "freesize-unraid"
+version = "0.8.6"
+dependencies = [
+ "freesize-agent",
+ "freesize-core",
+ "freesize-proto",
+ "libc",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "xxhash-rust",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use disktree_proto::ErrorBody;
+use freesize_proto::ErrorBody;
 
 #[derive(Debug)]
 pub struct ApiError {

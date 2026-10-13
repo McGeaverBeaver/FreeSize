@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 
-use disktree_core::{NodeId, SizeMode, Tree};
+use freesize_core::{NodeId, SizeMode, Tree};
 
 use crate::array::Array;
 
@@ -144,10 +144,10 @@ pub(crate) mod tests {
         let mut scans = Scans::default();
         for disk in array.roots(false) {
             let mount = disk.path.clone().unwrap();
-            let tree = disktree_core::scan(
+            let tree = freesize_core::scan(
                 system.file(&mount),
-                &disktree_core::ScanOptions::default(),
-                &disktree_core::ScanProgress::new(),
+                &freesize_core::ScanOptions::default(),
+                &freesize_core::ScanProgress::new(),
             )
             .unwrap()
             .tree;

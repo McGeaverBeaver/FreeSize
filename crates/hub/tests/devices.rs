@@ -5,10 +5,10 @@ mod common;
 
 use common::idp::MockUser;
 use common::{Browser, blocking, start_hub};
-use disktree_agent::{Client, Transport, UreqTransport, pair};
-use disktree_core::{ScanOptions, ScanProgress, scan};
-use disktree_proto::signing::sign_request;
-use disktree_proto::{ActionKind, DeviceInfo, Disk, PairingLink, Platform, Report};
+use freesize_agent::{Client, Transport, UreqTransport, pair};
+use freesize_core::{ScanOptions, ScanProgress, scan};
+use freesize_proto::signing::sign_request;
+use freesize_proto::{ActionKind, DeviceInfo, Disk, PairingLink, Platform, Report};
 use serde_json::{Value, json};
 
 fn info(name: &str) -> DeviceInfo {
@@ -17,7 +17,7 @@ fn info(name: &str) -> DeviceInfo {
         platform: Platform::Linux,
         os: "Debian 13".into(),
         hostname: "nas".into(),
-        app: "DiskTree agent test".into(),
+        app: "FreeSize agent test".into(),
         actions: vec![ActionKind::Delete],
         attended: false,
         approver: None,
@@ -65,7 +65,7 @@ async fn pair_report_and_look() {
         assert_eq!(again.status, 403);
 
         // A real scan, reported.
-        let dir = std::env::temp_dir().join(format!("disktree-hub-scan-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-hub-scan-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Movies/2024")).unwrap();
         std::fs::write(dir.join("Movies/2024/trip.mp4"), vec![1u8; 400_000]).unwrap();
@@ -75,7 +75,7 @@ async fn pair_report_and_look() {
             .unwrap()
             .tree;
         let scan_report =
-            disktree_agent::report::scan_report(&tree, "Shares", 1_790_000_000, 0, true);
+            freesize_agent::report::scan_report(&tree, "Shares", 1_790_000_000, 0, true);
         let client = Client::new(&state, &transport);
         client
             .report(&Report {
@@ -171,7 +171,7 @@ async fn signed_requests_cant_be_replayed_or_changed() {
             "POST",
             "/api/v1/poll",
             body,
-            disktree_agent::now(),
+            freesize_agent::now(),
         );
         let headers = vec![
             ("x-disktree-device", sig.device.clone()),
@@ -202,7 +202,7 @@ async fn signed_requests_cant_be_replayed_or_changed() {
             "POST",
             "/api/v1/poll",
             body,
-            disktree_agent::now(),
+            freesize_agent::now(),
         );
         let changed = vec![
             ("x-disktree-device", fresh.device),
@@ -229,7 +229,7 @@ async fn signed_requests_cant_be_replayed_or_changed() {
             "POST",
             "/api/v1/poll",
             body,
-            disktree_agent::now() - 3600,
+            freesize_agent::now() - 3600,
         );
         let stale = vec![
             ("x-disktree-device", old.device),

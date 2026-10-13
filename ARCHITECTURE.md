@@ -1,16 +1,16 @@
 # Architecture
 
-DiskTree is a Cargo workspace with six crates:
+FreeSize is a Cargo workspace with six crates:
 
 ```
-crates/core   disktree-core   scanner, tree model, stats, treemap and bubble
+crates/core   freesize-core   scanner, tree model, stats, treemap and bubble
                               layout, snapshots, scan files
-crates/cli    disktree-cli    command-line front end and the Hub agent
-crates/app    disktree-app    Slint UI for desktop and Android
-crates/proto  disktree-proto  keys, signatures, pairing links and messages
+crates/cli    freesize-cli    command-line front end and the Hub agent
+crates/app    freesize-app    Slint UI for desktop and Android
+crates/proto  freesize-proto  keys, signatures, pairing links and messages
                               shared by devices and the Hub
-crates/agent  disktree-agent  the device side of the Hub
-crates/hub    disktree-hub    DiskTree Hub: web server, dashboard, database
+crates/agent  freesize-agent  the device side of the Hub
+crates/hub    freesize-hub    FreeSize Hub: web server, dashboard, database
 ```
 
 All the scanning logic lives in `core`, which has no UI or platform UI
@@ -170,9 +170,22 @@ directory is an array whose first element describes it, a file an object,
 sizes as `asize`/`dsize` with a directory's own size separate from its
 contents. Read errors, other file systems, hard links and non-regular files
 map to ncdu's `read_error`, `excluded`, `hlnkc` and `notreg`. `import`
-reads files from DiskTree, ncdu 1.x and ncdu 2.x's JSON export and builds the
+reads files from FreeSize, ncdu 1.x and ncdu 2.x's JSON export and builds the
 tree the way the scanner does (breadth first, so children stay contiguous),
 then aggregates the totals.
+
+### The rename (`renamed.rs`)
+
+DiskTree became FreeSize in 0.8.6. `adopt_dir` takes a data folder named
+for FreeSize and, when only the folder of the old name beside it exists
+(`DiskTree`, `disktree`, `disktree-hub`), renames that into place, so the
+desktop app, the agent, a Hub outside Docker and the Android app history
+keep their files. `old_env` lists `DISKTREE_…` variables to set under their
+`FREESIZE_…` names where those are unset; the Hub and the command line
+apply it before any thread starts. The names inside the protocol (signing
+headers and labels), the quarantine folder `.disktree-quarantine` (its
+manifests record full paths), the metrics and the webhook header keep the
+old name.
 
 ## App
 
@@ -254,7 +267,7 @@ turns off Open, Delete and Collect.
   `(from, to)` pairs go to `last-move.json` so Put back can reverse them.
 - `report.rs` builds the HTML report (self-contained, light and dark) and
   the CSV; `actions::save_export` asks where on desktops (`rfd`) and writes
-  to `Download/DiskTree` on Android.
+  to `Download/FreeSize` on Android.
 - `similar.rs` finds photos that look alike. A photo's fingerprint is two
   64-bit difference hashes of a 9×9 grid of brightness averages: whether
   each cell is darker than its right neighbour, and than the one below,
@@ -292,7 +305,7 @@ JNI, using the same `jni` 0.22 crate as Slint's Android backend:
 Storage volumes come from `/storage`: `emulated/0` is internal storage, and the
 `XXXX-XXXX` entries are SD cards and USB drives.
 
-Errors and panics go to logcat under the tag `DiskTree`, since stderr goes
+Errors and panics go to logcat under the tag `FreeSize`, since stderr goes
 nowhere on Android. If Slint can't start (it is already set up in this
 process), `android_main` logs the error and returns instead of crashing.
 
@@ -367,7 +380,7 @@ installed from a downloaded APK the switch stays greyed out until the user
 picks *Allow restricted settings* from the ⋮ menu of the app's info page.
 Apps can't detect that state, so once the user has been sent to the Usage
 access screen, the home screen adds a card explaining it, with a button that
-opens DiskTree's own app info page.
+opens FreeSize's own app info page.
 
 `AppReport::breakdown` divides the data partition (`statvfs`) the way Android
 Settings does:
@@ -387,13 +400,13 @@ store), and tips for well-known apps.
 
 `history.rs` keeps a record of every app seen, so removed apps can be found
 again. `apps::collect` loads it, records the new report and saves it. It is
-JSON in `Documents/DiskTree/` (survives uninstalling DiskTree) and in the
+JSON in `Documents/FreeSize/` (survives uninstalling FreeSize) and in the
 app's private storage (works without All files access); both copies are read
 and merged.
 
 `cleanup.rs` finds space that can go without touching any app, under the
-shared storage root: old `.apk` files in Download (except DiskTree's own
-`Download/DiskTree`), `DCIM/.thumbnails`, and `Android/media/<package>`
+shared storage root: old `.apk` files in Download (except FreeSize's own
+`Download/FreeSize`), `DCIM/.thumbnails`, and `Android/media/<package>`
 folders of packages that aren't installed (only when the installed list looks
 complete). Android's trash comes from MediaStore's Files collection queried
 with `QUERY_ARG_MATCH_TRASHED`. The same collection's `owner_package_name`
@@ -418,9 +431,9 @@ history), and `forecast` fits a least-squares line through the last 30 days
 of used space and divides the free space by its slope. Forecasts need a
 week of history and are shown only up to about two years out. The same code
 gives drives their trends: `record_drives` stores each start-screen drive's
-used space once a day in `drive-history.json` in DiskTree's data folder
-(`%LOCALAPPDATA%\DiskTree`, `~/Library/Application Support/DiskTree`,
-`$XDG_DATA_HOME/disktree` or `~/.local/share/disktree`, and the app's
+used space once a day in `drive-history.json` in FreeSize's data folder
+(`%LOCALAPPDATA%\FreeSize`, `~/Library/Application Support/FreeSize`,
+`$XDG_DATA_HOME/freesize` or `~/.local/share/freesize`, and the app's
 private storage on Android). Samples taken when the drive had another size
 are ignored, so a replaced disk starts a new history.
 
@@ -444,7 +457,7 @@ compares the shared cache before and after and says what was freed.
 
 Open hands a file to another app as its MediaStore entry
 (`content://media/external/...`, from a query on `_data`) with
-`FLAG_GRANT_READ_URI_PERMISSION`, because other apps can't read DiskTree's
+`FLAG_GRANT_READ_URI_PERMISSION`, because other apps can't read FreeSize's
 file paths. A file MediaStore hasn't indexed yet is passed to
 `MediaScannerConnection.scanFile`, and the controller retries for a few
 seconds.
@@ -454,8 +467,8 @@ The actions go through intents: `ACTION_DELETE` to uninstall (needs
 page for archiving and clearing its cache, and
 `StorageManager.ACTION_CLEAR_APP_CACHE` for every app's cache folder in shared
 storage. No app can clear another app's private cache. "Save APK" copies `ApplicationInfo.sourceDir`
-and any split APKs to `Download/DiskTree`. While a system screen is open,
-DiskTree's window loses focus; the controller polls `hasWindowFocus` and
+and any split APKs to `Download/FreeSize`. While a system screen is open,
+FreeSize's window loses focus; the controller polls `hasWindowFocus` and
 measures the apps again when the user comes back.
 
 The home screen is a `ScrollView` with a plain layout rather than a
@@ -463,7 +476,7 @@ The home screen is a `ScrollView` with a plain layout rather than a
 text changes, so switching groups made rows overlap. The home screen has at
 most a few hundred rows, which a plain layout handles easily.
 
-Debug builds started with `DISKTREE_FAKE_APPS=1` (or `=no-access`) show sample
+Debug builds started with `FREESIZE_FAKE_APPS=1` (or `=no-access`) show sample
 app data on the desktop, for working on the UI without a phone.
 
 ### Android packaging
@@ -537,7 +550,8 @@ line), and the server (`hub`).
   made for one kind of message never passes as another. Commands are signed
   by the Hub, decisions by the approver's device.
 - **Pairing links** (`pairing.rs`):
-  `disktree://pair?hub=<url>&code=XXXX-XXXX-XXXX&key=<fingerprint>`. Codes
+  `freesize://pair?hub=<url>&code=XXXX-XXXX-XXXX&key=<fingerprint>`;
+  `disktree://` links from before the rename are read too. Codes
   are 60 random bits in Crockford base32, which forgives O/0 and I/1 mix-ups;
   the Hub stores only their hash, for 10 minutes and one use, and allows 20
   wrong guesses a minute.
@@ -577,7 +591,7 @@ whole array, rather than every file.
      no symbolic link leading out (parents are resolved, and the folder
      itself must resolve to somewhere inside a scanned folder, so a scanned
      folder that is a link opens nothing), and never touch protected system
-     paths or DiskTree's own files;
+     paths or FreeSize's own files;
   3. a grant for that admin and kind of action runs it without asking;
      emptying the quarantine and removing Docker images never run under a
      grant, and "approve for N minutes" on them means once;
@@ -670,9 +684,9 @@ the same with made-up devices for trying the dashboard.
   cross-compiles for amd64 or arm64, so a multi-architecture image needs no
   emulation. The image is Debian slim with the Hub and an entrypoint
   (`packaging/docker/entrypoint.sh`) that gives `/data` to `PUID:PGID` and
-  drops to that user with `setpriv`. `disktree-hub health` is the health
+  drops to that user with `setpriv`. `freesize-hub health` is the health
   check.
-- `unraid/disktree-hub.xml`: the Unraid template.
+- `unraid/freesize-hub.xml`: the Unraid template.
 - `unraid/plugin/`: the Unraid plugin (below).
 - `packaging/systemd/`: units for the Hub (its own dynamic user and
   hardening) and the agent, with their settings files.
@@ -724,11 +738,11 @@ server's root (`/`, or a folder laid out like a server in the tests).
   one that slept for `WAKE_DAYS`), then shares, Docker, VMs, permissions
   and the rules.
 
-The daemon (`crates/cli/src/unraid.rs`, `disktree unraid daemon`) runs a
+The daemon (`crates/cli/src/unraid.rs`, `freesize unraid daemon`) runs a
 round every `SCAN_HOURS` on a thread (and as soon as a stopped array
 starts), samples activity each minute, runs moves on a thread of their
 own, one at a time (a move from several disks queues one per disk, each
-planned again just before it starts), and writes `status.json` to `/var/local/disktree` for the page. The page
+planned again just before it starts), and writes `status.json` to `/var/local/freesize` for the page. The page
 asks it for things with files in `requests/` (scan, refresh, settings,
 hub, `move-<id>.json`, `cancel-<id>`); quick actions (quarantine,
 estimates, plans, Docker cleanup) it runs with the same command directly.
@@ -737,27 +751,33 @@ the Hub, and the daemon carries out what the approver allows through
 `UnraidExecutor`: deletes go to the quarantine, and putting back, emptying
 and Docker cleanup work as on the page.
 
-The page (`unraid/plugin/root/usr/local/emhttp/plugins/disktree`):
-`DiskTree*.page` are Unraid's tabs, in a section of Tools of their own
-(`DiskSpace.page`). `disktree.js` draws them from `include/status.php` and
+The page (`unraid/plugin/root/usr/local/emhttp/plugins/freesize`):
+`FreeSize*.page` are Unraid's tabs, in a section of Tools of their own
+(`DiskSpace.page`). `freesize.js` draws them from `include/status.php` and
 posts to `include/action.php`, which checks each value and runs
-`disktree` with every argument quoted. Unraid's own prelude
+`freesize` with every argument quoted. Unraid's own prelude
 (`local_prepend.php`) checks the CSRF token of every POST and removes it
 before `action.php` runs; `action.php` checks the token itself only when
-that prelude didn't run. Pairing attempts go to `/var/log/disktree.log`.
-On Unraid, `disktree agent` and `disktree approver` default to the
+that prelude didn't run. Pairing attempts go to `/var/log/freesize.log`.
+On Unraid, `freesize agent` and `freesize approver` default to the
 plugin's `agent.json`, and pairing there asks the daemon to report. Until a round
 has finished (`last_round` empty) the page says it's still looking, with
 the daemon's `doing` ("scanning disk2 (2 of 5)"), rather than reading a
 missing Docker or VM section as switched off. Unraid's stylesheet keeps
-every table cell on one line with a fixed height; `disktree.css` undoes
+every table cell on one line with a fixed height; `freesize.css` undoes
 that for its own tables, and lists findings in grid rows (`.dt-rows`), so
-long paths wrap and the buttons stay on the page. `rc.disktree`
+long paths wrap and the buttons stay on the page. `rc.freesize`
 starts the daemon at nice 19 with idle I/O priority; the array's events
 (`event/stopping`, `stopped`, `started`) stop it before the disks unmount
 and start it again. `scripts/unraid-plugin.sh` packs the static binary
 and these into a Slackware `.txz`, and fills in the `.plg`'s version and
-the package's SHA-256.
+the package's SHA-256. It also writes `disktree.plg`, the update that
+servers with the plugin from before the rename find at their old
+`pluginURL`: it starts `plugin install freesize.plg` in the background
+(Unraid records the updated `.plg` only after its scripts finish), and
+`freesize.plg`'s first script copies `/boot/config/plugins/disktree` (with
+`disktree.cfg` renamed), stops and removes the old package, its page and
+its `.plg`.
 
 ## Testing
 
@@ -770,7 +790,7 @@ the package's SHA-256.
   end-to-end tests.
 - `php unraid/tests/page_test.php` runs the plugin page's `action.php` as
   Unraid does, behind a copy of Unraid's token check and with a stand-in
-  `disktree` command: pairing, saving, a wrong token, a refused pairing.
+  `freesize` command: pairing, saving, a wrong token, a refused pairing.
 - `scripts/release.sh` runs them before building a release on the build
   machine. The CI workflow runs them on Windows, macOS and Linux and builds
   the APK, but only when started by hand.

@@ -16,8 +16,8 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use disktree_core::format_size;
-use disktree_proto::unraid::{DockerReport, Finding, Safety};
+use freesize_core::format_size;
+use freesize_proto::unraid::{DockerReport, Finding, Safety};
 use serde_json::Value;
 
 use crate::System;
@@ -111,7 +111,7 @@ impl Engine {
             .and_then(|()| stream.set_write_timeout(Some(self.timeout)))
             .map_err(|e| e.to_string())?;
         let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: docker\r\nUser-Agent: DiskTree\r\n\
+            "{method} {path} HTTP/1.1\r\nHost: docker\r\nUser-Agent: FreeSize\r\n\
              Content-Length: 0\r\nConnection: close\r\n\r\n"
         );
         stream
@@ -682,7 +682,7 @@ fn short(id: &str) -> String {
 
 /// Space in use on the filesystem holding `path`.
 pub fn used_space(system: &System, path: &str) -> u64 {
-    disktree_core::disk_space(&system.file(path))
+    freesize_core::disk_space(&system.file(path))
         .map_or(0, |space| space.total.saturating_sub(space.free))
 }
 

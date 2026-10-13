@@ -1,9 +1,9 @@
-//! Core of DiskTree: a parallel disk usage scanner, a compact tree of the
+//! Core of FreeSize: a parallel disk usage scanner, a compact tree of the
 //! results, summaries (largest files, usage by file type) and a treemap
 //! layout. Nothing here depends on a UI.
 //!
 //! ```no_run
-//! use disktree_core::{ScanOptions, ScanProgress, SizeMode, SortKey, format_size, scan};
+//! use freesize_core::{ScanOptions, ScanProgress, SizeMode, SortKey, format_size, scan};
 //!
 //! let progress = ScanProgress::new();
 //! let result = scan("/home", &ScanOptions::default(), &progress)?;
@@ -20,6 +20,7 @@ mod kinds;
 pub mod ncdu;
 mod platform;
 mod reclaim;
+pub mod renamed;
 mod scan;
 pub mod snapshot;
 mod space;

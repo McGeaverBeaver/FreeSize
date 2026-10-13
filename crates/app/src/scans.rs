@@ -1,10 +1,10 @@
-//! Folder sizes of earlier scans, kept per scanned folder in DiskTree's data
+//! Folder sizes of earlier scans, kept per scanned folder in FreeSize's data
 //! folder (`scans/<hash>.json`), for the Changes tab.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use disktree_core::snapshot::Snapshot;
+use freesize_core::snapshot::Snapshot;
 use serde::{Deserialize, Serialize};
 
 use crate::growth::data_dir;

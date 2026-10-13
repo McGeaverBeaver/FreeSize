@@ -1,4 +1,4 @@
-// DiskTree Hub dashboard. Plain JavaScript, no build step. Every piece of
+// FreeSize Hub dashboard. Plain JavaScript, no build step. Every piece of
 // text from the server goes in through textContent, never innerHTML.
 "use strict";
 
@@ -203,12 +203,12 @@ function signInPage() {
   const next = "/" + location.hash;
   return h("div", { class: "signin" },
     h("img", { src: "/icon.svg", alt: "" }),
-    h("h1", {}, s.name || "DiskTree Hub"),
+    h("h1", {}, s.name || "FreeSize Hub"),
     s.sign_in
       ? [h("p", { class: "dim" }, "Sign in with your account to see your devices."),
          h("a", { class: "button primary", href: `/auth/login?next=${encodeURIComponent(next)}` }, "Sign in")]
       : [h("p", {}, "Sign-in isn't set up yet."),
-         h("p", { class: "dim small" }, `Missing: ${s.missing || "settings"}. See the README's DiskTree Hub section for setting up Authentik.`)]);
+         h("p", { class: "dim small" }, `Missing: ${s.missing || "settings"}. See the README's FreeSize Hub section for setting up Authentik.`)]);
 }
 
 // ----- Pages ----------------------------------------------------------------
@@ -264,7 +264,7 @@ PAGES.devices = async () => {
   if (!devices.length) {
     return [head, h("div", { class: "card empty" },
       h("h2", {}, "No devices yet"),
-      h("p", {}, "Pair the DiskTree app on a phone or computer, or the DiskTree agent on a server. Reading their storage needs no approval; anything that deletes is approved on the device itself."),
+      h("p", {}, "Pair the FreeSize app on a phone or computer, or the FreeSize agent on a server. Reading their storage needs no approval; anything that deletes is approved on the device itself."),
       state.me.admin ? h("button", { class: "primary", onclick: pairDialog }, "Pair a device") : null)];
   }
   return [head, h("div", { class: "grid" }, devices.map(deviceCard))];
@@ -344,9 +344,9 @@ async function pairDialog() {
             h("div", { class: "fingerprint" }, code.fingerprint))),
         h("h3", { style: "margin-top:16px" }, "On the device"),
         h("ul", { class: "small" },
-          h("li", {}, "Phone: in DiskTree, open Hub → Connect and scan this QR code with the camera, or type the Hub address and the code."),
-          h("li", {}, "Computer: in DiskTree, open Hub → Connect and paste the link."),
-          h("li", {}, "Server: run ", h("code", {}, `disktree agent pair '${code.link}'`))),
+          h("li", {}, "Phone: in FreeSize, open Hub → Connect and scan this QR code with the camera, or type the Hub address and the code."),
+          h("li", {}, "Computer: in FreeSize, open Hub → Connect and paste the link."),
+          h("li", {}, "Server: run ", h("code", {}, `freesize agent pair '${code.link}'`))),
         h("div", { class: "row" },
           h("input", { type: "text", value: code.link, readonly: true, class: "grow mono", onclick: (e) => e.target.select() }),
           h("button", { onclick: () => copy(code.link) }, "Copy link")),
@@ -387,7 +387,7 @@ async function addDeviceDialog() {
     };
     name.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
     return [h("h2", {}, "Add a device without an agent"),
-      h("p", { class: "dim" }, "For a machine that can't run the DiskTree agent, such as a router, a VPS or a Proxmox host: scan it with ncdu and upload the file. The Hub can look at it but can't ask it to do anything."),
+      h("p", { class: "dim" }, "For a machine that can't run the FreeSize agent, such as a router, a VPS or a Proxmox host: scan it with ncdu and upload the file. The Hub can look at it but can't ask it to do anything."),
       h("label", { for: "new-name" }, "Name"), name,
       h("label", { for: "new-group" }, "Device group"), group,
       h("label", { for: "new-platform" }, "System"), platform,
@@ -424,7 +424,7 @@ function uploadDialog(device) {
     return [h("h2", {}, `Upload a scan of ${device.name}`),
       h("p", {}, "On that machine, scan a folder with ncdu and save the result:"),
       h("pre", { class: "command" }, "ncdu -1xo- / | gzip > scan.json.gz"),
-      h("p", { class: "hint" }, "Any ncdu writes this with -o (not ncdu 2.6's binary -O). DiskTree's own export works too: disktree /path --export scan.json. Up to 128 MB unpacked; for bigger machines, run the agent."),
+      h("p", { class: "hint" }, "Any ncdu writes this with -o (not ncdu 2.6's binary -O). FreeSize's own export works too: freesize /path --export scan.json. Up to 128 MB unpacked; for bigger machines, run the agent."),
       h("label", { for: "scan-file" }, "Scan file"), file,
       h("label", { for: "scan-label" }, "Name for the folder"), label,
       status,
@@ -844,7 +844,7 @@ function deviceUnraid(device) {
         h("td", {}, h("span", { class: `badge ${m.state === "done" ? "ok" : m.state === "failed" ? "danger" : "accent"}` }, m.state)),
         h("td", { class: "num" }, `${size(m.done_bytes)} of ${size(m.bytes)}`),
         h("td", { class: "small dim" }, m.detail))))),
-      h("p", { class: "hint" }, "Moves are started on the server, in DiskTree's page under Tools.")));
+      h("p", { class: "hint" }, "Moves are started on the server, in FreeSize's page under Tools.")));
   }
   return h("div", { class: "stack" }, sections);
 }
@@ -1044,10 +1044,10 @@ PAGES.audit = async () => {
 
 const SEVERITY = { critical: "danger", warning: "warn", info: "accent" };
 const CHANNEL_KINDS = {
-  ntfy: { label: "ntfy", fields: [["server", "Server", "https://ntfy.sh"], ["topic", "Topic", "e.g. disktree-a8f3"], ["token", "Access token (for a protected topic)", "", true]] },
+  ntfy: { label: "ntfy", fields: [["server", "Server", "https://ntfy.sh"], ["topic", "Topic", "e.g. freesize-a8f3"], ["token", "Access token (for a protected topic)", "", true]] },
   gotify: { label: "Gotify", fields: [["server", "Server", "https://gotify.example.lan"], ["token", "Application token", "", true]] },
   pushover: { label: "Pushover", fields: [["user", "User key", ""], ["token", "Application API token", "", true]] },
-  webhook: { label: "Webhook", fields: [["url", "Address", "https://homeassistant.lan/api/webhook/disktree"], ["secret", "Signing secret (optional)", "", true]] },
+  webhook: { label: "Webhook", fields: [["url", "Address", "https://homeassistant.lan/api/webhook/freesize"], ["secret", "Signing secret (optional)", "", true]] },
 };
 
 function alertRow(a) {
@@ -1133,7 +1133,7 @@ function rulesCard(rules) {
     h("p", {}, "A disk will be full within ", fields.forecast_days, " days at the past month's rate."),
     h("p", {}, "A server (a device nobody is at) hasn't reported for ", fields.offline_hours, " hours."),
     h("p", {}, h("label", { class: "check", for: "rule-requests" }, requests,
-      " A request has waited 2 minutes for its device or approver. The DiskTree app on a phone only hears from the Hub while it's open; this tells you to open it.")),
+      " A request has waited 2 minutes for its device or approver. The FreeSize app on a phone only hears from the Hub while it's open; this tells you to open it.")),
     h("p", { class: "hint" }, "0 turns a rule off."),
     editable ? h("button", { class: "primary", onclick: save }, "Save") : null);
 }
@@ -1177,7 +1177,7 @@ PAGES.alerts = async () => {
       rulesCard(rules),
       channelCard,
       h("div", { class: "card" }, h("h2", {}, "Prometheus and Home Assistant"),
-        h("p", {}, "With DISKTREE_METRICS_TOKEN set, ", h("code", {}, "/metrics"), " serves Prometheus metrics and ",
+        h("p", {}, "With FREESIZE_METRICS_TOKEN set, ", h("code", {}, "/metrics"), " serves Prometheus metrics and ",
           h("code", {}, "/metrics/json"), " the same as JSON for a Home Assistant REST sensor. Both want the token as ",
           h("code", {}, "Authorization: Bearer <token>"), ".")))];
 };
@@ -1427,14 +1427,14 @@ PAGES.settings = async () => {
         h("table", {}, h("tbody", {},
           h("tr", {}, h("td", { class: "dim" }, "Name"), h("td", {}, hub.name)),
           h("tr", {}, h("td", { class: "dim" }, "Version"), h("td", {}, hub.version)),
-          h("tr", {}, h("td", { class: "dim" }, "Address"), h("td", {}, hub.url || "not set (DISKTREE_HUB_URL)")),
+          h("tr", {}, h("td", { class: "dim" }, "Address"), h("td", {}, hub.url || "not set (FREESIZE_HUB_URL)")),
           h("tr", {}, h("td", { class: "dim" }, "Key fingerprint"), h("td", { class: "fingerprint" }, hub.fingerprint)))),
         h("p", { class: "hint" }, "Devices check this fingerprint when they pair, so they know they reached this Hub.")),
       groupCard,
       h("div", { class: "card" },
         h("h2", {}, "Approvers"),
         h("p", {}, "A server or NAS with nobody at its screen has a designated approver: a phone whose approval it accepts. It can't be set or changed here, only on the device itself, with ",
-          h("code", {}, "disktree approver set <fingerprint>"),
+          h("code", {}, "freesize approver set <fingerprint>"),
           ". So a stolen dashboard sign-in can't send approvals to itself."))),
   ];
 };

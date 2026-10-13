@@ -1,5 +1,5 @@
 //! Scan files in ncdu's JSON export format (version 1.2), so a scan can be
-//! saved and opened again, and a server without DiskTree can be scanned
+//! saved and opened again, and a server without FreeSize can be scanned
 //! with `ncdu -o file.json` and looked at here.
 //!
 //! The format is a JSON array: `[1, 2, {metadata}, root]`. A directory is
@@ -20,7 +20,7 @@ pub fn export(tree: &Tree, timestamp: i64, mut out: impl Write) -> io::Result<()
     let document = json!([
         1,
         2,
-        {"progname": "disktree", "progver": env!("CARGO_PKG_VERSION"), "timestamp": timestamp},
+        {"progname": "freesize", "progver": env!("CARGO_PKG_VERSION"), "timestamp": timestamp},
         root
     ]);
     serde_json::to_writer(&mut out, &document).map_err(io::Error::other)?;
@@ -91,7 +91,7 @@ struct Item {
 }
 
 /// Reads an ncdu export (from ncdu 1.x, ncdu 2.x's JSON export, or
-/// DiskTree).
+/// FreeSize).
 pub fn import(input: impl Read) -> io::Result<Tree> {
     import_with_time(input).map(|(tree, _)| tree)
 }

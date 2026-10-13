@@ -8,7 +8,7 @@ function csrf_terminate($reason) {
   exit;
 }
 
-$var = parse_ini_file(getenv('DISKTREE_TEST_ROOT').'/var/local/emhttp/var.ini');
+$var = parse_ini_file(getenv('FREESIZE_TEST_ROOT').'/var/local/emhttp/var.ini');
 if (!isset($var['csrf_token'])) csrf_terminate('uninitialized');
 $csrf_token = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? null);
 if ($csrf_token === null) csrf_terminate('missing');

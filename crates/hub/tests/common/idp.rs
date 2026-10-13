@@ -22,7 +22,7 @@ use sha2::{Digest, Sha256};
 const KEY_PEM: &str = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEApunrvnhuDgA2HFEJPoRLDp63DXWl5UR0FylPnY9bB5/8s/wQ\nEx7dr14kYbBVoyG1CEeCVr97eGXvXYny+boYMIaFrS2ASsfCSqizFXto/2ptoKv/\nIo+dbv6FvlYllszePnv7dtVmWyLS7RBvVd6MJPQUjX3REMPsvqSCNYqKqweO3zFW\nTfjN2gc43399fAo/Gbw16o64qPgszX/b3SDMPEgO+ACHjAhqQRwtnoIptXdvXcey\nryO94Byml1j1N3IEKW+obvn2/KB8uwfm84ms184GGIBovPB70BirhYdG85gfUslP\n4sZ8iVmhMIKF9JvHgYapV5OGVhKcrnlMb8APKQIDAQABAoIBACn9zIShGJLmI7bQ\n/kHfl2BotoWo1OEObSRMjM6HO6/55GHFZqfgyoWtafq3mXvOZZRdJSG8z4u1HViL\ndXi1BBPlK+kq+s0VX0BYG6GqZ/pl5ImY67lepw0+9Bez5YYAKWNP3q4BNtxzsNva\nGCBiuiAr1aXZAsk0eTFnAqkEnykyd+QTRvltMKPDE8inJNm2Pc84ffTjyT1qFEaJ\ndaFlsvISh4/NubAJJicFLQLWlGenTvzaMerQt5SrzQCfq6T/mtn7dr762bmTGCpQ\nMO2Yhp+QbfwzQWvdxV0EvPwDgwRWHyJ1YiwHYe4j9R/6fCHSSwgOCevkyfILLaDG\n2fFKOB8CgYEA2x1f2mvrE2e0wAzQgAAZQ5UPTn9lcEJyBoP7S6AGZdpGx3w+Evqr\nAfNNJuH/9ji8NVbA5rx4tk+mu2JNNlKGaZIv93ey9GcR0RysfNj1aROgyRnODrwZ\nUlf99dA61bgyaKJCDmgKncFg0wUQAqICxl4PRGgy/PqeHrtpcEEk/zsCgYEAwwL5\ncRC7lQcHHn/VQ5MrDYW2BfY9ZVrlrQsghVtGSgjDsolNZ+TRGnMJggkODFsUyp6N\nBc0RTJdHXcwI4HX2DE0CfQd+ZjDGYJIX0nKv9hlrLKKiRYV55WEPkbaAguds9RdK\n/mmLcz/HgNbDBqzzL+J6NnjJekp9bs28Tm1JDOsCgYEAxZES4Ir2ByU3IQNs7D0q\ninlYt9q+yB3hWmaeq2261xOdRjmMbuh+UN/j7O9SL9ywNxfmDyZZYWkoWUUlgZmf\ngIlDnsrbHOvicL59+IRXo0sDatBNr5OC8XBNmNsMcbAII7hJ/1toVx4KA7tI2Fbk\nUaB1+6RIdTo0YFlzlLfoeAkCgYEAiSayYH6wLuO+cgjd6KS8hsofdpn0HDCNj+Jf\ngOrsyGzZldtTAVrAZaW6biYIJ1B3kvlnnUjYfdF3c9Rn+dV8srIGqgB3OU/cdVbK\nQkw+zQqbgczv640wac6VsJl2UJqK2uUC7WM1nFyi504j47IHZwoVgfH5YXS6Ow+e\n/FmIIvkCgYBil/nb9r7uWA2N9hs0XLI/mraGWN+dPWSkzpTZV8ifRJxiI59Y4Qt6\nfJqQBXJcox+K5vniFPeQVGld2pm1bCaeGv6PldeH7uOqtr2pGksJ/Eqd9OBiwrBD\nA5DCFwBzP3h2ntpOwNmPfV6fJ6+sL4Nc07e+XWDHjsgy5Qz155I+4Q==\n-----END RSA PRIVATE KEY-----";
 const KEY_N: &str = "punrvnhuDgA2HFEJPoRLDp63DXWl5UR0FylPnY9bB5_8s_wQEx7dr14kYbBVoyG1CEeCVr97eGXvXYny-boYMIaFrS2ASsfCSqizFXto_2ptoKv_Io-dbv6FvlYllszePnv7dtVmWyLS7RBvVd6MJPQUjX3REMPsvqSCNYqKqweO3zFWTfjN2gc43399fAo_Gbw16o64qPgszX_b3SDMPEgO-ACHjAhqQRwtnoIptXdvXceyryO94Byml1j1N3IEKW-obvn2_KB8uwfm84ms184GGIBovPB70BirhYdG85gfUslP4sZ8iVmhMIKF9JvHgYapV5OGVhKcrnlMb8APKQ";
 
-pub const CLIENT_ID: &str = "disktree";
+pub const CLIENT_ID: &str = "freesize";
 pub const CLIENT_SECRET: &str = "mock-client-secret-0123456789abcdef";
 
 #[derive(Clone, Debug)]
@@ -64,7 +64,7 @@ impl MockIdp {
     pub async fn start() -> MockIdp {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let issuer = format!(
-            "http://{}/application/o/disktree/",
+            "http://{}/application/o/freesize/",
             listener.local_addr().unwrap()
         );
         Self::serve(listener, issuer).await
@@ -76,18 +76,18 @@ impl MockIdp {
             user: Arc::new(Mutex::new(MockUser::new(
                 "u-admin",
                 "Robert",
-                &["disktree-admins"],
+                &["freesize-admins"],
             ))),
             grants: Arc::default(),
         };
         let app = Router::new()
             .route(
-                "/application/o/disktree/.well-known/openid-configuration",
+                "/application/o/freesize/.well-known/openid-configuration",
                 get(discovery),
             )
             .route("/application/o/authorize/", get(authorize))
             .route("/application/o/token/", post(token))
-            .route("/application/o/disktree/jwks/", get(jwks))
+            .route("/application/o/freesize/jwks/", get(jwks))
             .with_state(idp.clone());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         idp
@@ -98,7 +98,7 @@ impl MockIdp {
     }
 
     fn base(&self) -> String {
-        self.issuer.trim_end_matches("/disktree/").to_string()
+        self.issuer.trim_end_matches("/freesize/").to_string()
     }
 }
 
@@ -156,7 +156,7 @@ async fn authorize(State(idp): State<MockIdp>, Query(q): Query<AuthorizeQuery>) 
 }
 
 fn rand_hex() -> String {
-    disktree_proto::keys::random_id::<10>()
+    freesize_proto::keys::random_id::<10>()
 }
 
 #[derive(Deserialize)]
@@ -190,7 +190,7 @@ async fn token(State(idp): State<MockIdp>, Form(f): Form<TokenForm>) -> Response
         )
             .into_response();
     }
-    let now = disktree_hub::db::now();
+    let now = freesize_hub::db::now();
     let claims = json!({
         "iss": idp.issuer, "aud": CLIENT_ID, "sub": grant.user.sub, "exp": now + 300, "iat": now,
         "nonce": grant.nonce, "name": grant.user.name, "email": grant.user.email,

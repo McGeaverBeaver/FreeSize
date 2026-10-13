@@ -1,6 +1,6 @@
 Menu="DiskSpace"
 Type="xmenu"
-Title="DiskTree"
+Title="FreeSize"
 Icon="pie-chart"
 Tabs="true"
 ---

@@ -1,0 +1,5 @@
+Menu="FreeSize:1"
+Title="Overview"
+---
+<?require_once "$docroot/plugins/freesize/include/page.php";?>
+<div class="freesize" id="dt-overview"><p class="dt-muted">Loading…</p></div>

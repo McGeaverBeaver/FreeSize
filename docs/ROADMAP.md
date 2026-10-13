@@ -130,6 +130,33 @@ else that can delete:
   `--state`. The Android app can reach a Hub at a plain `http://` address
   and shows Java's reason when it can't reach one. The dashboard's Copy link
   works over plain http.
+- 0.8.6: DiskTree is called FreeSize. Crates, binaries (`freesize`,
+  `freesize-gui`, `freesize-hub`), the Docker image
+  (`ghcr.io/mcgeaverbeaver/freesize-hub`, also pushed under the old name),
+  the plugin (`freesize.plg`), the systemd units and the Android package id
+  (`io.github.mcgeaverbeaver.freesize`, same signing key). What keeps
+  working from before:
+  - data folders on Windows, macOS and Linux (the app, the agent, a Hub
+    outside Docker) are renamed into place on first start, and the phone's
+    app history in `Documents/DiskTree` too;
+  - `DISKTREE_…` settings count where the `FREESIZE_…` name isn't set, and
+    the `disktree-admins` and `disktree-viewers` groups while the group
+    settings are left at their defaults;
+  - `disktree://` pairing links (the phone opens them too);
+  - on Unraid, the old plugin's update (`disktree.plg`) installs
+    `freesize.plg`, which copies `/boot/config/plugins/disktree` (with
+    `disktree.cfg` as `freesize.cfg`) and removes the old package, page
+    and `.plg`;
+  - names that stay: the protocol's headers and signing labels, the
+    quarantine folder `.disktree-quarantine` (its manifests hold full
+    paths), the Prometheus metrics, the webhook's `X-DiskTree-Signature`
+    and the dashboard's cookie.
+  The phone pairs again: a new package id is a new app, and its private
+  storage (the pairing key) can't carry over. Still to check on real
+  devices: a 0.8.5 plugin, Hub, Windows app and phone each upgrading with
+  pairing, settings, history and quarantine intact (the plugin's update
+  through `disktree.plg` above all, since Unraid's update can't be run
+  here).
 
 Left over and planned (the release it goes in is under Next releases):
 - **A quarantine on phones and desktops**, with one Put back for everything,
@@ -192,20 +219,10 @@ Parked, each with its reason:
 ## Next releases
 
 Each release is small enough to ship in a few weeks, and each says what
-"done" means. Trust and the quarantine come before any new way to delete;
+"done" means. 0.8.6, the rename, is under Done. Trust and the quarantine come before any new way to delete;
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
-- **0.8.6, the rename to FreeSize.** Crates, binaries (`freesize`,
-  `freesize-gui`, `freesize-hub`), the Docker image, the plugin
-  (`freesize.plg`, migrating `/boot/config/plugins/disktree`), the data
-  folders (migrated on first start), the pairing link scheme (both accepted
-  for one release), the Android package id
-  (`io.github.mcgeaverbeaver.freesize`; a new id is a new app to Android, so
-  the old one is uninstalled once; the signing key stays). The wire names
-  inside the protocol stay as they are. Done when a 0.8.5 plugin, Hub,
-  Windows app and phone each upgrade with pairing, settings, history and
-  quarantine intact.
 - **0.8.7, HTTPS by default.** Over plain http anyone on the network can
   read what devices report and the dashboard's sign-in cookie. The Hub makes
   its own small certificate authority on first start (kept in the data

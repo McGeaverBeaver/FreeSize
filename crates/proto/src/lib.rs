@@ -1,4 +1,4 @@
-//! What DiskTree devices and the DiskTree Hub say to each other, and how
+//! What FreeSize devices and the FreeSize Hub say to each other, and how
 //! each side proves who said it.
 //!
 //! Each device and the Hub has an Ed25519 key pair ([`keys`]). A device is

@@ -9,9 +9,9 @@ use std::path::Path;
 
 use common::idp::MockUser;
 use common::{Browser, blocking, start_hub};
-use disktree_agent::{Client, UreqTransport, pair};
-use disktree_core::{ScanOptions, ScanProgress, scan};
-use disktree_proto::{ActionKind, DeviceInfo, PairingLink, Platform, Report};
+use freesize_agent::{Client, UreqTransport, pair};
+use freesize_core::{ScanOptions, ScanProgress, scan};
+use freesize_proto::{ActionKind, DeviceInfo, PairingLink, Platform, Report};
 use serde_json::json;
 
 fn info(name: &str) -> DeviceInfo {
@@ -20,7 +20,7 @@ fn info(name: &str) -> DeviceInfo {
         platform: Platform::Linux,
         os: "Debian 13".into(),
         hostname: "nas".into(),
-        app: "DiskTree agent test".into(),
+        app: "FreeSize agent test".into(),
         actions: vec![ActionKind::Delete],
         attended: false,
         approver: None,
@@ -41,7 +41,7 @@ fn scan_report(dir: &Path, taken: i64) -> Report {
     Report {
         info: None,
         disks: None,
-        scan: Some(disktree_agent::report::scan_report(
+        scan: Some(freesize_agent::report::scan_report(
             &tree, "Shares", taken, 0, true,
         )),
         ..Report::default()
@@ -72,7 +72,7 @@ async fn compare_search_export_and_upload() {
 
         // Two scans of a folder, a month apart: Movies grows, Backups goes,
         // Photos is new.
-        let dir = std::env::temp_dir().join(format!("disktree-hub-reports-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-hub-reports-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         write(&dir, "Movies/a.mkv", 3_000_000);
         write(&dir, "Backups/old.tar", 4_000_000);
@@ -244,7 +244,7 @@ async fn compare_search_export_and_upload() {
 
     // Viewers can't add devices or upload, nor touch other people's saved
     // searches.
-    idp.set_user(MockUser::new("u-viewer", "Val", &["disktree-viewers"]));
+    idp.set_user(MockUser::new("u-viewer", "Val", &["freesize-viewers"]));
     blocking(move || {
         let mut viewer = Browser::new();
         assert_eq!(viewer.sign_in(&url, "%2F").status, 303);

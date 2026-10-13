@@ -2,7 +2,7 @@
 //! platform reports it, how the device's storage divides up between apps,
 //! the user's files and the system.
 
-use disktree_core::{DiskSpace, disk_space, format_count, format_size};
+use freesize_core::{DiskSpace, disk_space, format_count, format_size};
 
 use std::path::Path;
 
@@ -30,7 +30,7 @@ pub const REMOVED_PREFIX: &str = "removed:";
 pub const CLEAN_PREFIX: &str = "clean:";
 /// Prefix of the action ids that open files to review (see `ReviewKind::id`).
 pub const REVIEW_PREFIX: &str = "review:";
-/// The DiskTree Hub card's buttons.
+/// The FreeSize Hub card's buttons.
 pub const HUB_CONNECT: &str = "hub-connect";
 pub const HUB_SETTINGS: &str = "hub-settings";
 pub const HUB_REVIEW: &str = "hub-review";
@@ -106,11 +106,11 @@ pub struct Options<'a> {
     /// Show the app group as bubbles, zoomed into this app if set.
     pub bubbles: bool,
     pub zoom: Option<&'a str>,
-    /// The DiskTree Hub card; none leaves the section out.
+    /// The FreeSize Hub card; none leaves the section out.
     pub hub: Option<&'a HubCard>,
 }
 
-/// What the DiskTree Hub card shows.
+/// What the FreeSize Hub card shows.
 #[derive(Clone, Debug, Default)]
 pub struct HubCard {
     /// The Hub's name when connected.
@@ -141,7 +141,7 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
             rows.push(notice(
                 "See what apps and Android are using",
                 "Most of a phone's storage is app data and the system, which Android hides \
-                 from file scans. Allow Usage access and DiskTree can show how much space \
+                 from file scans. Allow Usage access and FreeSize can show how much space \
                  each app takes.",
                 Some(("Allow usage access", GRANT_USAGE_ACCESS)),
             ));
@@ -149,10 +149,10 @@ pub fn rows(apps: &AppsState, options: Options<'_>) -> Vec<HomeRow> {
                 rows.push(notice(
                     "Switch greyed out, or “App was denied access”?",
                     "Android blocks Usage access for apps installed from a downloaded file \
-                     until you allow it. Open DiskTree's app info, tap ⋮ in the top corner, \
+                     until you allow it. Open FreeSize's app info, tap ⋮ in the top corner, \
                      choose “Allow restricted settings” and confirm. Then tap Allow usage \
                      access again.",
-                    Some(("Open DiskTree's app info", OPEN_APP_INFO)),
+                    Some(("Open FreeSize's app info", OPEN_APP_INFO)),
                 ));
             }
         }
@@ -447,7 +447,7 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
             heading(title, "", None),
             notice(
                 "Find the trash, old installers and more",
-                "DiskTree needs All files access to look through your files for space you \
+                "FreeSize needs All files access to look through your files for space you \
                  can free, and to clear every app's cache.",
                 Some(("Grant access", GRANT_STORAGE)),
             ),
@@ -484,12 +484,12 @@ fn free_up_rows(report: &AppReport, options: Options<'_>) -> Vec<HomeRow> {
     rows
 }
 
-/// The DiskTree Hub card: connect, or how the connection is going.
+/// The FreeSize Hub card: connect, or how the connection is going.
 fn hub_rows(card: &HubCard) -> Vec<HomeRow> {
-    let mut rows = vec![heading("DiskTree Hub", "", None)];
+    let mut rows = vec![heading("FreeSize Hub", "", None)];
     match &card.hub {
         None => rows.push(notice(
-            "Connect to a DiskTree Hub",
+            "Connect to a FreeSize Hub",
             "Show this device's storage in your Hub's dashboard, next to your other devices. \
              The Hub can ask this device to free space; nothing happens unless you approve it \
              here.",
@@ -524,12 +524,12 @@ fn hub_rows(card: &HubCard) -> Vec<HomeRow> {
 }
 
 /// The Hub settings sheet.
-pub fn hub_sheet(state: &disktree_agent::AgentState, status: &str, now: i64) -> Sheet {
+pub fn hub_sheet(state: &freesize_agent::AgentState, status: &str, now: i64) -> Sheet {
     let fingerprint = state.fingerprint();
     let mut facts = vec![
         format!("This device's key: {fingerprint}"),
         format!(
-            "A server or NAS can name this device as its approver with `disktree approver set \
+            "A server or NAS can name this device as its approver with `freesize approver set \
              {fingerprint}`; its requests then come here to approve."
         ),
     ];
@@ -610,7 +610,7 @@ fn junk_row(junk: &Junk) -> HomeRow {
         JunkKind::Installers => (
             format!("Delete old app installers: {size}"),
             format!(
-                "{} in Download: {}. Installers you saved with DiskTree in {SAVED_APKS} are \
+                "{} in Download: {}. Installers you saved with FreeSize in {SAVED_APKS} are \
                  kept.",
                 count(n, "APK file", "APK files"),
                 some_names(&junk.names)
@@ -890,9 +890,9 @@ fn explanation(view: View, options: Options<'_>) -> String {
             .into(),
         View::Growing => "Apps that grew by 100 MB or more over the last month, fastest \
                           first. It's usually downloads, offline music and videos, or cache \
-                          piling up. DiskTree measures apps each day it's opened."
+                          piling up. FreeSize measures apps each day it's opened."
             .into(),
-        View::Removed => "Apps DiskTree has seen that are no longer installed. Tap one to \
+        View::Removed => "Apps FreeSize has seen that are no longer installed. Tap one to \
                           find it again."
             .into(),
     }
@@ -1153,7 +1153,7 @@ pub fn app_sheet(app: &AppUsage, report: &AppReport, abilities: Abilities) -> Sh
         facts.push(format!("Works without being opened: it's {reason}."));
     }
     facts.push(match source {
-        _ if app.own => "This is DiskTree.".into(),
+        _ if app.own => "This is FreeSize.".into(),
         Source::Play => "If you uninstall it, the Play Store has it.".into(),
         Source::Store(name) => format!("If you uninstall it, {name} has it."),
         Source::Downloaded | Source::Unknown => "No app store has it. Save its APK before \
@@ -1212,7 +1212,7 @@ pub fn removed_sheet(entry: &Entry, now: u64) -> Sheet {
     let mut facts = Vec::new();
     if let Some(t) = entry.removed_at {
         facts.push(format!(
-            "Removed {}: DiskTree noticed it was gone on {}.",
+            "Removed {}: FreeSize noticed it was gone on {}.",
             ago(now, t),
             date(t)
         ));
@@ -1243,7 +1243,7 @@ pub fn removed_sheet(entry: &Entry, now: u64) -> Sheet {
     } else {
         facts.push(
             "It wasn't from an app store. Look for the APK where you got it, or in \
-             Download/DiskTree if you saved it there."
+             Download/FreeSize if you saved it there."
                 .into(),
         );
         actions.push((sheet::SEARCH_STORE, "Search the Play Store".into(), false));

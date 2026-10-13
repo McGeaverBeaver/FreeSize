@@ -7,7 +7,7 @@ use std::path::Path;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use disktree_proto::{ActionKind, Grant, KeyPair, PublicKey};
+use freesize_proto::{ActionKind, Grant, KeyPair, PublicKey};
 use serde::{Deserialize, Serialize};
 
 /// Command ids remembered so a command is never carried out twice.
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn saves_and_loads_privately() {
-        let dir = std::env::temp_dir().join(format!("disktree-agent-state-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-agent-state-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("agent.json");
         assert!(AgentState::load(&path).unwrap().is_none());

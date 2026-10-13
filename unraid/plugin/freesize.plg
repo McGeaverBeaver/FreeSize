@@ -1,0 +1,88 @@
+<?xml version='1.0' standalone='yes'?>
+<!-- FreeSize for Unraid. scripts/unraid-plugin.sh fills in the version and
+     the package's checksum; the release carries the result. -->
+<!DOCTYPE PLUGIN [
+<!ENTITY name       "freesize">
+<!ENTITY author     "McGeaverBeaver">
+<!ENTITY version    "@VERSION@">
+<!ENTITY repo       "https://github.com/McGeaverBeaver/FreeSize">
+<!ENTITY pluginURL  "&repo;/releases/latest/download/freesize.plg">
+<!ENTITY package    "&name;-&version;-x86_64-1">
+<!ENTITY packageURL "&repo;/releases/download/v&version;/&package;.txz">
+<!ENTITY sha256     "@SHA256@">
+<!ENTITY config     "/boot/config/plugins/&name;">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="Tools/FreeSize" pluginURL="&pluginURL;" support="&repo;/issues" icon="pie-chart" min="6.12.0">
+
+<CHANGES>
+### @VERSION@
+- DiskTree is called FreeSize now: installing it takes over DiskTree's settings, Hub pairing and quarantine, and removes DiskTree
+- Where the space goes on the array and pools, per share and per disk, without waking sleeping disks
+- Docker and VMs: what's safe to remove, what to check first, and what's in use and never offered
+- A quarantine to move things aside and put them back; nothing is deleted until you empty it
+- What keeps disks spun up, a permissions report, and moving shares between disks with checked copies
+- Reports to the FreeSize Hub once paired; the server's approver allows what the Hub asks
+</CHANGES>
+
+<!-- Before the package: DiskTree for Unraid (0.8.5 and older) is this
+     plugin under its old name. Its settings, Hub pairing and disk
+     history move here, then it's removed. The quarantine on each disk
+     keeps its folder name and stays as it is. -->
+<FILE Run="/bin/bash">
+<INLINE>
+old=/boot/config/plugins/disktree
+if [ -d "$old" ] &amp;&amp; [ ! -e &config;/agent.json ] &amp;&amp; [ ! -e &config;/freesize.cfg ]; then
+  echo "Taking over DiskTree's settings and Hub pairing from $old"
+  [ -x /etc/rc.d/rc.disktree ] &amp;&amp; /etc/rc.d/rc.disktree stop
+  mkdir -p &config;
+  for f in "$old"/*; do
+    case "$f" in *.txz) ;; *) [ -e "$f" ] &amp;&amp; cp -a "$f" &config;/ ;; esac
+  done
+  [ -f &config;/disktree.cfg ] &amp;&amp; mv &config;/disktree.cfg &config;/freesize.cfg
+fi
+if [ -e /boot/config/plugins/disktree.plg ] || [ -d /usr/local/emhttp/plugins/disktree ]; then
+  [ -x /etc/rc.d/rc.disktree ] &amp;&amp; /etc/rc.d/rc.disktree stop
+  for p in /var/log/packages/disktree-*; do
+    [ -e "$p" ] &amp;&amp; removepkg "${p##*/}" &gt;/dev/null
+  done
+  rm -rf /usr/local/emhttp/plugins/disktree /var/local/disktree
+  rm -f /boot/config/plugins/disktree.plg /var/log/plugins/disktree.plg "$old"/disktree-*.txz
+  echo "DiskTree is replaced by FreeSize. $old can be deleted once FreeSize looks right."
+fi
+</INLINE>
+</FILE>
+
+<!-- The package: the freesize command, the page under Tools, and the
+     background part's start script. -->
+<FILE Name="&config;/&package;.txz" Run="upgradepkg --install-new">
+<URL>&packageURL;</URL>
+<SHA256>&sha256;</SHA256>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+# Packages of older versions aren't needed on the flash drive.
+for old in &config;/&name;-*.txz; do
+  [ "$old" = "&config;/&package;.txz" ] || rm -f "$old"
+done
+mkdir -p /var/local/freesize
+/etc/rc.d/rc.freesize restart
+echo
+echo "FreeSize &version; is installed: Tools, then FreeSize."
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+/etc/rc.d/rc.freesize stop
+removepkg &package;
+rm -rf /usr/local/emhttp/plugins/&name; /var/local/freesize
+rm -f &config;/&name;-*.txz
+echo
+echo "FreeSize is removed. Its settings and Hub pairing stay in &config;."
+echo "Anything in its quarantine stays too, in .disktree-quarantine at the top"
+echo "of each disk, until you delete it."
+</INLINE>
+</FILE>
+
+</PLUGIN>

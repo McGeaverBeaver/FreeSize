@@ -33,7 +33,7 @@ pub fn browse(_start: &Path) -> Option<PathBuf> {
 }
 
 /// Saves an exported report or scan file: through a save dialog on
-/// desktops, into `Download/DiskTree` on phones. `None` when cancelled.
+/// desktops, into `Download/FreeSize` on phones. `None` when cancelled.
 pub fn save_export(name: &str, bytes: &[u8]) -> Result<Option<PathBuf>, String> {
     #[cfg(not(target_os = "android"))]
     let path = {
@@ -55,7 +55,7 @@ pub fn save_export(name: &str, bytes: &[u8]) -> Result<Option<PathBuf>, String> 
     let path = {
         let dir = crate::locations::default_path()
             .join("Download")
-            .join("DiskTree");
+            .join("FreeSize");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         dir.join(name)
     };

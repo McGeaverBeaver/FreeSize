@@ -19,7 +19,7 @@ cd "$(dirname "$0")/../.."
 source scripts/android/env.sh
 
 target="${CARGO_TARGET_DIR:-target}"
-output="${1:-$target/release/apk/DiskTree.apk}"
+output="${1:-$target/release/apk/FreeSize.apk}"
 
 # Android 15+ devices may use 16 KB memory pages, and Google Play requires
 # native libraries built for them. cargo-apk ignores .cargo/config.toml
@@ -36,7 +36,7 @@ if [ -z "${CARGO_APK_RELEASE_KEYSTORE:-}" ]; then
         DISKTREE_KEY_PASSWORD="$(cat "$password_file")" keytool -genkeypair \
             -keystore "$keystore" -alias release -keyalg RSA -keysize 4096 -validity 10000 \
             -storepass:env DISKTREE_KEY_PASSWORD -keypass:env DISKTREE_KEY_PASSWORD \
-            -dname "CN=DiskTree" >/dev/null
+            -dname "CN=FreeSize" >/dev/null
         chmod 600 "$keystore"
         echo "Created the signing key $keystore" >&2
         echo "and its password file $password_file. Back up both: Android only" >&2
@@ -57,9 +57,9 @@ CARGO_APK_RELEASE_KEYSTORE="$keystore_dir/$(basename "$CARGO_APK_RELEASE_KEYSTOR
 export CARGO_APK_RELEASE_KEYSTORE
 
 # No --target: cargo-apk builds every entry of build_targets into one APK.
-cargo apk build -p disktree-app --lib --release
+cargo apk build -p freesize-app --lib --release
 
-built="$target/release/apk/DiskTree.apk"
+built="$target/release/apk/FreeSize.apk"
 if [ "$built" != "$output" ]; then
     mkdir -p "$(dirname "$output")"
     cp "$built" "$output"

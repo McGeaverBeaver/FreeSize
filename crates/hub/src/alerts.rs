@@ -18,7 +18,7 @@ use crate::dashboard::visible;
 use crate::db::now;
 use crate::error::{ApiError, ApiResult};
 use crate::{AppState, audit};
-use disktree_core::format_size;
+use freesize_core::format_size;
 
 /// How often alerts are checked.
 pub const CHECK_EVERY: Duration = Duration::from_secs(60);
@@ -310,7 +310,7 @@ pub fn evaluate(
                     device_id: Some(id),
                     severity: "warning",
                     title: format!("{name} hasn't reported for {hours} hours"),
-                    message: "Check that the machine is on and the DiskTree agent is running."
+                    message: "Check that the machine is on and the FreeSize agent is running."
                         .into(),
                 });
             }
@@ -354,7 +354,7 @@ pub fn evaluate(
                 device_id: Some(device),
                 severity: "info",
                 title: format!("{name}: a request is waiting"),
-                message: format!("{summary}. Open DiskTree on {where_} to approve or deny it."),
+                message: format!("{summary}. Open FreeSize on {where_} to approve or deny it."),
             });
         }
     }
@@ -1132,7 +1132,7 @@ pub async fn test_channel(
             device_id: None,
             device_name: None,
             severity: "info".into(),
-            title: "DiskTree Hub test".into(),
+            title: "FreeSize Hub test".into(),
             message: format!(
                 "{} sent a test from the dashboard; alerts will look like this.",
                 user.name
@@ -1312,7 +1312,7 @@ mod tests {
         let request = firing.iter().find(|f| f.kind == "request").unwrap();
         assert_eq!(
             request.message,
-            "Delete a.iso. Open DiskTree on Phone to approve or deny it."
+            "Delete a.iso. Open FreeSize on Phone to approve or deny it."
         );
         db.now(|c| sync(c, firing, now).unwrap());
         // Answered: over, without a message.

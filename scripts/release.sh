@@ -2,17 +2,20 @@
 # Builds a release on this machine and publishes it on GitHub.
 #
 # Builds, from the commit that's checked out:
-#   disktree-android.apk               signed with your key (see android/build-apk.sh)
-#   disktree-linux-<arch>.tar.gz       desktop app and command line (with the
+#   freesize-android.apk               signed with your key (see android/build-apk.sh)
+#   freesize-linux-<arch>.tar.gz       desktop app and command line (with the
 #                                      agent's systemd unit)
-#   disktree-hub-linux-<arch>.tar.gz   the Hub, with its systemd unit
-#   disktree-windows-x86_64.zip        app and command line for Windows
-#   disktree.plg, disktree-<version>-x86_64-1.txz
+#   freesize-hub-linux-<arch>.tar.gz   the Hub, with its systemd unit
+#   freesize-windows-x86_64.zip        app and command line for Windows
+#   freesize.plg, freesize-<version>-x86_64-1.txz
 #                                      the Unraid plugin (a static build of
 #                                      the command line, the page under
 #                                      Tools); Unraid installs it from the
 #                                      .plg in the latest release
-#   disktree-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
+#   disktree.plg                       the update servers with the plugin
+#                                      from before the rename look for; it
+#                                      installs freesize.plg
+#   freesize-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
 #                                      the aarch64 cross-compiler is installed
 #   SHA256SUMS.txt
 #   the Hub's Docker image             for amd64 and arm64 (see below)
@@ -21,14 +24,14 @@
 # comes from the root Cargo.toml. macOS builds need a Mac, so there are none.
 #
 # The Docker image is what a GitHub Actions workflow would publish, built
-# here instead so it costs no Actions minutes: ghcr.io/<owner>/disktree-hub,
+# here instead so it costs no Actions minutes: ghcr.io/<owner>/freesize-hub,
 # a package of the GitHub repository, tagged <version> and latest (the tag
 # Unraid's template pulls), drafts too: the owner publishes drafts on GitHub's
 # website, which can't move the tag. It holds the Hub built
 # above, for amd64 and arm64, rather than compiling it again inside Docker.
 # The GitHub CLI's token logs in to the registry (it needs the
 # write:packages scope) in a throwaway Docker config, so the token isn't
-# left on disk. DISKTREE_IMAGE names another image (log in to its registry
+# left on disk. FREESIZE_IMAGE names another image (log in to its registry
 # yourself); --no-image leaves the image out.
 #
 # Needs everything android/build-apk.sh needs, the MinGW cross-compiler and
@@ -83,14 +86,14 @@ trap 'rm -rf "$work"' EXIT
 
 image=""
 if $with_image; then
-    image="${DISKTREE_IMAGE:-}"
+    image="${FREESIZE_IMAGE:-}"
     if [ -z "$image" ]; then
         if [ -z "$repo" ]; then
-            echo "error: origin isn't on GitHub; set DISKTREE_IMAGE or pass --no-image" >&2
+            echo "error: origin isn't on GitHub; set FREESIZE_IMAGE or pass --no-image" >&2
             exit 1
         fi
         owner="${repo%%/*}"
-        image="ghcr.io/${owner,,}/disktree-hub"
+        image="ghcr.io/${owner,,}/freesize-hub"
     fi
     if ! docker buildx version >/dev/null 2>&1; then
         echo "error: the Docker image needs Docker with buildx; run:" >&2
@@ -131,10 +134,17 @@ registry_login() {
     gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin >/dev/null
 }
 
-# Points the image's latest tag at this version, in the registry.
+# Points the image's latest tag at this version, in the registry. Hubs
+# installed before the rename pull disktree-hub, so it gets the same image
+# under its old name too.
 tag_latest() {
     echo "==> Pointing $image:latest at $version"
     docker buildx imagetools create --tag "$image:latest" "$image:$version"
+    if [[ "$image" == */freesize-hub ]]; then
+        local old="${image%/freesize-hub}/disktree-hub"
+        echo "==> And $old:$version and :latest, for Hubs installed before the rename"
+        docker buildx imagetools create --tag "$old:$version" --tag "$old:latest" "$image:$version"
+    fi
 }
 
 # Unraid pulls without logging in, so the package has to be public; GitHub
@@ -239,7 +249,7 @@ fi
 dist="dist/$tag"
 rm -rf "$dist"
 mkdir -p "$dist"
-echo "==> Building DiskTree $version ($(git rev-parse --short HEAD)) into $dist"
+echo "==> Building FreeSize $version ($(git rev-parse --short HEAD)) into $dist"
 
 echo "==> Tests"
 # In release mode, so the tests reuse the release build below instead of
@@ -247,7 +257,7 @@ echo "==> Tests"
 cargo test --workspace --release --quiet
 
 echo "==> Android"
-scripts/android/build-apk.sh "$dist/disktree-android.apk"
+scripts/android/build-apk.sh "$dist/freesize-android.apk"
 
 package() {
     local name="$1" dir="$2"
@@ -264,13 +274,13 @@ package() {
 }
 
 echo "==> Linux"
-cargo build --release --quiet -p disktree-app -p disktree-cli -p disktree-hub
+cargo build --release --quiet -p freesize-app -p freesize-cli -p freesize-hub
 units=packaging/systemd
-package "disktree-linux-$(uname -m).tar.gz" "$target/release" \
-    "$target/release/disktree-gui" "$target/release/disktree" \
-    "$units/disktree-agent.service" "$units/disktree-agent.env"
-package "disktree-hub-linux-$(uname -m).tar.gz" "$target/release" \
-    "$target/release/disktree-hub" "$units/disktree-hub.service" "$units/disktree-hub.env"
+package "freesize-linux-$(uname -m).tar.gz" "$target/release" \
+    "$target/release/freesize-gui" "$target/release/freesize" \
+    "$units/freesize-agent.service" "$units/freesize-agent.env"
+package "freesize-hub-linux-$(uname -m).tar.gz" "$target/release" \
+    "$target/release/freesize-hub" "$units/freesize-hub.service" "$units/freesize-hub.env"
 
 if [ "$(uname -m)" != aarch64 ]; then
     if command -v aarch64-linux-gnu-gcc >/dev/null; then
@@ -280,12 +290,12 @@ if [ "$(uname -m)" != aarch64 ]; then
             CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
             AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
             cargo build --release --quiet --target aarch64-unknown-linux-gnu \
-            -p disktree-cli -p disktree-hub
+            -p freesize-cli -p freesize-hub
         arm="$target/aarch64-unknown-linux-gnu/release"
-        package disktree-cli-linux-aarch64.tar.gz "$arm" \
-            "$arm/disktree" "$units/disktree-agent.service" "$units/disktree-agent.env"
-        package disktree-hub-linux-aarch64.tar.gz "$arm" \
-            "$arm/disktree-hub" "$units/disktree-hub.service" "$units/disktree-hub.env"
+        package freesize-cli-linux-aarch64.tar.gz "$arm" \
+            "$arm/freesize" "$units/freesize-agent.service" "$units/freesize-agent.env"
+        package freesize-hub-linux-aarch64.tar.gz "$arm" \
+            "$arm/freesize-hub" "$units/freesize-hub.service" "$units/freesize-hub.env"
     else
         echo "    (no ARM builds: sudo apt install gcc-aarch64-linux-gnu to add them)"
     fi
@@ -294,14 +304,14 @@ fi
 echo "==> Unraid plugin"
 # Unraid has its own glibc; a static musl build runs on every version.
 rustup target add x86_64-unknown-linux-musl >/dev/null 2>&1
-cargo build --release --quiet --target x86_64-unknown-linux-musl -p disktree-cli
-scripts/unraid-plugin.sh "$target/x86_64-unknown-linux-musl/release/disktree" "$dist"
+cargo build --release --quiet --target x86_64-unknown-linux-musl -p freesize-cli
+scripts/unraid-plugin.sh "$target/x86_64-unknown-linux-musl/release/freesize" "$dist"
 
 echo "==> Windows"
 rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1
-cargo build --release --quiet --target x86_64-pc-windows-gnu -p disktree-app -p disktree-cli
+cargo build --release --quiet --target x86_64-pc-windows-gnu -p freesize-app -p freesize-cli
 win="$target/x86_64-pc-windows-gnu/release"
-package disktree-windows-x86_64.zip "$win" "$win/disktree-gui.exe" "$win/disktree.exe"
+package freesize-windows-x86_64.zip "$win" "$win/freesize-gui.exe" "$win/freesize.exe"
 
 (cd "$dist" && sha256sum -- * >SHA256SUMS.txt)
 echo "==> Built:"
@@ -314,12 +324,12 @@ if [ -n "$image" ]; then
     # GB in Docker's own storage.
     hub="$work/hub"
     mkdir -p "$hub/amd64" "$hub/arm64"
-    cp "$target/release/disktree-hub" "$hub/amd64/"
-    cp "$target/aarch64-unknown-linux-gnu/release/disktree-hub" "$hub/arm64/"
+    cp "$target/release/freesize-hub" "$hub/amd64/"
+    cp "$target/aarch64-unknown-linux-gnu/release/freesize-hub" "$hub/arm64/"
     cp /etc/ssl/certs/ca-certificates.crt "$hub/"
     # They link to this machine's glibc, so they mustn't need a newer one
     # than the image's Debian has.
-    for bin in "$hub"/*/disktree-hub; do
+    for bin in "$hub"/*/freesize-hub; do
         need="$(readelf -V "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)"
         if [ "$(printf '%s\n' "$need" 2.36 | sort -V | tail -n 1)" != 2.36 ]; then
             echo "error: $bin needs glibc $need, newer than the 2.36 in the image" >&2
@@ -335,8 +345,8 @@ if [ -n "$image" ]; then
     } >"$work/Dockerfile"
     # A builder of its own, as Actions' setup-buildx makes: the default one
     # can't always build for two platforms.
-    docker buildx inspect disktree >/dev/null 2>&1 ||
-        docker buildx create --name disktree --driver docker-container >/dev/null
+    docker buildx inspect freesize >/dev/null 2>&1 ||
+        docker buildx create --name freesize --driver docker-container >/dev/null
     labels=(--label "org.opencontainers.image.version=$version"
         --label "org.opencontainers.image.revision=$commit")
     if [ -n "$repo" ]; then
@@ -352,7 +362,7 @@ if [ -n "$image" ]; then
     fi
     # No provenance attestations: they show up as an extra "unknown/unknown"
     # platform next to amd64 and arm64.
-    docker buildx build --builder disktree --platform linux/amd64,linux/arm64 \
+    docker buildx build --builder freesize --platform linux/amd64,linux/arm64 \
         --file "$work/Dockerfile" --build-context prebuilt="$hub" \
         --provenance=false "${labels[@]}" --tag "$image:$version" "${output[@]}" .
 fi
@@ -365,7 +375,7 @@ fi
 echo "==> Publishing $tag on GitHub"
 gh release create "$tag" "$dist"/* \
     --target "$commit" \
-    --title "DiskTree $version" \
+    --title "FreeSize $version" \
     --generate-notes \
     "${draft[@]}"
 

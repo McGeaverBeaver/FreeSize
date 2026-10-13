@@ -9,11 +9,11 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use disktree_core::bubbles::{self, BubbleOptions};
-use disktree_core::ncdu;
-use disktree_core::snapshot::{self, Snapshot};
-use disktree_core::treemap::{self, Rect, TreemapOptions};
-use disktree_core::{
+use freesize_core::bubbles::{self, BubbleOptions};
+use freesize_core::ncdu;
+use freesize_core::snapshot::{self, Snapshot};
+use freesize_core::treemap::{self, Rect, TreemapOptions};
+use freesize_core::{
     Bin, DuplicateGroup, DuplicateProgress, Kind, NO_NODE, NodeId, ScanOptions, ScanProgress,
     ScanResult, SizeMode, Spot, Tree, age_bins, default_spot_rules, disk_space,
     duplicate_candidates, extension_stats, format_count, format_size, has_extension, kinds,
@@ -133,7 +133,7 @@ struct RunningDelete {
 enum SheetTarget {
     App(String),
     Removed(String),
-    /// The DiskTree Hub settings.
+    /// The FreeSize Hub settings.
     Hub,
     /// The folders of old screenshots or chat media.
     Review(ReviewKind),
@@ -262,7 +262,7 @@ pub struct Controller {
     /// Where the home screen was scrolled to when the page opened.
     home_scroll: f32,
     sheet: Option<SheetTarget>,
-    /// The connection to a DiskTree Hub, if paired.
+    /// The connection to a FreeSize Hub, if paired.
     hub: Hub,
     hub_status: String,
     /// Picks up the Hub's events; slower than `timer`.
@@ -271,8 +271,8 @@ pub struct Controller {
     prompts: VecDeque<hub::Prompt>,
     prompt: Option<hub::Prompt>,
     /// Pairing: the link being tried, and the Hub to confirm by fingerprint.
-    hub_link: Option<disktree_proto::PairingLink>,
-    hub_hello: Option<disktree_proto::Hello>,
+    hub_link: Option<freesize_proto::PairingLink>,
+    hub_hello: Option<freesize_proto::Hello>,
     /// Junk last found, for cleaning it when the Hub asks.
     hub_junk: Arc<Mutex<Vec<cleanup::Junk>>>,
     disks_reported: Option<std::time::Instant>,
@@ -321,14 +321,14 @@ fn device_name() -> String {
     #[cfg(target_os = "android")]
     return crate::android::device_name();
     #[cfg(not(target_os = "android"))]
-    disktree_agent::hostname()
+    freesize_agent::hostname()
 }
 
 fn os_name() -> String {
     #[cfg(target_os = "android")]
     return crate::android::os_name();
     #[cfg(not(target_os = "android"))]
-    disktree_proto::Platform::current().label().to_string()
+    freesize_proto::Platform::current().label().to_string()
 }
 
 /// The Hub connection, with this platform's HTTP client and actions.
@@ -337,27 +337,27 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>) -> Hub {
         .unwrap_or_else(std::env::temp_dir)
         .join("hub.json");
     #[cfg(target_os = "android")]
-    let transport: Arc<dyn disktree_agent::Transport + Send + Sync> =
+    let transport: Arc<dyn freesize_agent::Transport + Send + Sync> =
         Arc::new(crate::android::JavaTransport);
     #[cfg(not(target_os = "android"))]
-    let transport: Arc<dyn disktree_agent::Transport + Send + Sync> =
-        Arc::new(disktree_agent::UreqTransport::new());
+    let transport: Arc<dyn freesize_agent::Transport + Send + Sync> =
+        Arc::new(freesize_agent::UreqTransport::new());
     let executor = Arc::new(hub::AppExecutor { junk: junk.clone() });
     let mut roots: Vec<PathBuf> = locations::list().into_iter().map(|l| l.path).collect();
     if let Some(home) = std::env::home_dir() {
         roots.push(home);
     }
-    let platform = disktree_proto::Platform::current();
-    let policy = disktree_agent::commands::Policy {
+    let platform = freesize_proto::Platform::current();
+    let policy = freesize_agent::commands::Policy {
         attended: true,
-        actions: if platform == disktree_proto::Platform::Android {
+        actions: if platform == freesize_proto::Platform::Android {
             vec![
-                disktree_proto::ActionKind::Delete,
-                disktree_proto::ActionKind::Uninstall,
-                disktree_proto::ActionKind::Clean,
+                freesize_proto::ActionKind::Delete,
+                freesize_proto::ActionKind::Uninstall,
+                freesize_proto::ActionKind::Clean,
             ]
         } else {
-            vec![disktree_proto::ActionKind::Delete]
+            vec![freesize_proto::ActionKind::Delete]
         },
         roots,
         keep: vec![path.clone()],
@@ -565,7 +565,7 @@ pub fn install(ui: &AppWindow, initial: Option<PathBuf>) -> Rc<RefCell<Controlle
         // Opened from a scanned pairing QR code.
         #[cfg(target_os = "android")]
         if let Some(link) = crate::android::launch_link()
-            && link.starts_with("disktree://pair")
+            && freesize_proto::pairing::is_link(&link)
         {
             c.open_hub_connect(&link);
         }
@@ -677,9 +677,9 @@ impl Controller {
                 // Folders of apps in Android/media and the like get their icons.
                 self.owners.set_android_icons(report.icons.clone());
                 *self.hub_junk.lock().unwrap_or_else(|e| e.into_inner()) = report.junk.clone();
-                self.hub.report(disktree_proto::Report {
+                self.hub.report(freesize_proto::Report {
                     apps: Some(hub::apps_report(report)),
-                    ..disktree_proto::Report::default()
+                    ..freesize_proto::Report::default()
                 });
                 self.update_map();
             }
@@ -720,11 +720,11 @@ impl Controller {
                     self.return_watch = None;
                 }
                 // Android's cache cleaner closes without a word when it
-                // won't run for DiskTree.
+                // won't run for FreeSize.
                 if never_opened && self.cache_check.take().is_some() {
                     self.set_status(
                         "Android didn't open its cache cleaner, so nothing was cleared. Check \
-                         that DiskTree has All files access, or clear the apps under Biggest \
+                         that FreeSize has All files access, or clear the apps under Biggest \
                          caches one by one.",
                     );
                 }
@@ -891,7 +891,7 @@ impl Controller {
         let spawned = {
             let (root, progress, result) = (root.clone(), progress.clone(), result.clone());
             std::thread::Builder::new()
-                .name("disktree-scan".into())
+                .name("freesize-scan".into())
                 .spawn(move || {
                     // A saved scan file opens instead of being scanned.
                     if is_scan_file(&root) {
@@ -930,15 +930,15 @@ impl Controller {
                         };
                         // A summary for the Hub, made here off the UI thread.
                         if reporter.connected() && !r.cancelled {
-                            reporter.send(disktree_proto::Report {
-                                scan: Some(disktree_agent::report::scan_report(
+                            reporter.send(freesize_proto::Report {
+                                scan: Some(freesize_agent::report::scan_report(
                                     &r.tree,
                                     &label,
                                     apps::now() as i64,
                                     r.errors,
                                     true,
                                 )),
-                                ..disktree_proto::Report::default()
+                                ..freesize_proto::Report::default()
                             });
                         }
                         let hidden = (!r.cancelled && hidden::is_drive_root(&root))
@@ -1234,7 +1234,7 @@ impl Controller {
         let result: Slot<Result<AppReport, String>> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-apps".into())
+            .name("freesize-apps".into())
             .spawn(move || put(&worker_result, apps::collect()));
         match spawned {
             Ok(_) => {
@@ -1274,7 +1274,7 @@ impl Controller {
                 if !storage_access() {
                     self.set_status(
                         "Android's cache cleaner only opens for apps with All files access. \
-                         Turn it on for DiskTree, then try again.",
+                         Turn it on for FreeSize, then try again.",
                     );
                     self.grant_permission();
                     return;
@@ -1414,7 +1414,7 @@ impl Controller {
         self.sheet = target;
     }
 
-    // ----- DiskTree Hub -------------------------------------------------------
+    // ----- FreeSize Hub -------------------------------------------------------
 
     /// Picks up the Hub's events twice a second. Separate from `timer`, which
     /// stops when nothing runs, so a connected app doesn't wake every 100 ms.
@@ -1433,7 +1433,7 @@ impl Controller {
             });
     }
 
-    fn this_device(&self) -> disktree_proto::DeviceInfo {
+    fn this_device(&self) -> freesize_proto::DeviceInfo {
         let state = self.hub.state();
         hub::device_info(&device_name(), &os_name(), state.as_ref())
     }
@@ -1447,10 +1447,10 @@ impl Controller {
             .into_iter()
             .map(|l| (l.label, l.path))
             .collect();
-        self.hub.report(disktree_proto::Report {
+        self.hub.report(freesize_proto::Report {
             info: Some(self.this_device()),
-            disks: Some(disktree_agent::report::disks(&places)),
-            ..disktree_proto::Report::default()
+            disks: Some(freesize_agent::report::disks(&places)),
+            ..freesize_proto::Report::default()
         });
         self.disks_reported = Some(std::time::Instant::now());
     }
@@ -1517,9 +1517,9 @@ impl Controller {
                     self.report_disks();
                     if let Some(report) = self.report() {
                         let apps = hub::apps_report(report);
-                        self.hub.report(disktree_proto::Report {
+                        self.hub.report(freesize_proto::Report {
                             apps: Some(apps),
-                            ..disktree_proto::Report::default()
+                            ..freesize_proto::Report::default()
                         });
                     }
                     self.set_status(&format!(
@@ -1626,12 +1626,12 @@ impl Controller {
             ui.set_approval_open(false);
         }
         let choice = match answer {
-            a if a < 0 => disktree_agent::commands::Choice::Deny,
-            0 => disktree_agent::commands::Choice::Once,
-            minutes => disktree_agent::commands::Choice::For(minutes as u32),
+            a if a < 0 => freesize_agent::commands::Choice::Deny,
+            0 => freesize_agent::commands::Choice::Once,
+            minutes => freesize_agent::commands::Choice::For(minutes as u32),
         };
         self.set_status(match choice {
-            disktree_agent::commands::Choice::Deny => "Denied. The Hub is told.",
+            freesize_agent::commands::Choice::Deny => "Denied. The Hub is told.",
             _ => "Approved. Working on it…",
         });
         self.hub.answer(prompt, choice);
@@ -1672,12 +1672,12 @@ impl Controller {
                  clean-up suggestions and changes, to read or share."
                     .into(),
                 "Spreadsheet: the biggest folders and files as a CSV table.".into(),
-                "Scan file: the whole scan in ncdu's JSON format. Open it again in DiskTree \
+                "Scan file: the whole scan in ncdu's JSON format. Open it again in FreeSize \
                  by typing its path and pressing Scan, or with `ncdu -f`."
                     .into(),
             ],
             note: if cfg!(target_os = "android") {
-                "Files are saved to Download/DiskTree.".into()
+                "Files are saved to Download/FreeSize.".into()
             } else {
                 String::new()
             },
@@ -1859,7 +1859,7 @@ impl Controller {
         }
     }
 
-    /// Copies an app's APK to Download/DiskTree on a worker thread.
+    /// Copies an app's APK to Download/FreeSize on a worker thread.
     fn save_apk(&mut self, package: &str) {
         if self.apk_job.is_some() {
             self.set_status("Still saving the previous APK…");
@@ -1882,7 +1882,7 @@ impl Controller {
         let result: Slot<Result<String, String>> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-apk".into())
+            .name("freesize-apk".into())
             .spawn(move || put(&worker_result, apps::save_apk(&package, &label, &version)));
         match spawned {
             Ok(_) => {
@@ -1964,7 +1964,7 @@ impl Controller {
         let result: Slot<(u64, Vec<String>)> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-cleanup".into())
+            .name("freesize-cleanup".into())
             .spawn(move || put(&worker_result, apps::delete_junk(&junk)));
         match spawned {
             Ok(_) => {
@@ -2207,7 +2207,7 @@ impl Controller {
                 kind: 0,
                 id: -1,
                 title: "No earlier scan of this folder".into(),
-                subtitle: "DiskTree keeps the folder sizes of every scan. Scan this folder again \
+                subtitle: "FreeSize keeps the folder sizes of every scan. Scan this folder again \
                            another day to see what grew, what's new and what's gone."
                     .into(),
                 ..Default::default()
@@ -2329,7 +2329,7 @@ impl Controller {
         let spawned = {
             let (progress, result) = (progress.clone(), result.clone());
             std::thread::Builder::new()
-                .name("disktree-photos".into())
+                .name("freesize-photos".into())
                 .spawn(move || put(&result, similar::find(&photos, &progress)))
         };
         if let Err(err) = spawned {
@@ -2371,7 +2371,7 @@ impl Controller {
         let spawned = {
             let (progress, result) = (progress.clone(), result.clone());
             std::thread::Builder::new()
-                .name("disktree-duplicates".into())
+                .name("freesize-duplicates".into())
                 .spawn(move || put(&result, candidates.find(&progress)))
         };
         if let Err(err) = spawned {
@@ -3004,12 +3004,12 @@ impl Controller {
         ui.set_confirm_open(true);
     }
 
-    /// On phones: where the basket can be moved, a "DiskTree moved" folder
+    /// On phones: where the basket can be moved, a "FreeSize moved" folder
     /// on each drive.
     fn show_move_targets(&mut self) {
         self.move_targets = locations::list()
             .into_iter()
-            .map(|l| l.path.join("DiskTree moved"))
+            .map(|l| l.path.join("FreeSize moved"))
             .collect();
         self.refresh_basket();
     }
@@ -3045,7 +3045,7 @@ impl Controller {
         let result: Slot<BasketOutcome> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-basket".into())
+            .name("freesize-basket".into())
             .spawn(move || {
                 let mut outcome = BasketOutcome {
                     done: Vec::new(),
@@ -3136,7 +3136,7 @@ impl Controller {
         self.focus = NO_NODE;
         let still_there = self.tree.as_ref().is_some_and(|t| {
             !t.ancestors(focus)
-                .any(|a| t.node(a).has(disktree_core::flags::DELETED))
+                .any(|a| t.node(a).has(freesize_core::flags::DELETED))
         });
         let tree_root = self.tree.as_ref().map_or(0, |t| t.root());
         self.select(if still_there { focus } else { tree_root } as i32, false);
@@ -3155,7 +3155,7 @@ impl Controller {
         let result: Slot<(usize, Vec<String>)> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-put-back".into())
+            .name("freesize-put-back".into())
             .spawn(move || put(&worker_result, moves::put_back(&manifest)));
         if spawned.is_ok() {
             if let Some(ui) = self.ui() {
@@ -3266,7 +3266,7 @@ impl Controller {
         let result: Slot<Result<(), String>> = Arc::default();
         let worker_result = result.clone();
         let spawned = std::thread::Builder::new()
-            .name("disktree-delete".into())
+            .name("freesize-delete".into())
             .spawn(move || put(&worker_result, actions::delete(&path)));
         if let Err(err) = spawned {
             ui.set_status(format!("Could not delete {name}: {err}").into());
@@ -3385,7 +3385,7 @@ fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: Vec<T>)
     }
 }
 
-/// Whether DiskTree can read and write all of shared storage.
+/// Whether FreeSize can read and write all of shared storage.
 fn storage_access() -> bool {
     #[cfg(target_os = "android")]
     return crate::android::has_storage_access();

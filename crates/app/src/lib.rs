@@ -1,4 +1,4 @@
-//! DiskTree app: the Slint UI for desktop (Windows, macOS, Linux) and Android.
+//! FreeSize app: the Slint UI for desktop (Windows, macOS, Linux) and Android.
 
 slint::include_modules!();
 

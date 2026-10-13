@@ -8,16 +8,16 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.8.5"
+version = "0.8.6"
 edition = "2024"
 rust-version = "1.92"
 repository = "https://github.com/McGeaverBeaver/FreeSize"
 
 [workspace.dependencies]
-disktree-core = { path = "crates/core" }
-disktree-proto = { path = "crates/proto" }
-disktree-agent = { path = "crates/agent" }
-disktree-unraid = { path = "crates/unraid" }
+freesize-core = { path = "crates/core" }
+freesize-proto = { path = "crates/proto" }
+freesize-agent = { path = "crates/agent" }
+freesize-unraid = { path = "crates/unraid" }
 
 [profile.release]
 lto = "thin"

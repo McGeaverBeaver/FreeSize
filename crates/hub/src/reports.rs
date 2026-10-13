@@ -10,10 +10,10 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, header};
 use axum::response::{Html, IntoResponse, Response};
-use disktree_core::snapshot::{self, ChangeKind, FolderSize, Snapshot};
-use disktree_core::{SizeMode, flags, format_size};
-use disktree_proto::keys::{KeyPair, random_id};
-use disktree_proto::{AppsReport, DeviceInfo, Platform};
+use freesize_core::snapshot::{self, ChangeKind, FolderSize, Snapshot};
+use freesize_core::{SizeMode, flags, format_size};
+use freesize_proto::keys::{KeyPair, random_id};
+use freesize_proto::{AppsReport, DeviceInfo, Platform};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -590,7 +590,7 @@ fn file_name(parts: &[&str], ext: &str) -> String {
         name = name.replace("--", "-");
     }
     let name: String = name.chars().take(100).collect();
-    format!("{}.{ext}", if name.is_empty() { "disktree" } else { &name })
+    format!("{}.{ext}", if name.is_empty() { "freesize" } else { &name })
 }
 
 fn download(body: String, content_type: &'static str, name: &str) -> Response {
@@ -950,7 +950,7 @@ fn report_html(
         out.push_str("</table>");
     }
     out.push_str(&format!(
-        "<footer class=\"dim\">Made by DiskTree Hub {}. Sizes are space on disk.</footer></body></html>",
+        "<footer class=\"dim\">Made by FreeSize Hub {}. Sizes are space on disk.</footer></body></html>",
         env!("CARGO_PKG_VERSION")
     ));
     out
@@ -1106,7 +1106,7 @@ fn unpack(bytes: &[u8]) -> ApiResult<Vec<u8>> {
         .map_err(|e| ApiError::bad_request(format!("couldn't unpack the file: {e}")))?;
     if out.len() > MAX_UPLOAD {
         return Err(ApiError::bad_request(format!(
-            "the scan file is over {} unpacked; run the DiskTree agent on that machine instead",
+            "the scan file is over {} unpacked; run the FreeSize agent on that machine instead",
             format_size(MAX_UPLOAD as u64)
         )));
     }
@@ -1115,7 +1115,7 @@ fn unpack(bytes: &[u8]) -> ApiResult<Vec<u8>> {
 
 /// `POST /api/devices/{id}/scans?label=Name`: a scan file for a device
 /// without an agent: `ncdu -o` output (ncdu 1.x, or ncdu 2's JSON export)
-/// or DiskTree's own export, plain or gzipped.
+/// or FreeSize's own export, plain or gzipped.
 pub async fn upload_scan(
     State(state): State<AppState>,
     Admin(user): Admin,
@@ -1130,7 +1130,7 @@ pub async fn upload_scan(
     // Reading a big scan takes a while: off the async threads.
     let report = tokio::task::spawn_blocking(move || -> ApiResult<_> {
         let text = unpack(&body)?;
-        let (tree, taken) = disktree_core::ncdu::import_with_time(text.as_slice())
+        let (tree, taken) = freesize_core::ncdu::import_with_time(text.as_slice())
             .map_err(|e| ApiError::bad_request(e.to_string()))?;
         let now = now();
         let taken = taken.filter(|&t| t <= now + 86_400).unwrap_or(now);
@@ -1146,7 +1146,7 @@ pub async fn upload_scan(
         } else {
             label
         };
-        Ok(disktree_agent::report::scan_report(
+        Ok(freesize_agent::report::scan_report(
             &tree, &label, taken, errors, true,
         ))
     })
@@ -1227,7 +1227,7 @@ mod tests {
             "Robert-s-Pixel-Internal-storage-2026-10-12.csv"
         );
         assert_eq!(file_name(&["../../etc", ""], "json"), "etc.json");
-        assert_eq!(file_name(&["ÄÖÜ"], "csv"), "disktree.csv");
+        assert_eq!(file_name(&["ÄÖÜ"], "csv"), "freesize.csv");
     }
 
     #[test]

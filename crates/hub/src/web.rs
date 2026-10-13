@@ -52,7 +52,7 @@ pub fn page(status: StatusCode, title: &str, message: &str) -> Response {
     let body = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <title>{title} · DiskTree Hub</title><link rel=\"stylesheet\" href=\"/app.css\">\
+         <title>{title} · FreeSize Hub</title><link rel=\"stylesheet\" href=\"/app.css\">\
          <link rel=\"icon\" href=\"/icon.svg\"></head><body class=\"plain\"><main class=\"notice\">\
          <h1>{title}</h1><p>{message}</p><p><a class=\"button\" href=\"/\">Back to the Hub</a></p>\
          </main></body></html>",

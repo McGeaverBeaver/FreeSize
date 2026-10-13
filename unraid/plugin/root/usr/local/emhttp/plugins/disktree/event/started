@@ -1,3 +1,0 @@
-#!/bin/bash
-# The array started: make sure DiskTree runs (it looks at the disks itself).
-/etc/rc.d/rc.disktree start >/dev/null

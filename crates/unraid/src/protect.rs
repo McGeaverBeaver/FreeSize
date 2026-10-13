@@ -10,8 +10,8 @@
 
 use std::path::{Path, PathBuf};
 
-use disktree_agent::commands::Guard;
-use disktree_agent::quarantine::{Place, Places, QUARANTINE_DIR, filesystem_root};
+use freesize_agent::commands::Guard;
+use freesize_agent::quarantine::{Place, Places, QUARANTINE_DIR, filesystem_root};
 
 use crate::System;
 use crate::array::{Array, mounts};
@@ -111,7 +111,7 @@ pub fn rules(
 pub fn check(rules: &[Rule], path: &str) -> Option<String> {
     let path = path.trim_end_matches('/');
     if path.split('/').any(|part| part == QUARANTINE_DIR) {
-        return Some("DiskTree's quarantine; empty or put back from there".into());
+        return Some("FreeSize's quarantine; empty or put back from there".into());
     }
     let user = user_path(path);
     let candidates = [path, user.as_str()];
@@ -284,7 +284,7 @@ impl Places for UnraidPlaces {
 mod tests {
     use super::*;
     use crate::array::{self, tests::server};
-    use disktree_agent::quarantine::Quarantine;
+    use freesize_agent::quarantine::Quarantine;
 
     fn setup_rules(system: &System) -> Vec<Rule> {
         let array = array::read(system);

@@ -1,5 +1,5 @@
 [package]
-name = "disktree-core"
+name = "freesize-core"
 description = "Parallel disk usage scanner, compact tree model and treemap layout"
 version.workspace = true
 edition.workspace = true

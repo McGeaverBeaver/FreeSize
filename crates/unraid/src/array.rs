@@ -1,7 +1,7 @@
 //! The array and pools, from Unraid's own state (`disks.ini`), so nothing
 //! has to touch a disk to learn about it, and sleeping disks stay asleep.
 
-use disktree_proto::unraid::{ArrayDisk, DiskKind};
+use freesize_proto::unraid::{ArrayDisk, DiskKind};
 
 use crate::System;
 use crate::ini::{parse_cfg, parse_ini};

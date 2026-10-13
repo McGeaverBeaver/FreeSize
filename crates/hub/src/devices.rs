@@ -11,12 +11,12 @@ use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
-use disktree_proto::keys::random_id;
-use disktree_proto::pairing::code_hash;
-use disktree_proto::signing::{
+use freesize_proto::keys::random_id;
+use freesize_proto::pairing::code_hash;
+use freesize_proto::signing::{
     DEVICE_HEADER, MAX_SKEW, NONCE_HEADER, SIGNATURE_HEADER, TIME_HEADER, verify_request,
 };
-use disktree_proto::{
+use freesize_proto::{
     DeviceInfo, DeviceKey, Hello, PROTOCOL, PairRequest, PairResponse, Platform, PollRequest,
     PollResponse, PublicKey, Purpose, Report, RequestSignature, ScanReport, Signed,
 };

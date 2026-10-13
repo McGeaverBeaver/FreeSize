@@ -1,0 +1,114 @@
+/* FreeSize for Unraid. Colours come from Unraid's theme where they can, so
+   the page fits the white, black, azure and gray themes alike. */
+.freesize { --dt-line: rgba(128, 128, 128, 0.28); --dt-soft: rgba(128, 128, 128, 0.1); --dt-accent: #4f7ddb; max-width: 1200px; }
+.freesize h3 { margin: 22px 0 8px; font-size: 1.15em; }
+.freesize h4 { margin: 16px 0 6px; }
+.freesize p { margin: 4px 0 8px; text-align: left; }
+.freesize .dt-muted { opacity: 0.72; font-size: 0.92em; }
+.freesize .dt-path { word-break: break-all; }
+.freesize .dt-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.freesize .dt-head > div:first-child { flex: 1 1 360px; }
+.freesize .dt-table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; }
+.freesize .dt-table th { text-align: left; font-weight: 600; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.7; padding: 6px 8px; border-bottom: 1px solid var(--dt-line); }
+.freesize .dt-table td { padding: 7px 8px; border-bottom: 1px solid var(--dt-line); vertical-align: top; }
+/* Unraid keeps every table cell on one tall line (nowrap, 2.6rem), which
+   pushed long paths and the buttons past the page's edge. */
+.freesize .dt-table td, .freesize .dt-table th { white-space: normal; line-height: 1.45; height: auto; }
+.freesize .dt-table .dt-num { text-align: right; white-space: nowrap; }
+.freesize .dt-table .dt-wide { width: 50%; }
+.freesize .dt-table .dt-name { min-width: 140px; }
+.freesize .dt-actions { white-space: nowrap; text-align: right; }
+.freesize .dt-actions > * { margin-left: 6px; }
+/* Lists of findings: what and why, the size, then the buttons, in columns
+   shared by all rows of a list. */
+.freesize .dt-group { margin: 14px 0 18px; }
+.freesize .dt-group-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.freesize .dt-group > summary { cursor: pointer; padding: 4px 0; }
+.freesize .dt-group > .dt-muted { margin: 2px 0 6px; }
+.freesize .dt-rows { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; border-top: 1px solid var(--dt-line); }
+.freesize .dt-rows.dt-pickable { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.freesize .dt-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; column-gap: 16px; align-items: start; padding: 8px; line-height: 1.45; border-bottom: 1px solid var(--dt-line); }
+.freesize .dt-row:hover { background: var(--dt-soft); }
+.freesize .dt-row .dt-pick input { margin: 3px 0 0; }
+.freesize .dt-label, .freesize .dt-row .dt-path { overflow-wrap: anywhere; word-break: normal; }
+.freesize .dt-size { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.freesize .dt-row .dt-actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; }
+.freesize .dt-row .dt-actions > * { margin: 0; }
+.freesize .dt-row button, .freesize .dt-group-head button { margin: 0; padding: 5px 10px; }
+.freesize .dt-busy { display: flex; gap: 12px; align-items: flex-start; }
+.freesize .dt-spinner { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 2px solid var(--dt-line); border-top-color: var(--dt-accent); border-radius: 50%; animation: dt-spin 0.9s linear infinite; }
+@keyframes dt-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .freesize .dt-spinner { animation: none; } }
+.freesize .dt-bar { height: 8px; border-radius: 4px; background: var(--dt-soft); overflow: hidden; min-width: 120px; margin-top: 5px; }
+.freesize .dt-bar > span { display: block; height: 100%; background: var(--dt-accent); }
+.freesize .dt-stack { display: flex; height: 12px; border-radius: 4px; overflow: hidden; background: var(--dt-soft); margin-top: 3px; }
+.freesize .dt-stack > span { display: block; height: 100%; min-width: 2px; }
+.freesize .dt-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+.freesize .dt-badge { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 0.8em; white-space: nowrap; background: var(--dt-soft); }
+.freesize .dt-safe { background: rgba(58, 165, 122, 0.2); color: #2b8a62; }
+.freesize .dt-badge.dt-check { background: rgba(208, 138, 46, 0.2); color: #b06f17; }
+.freesize .dt-protected { background: rgba(128, 128, 128, 0.18); }
+.freesize .dt-note, .dt-dialog .dt-note { padding: 8px 12px; border-radius: 6px; background: rgba(79, 125, 219, 0.12); margin: 8px 0; }
+.freesize .dt-note.dt-bad, .dt-dialog .dt-note.dt-bad { background: rgba(208, 84, 79, 0.15); }
+.freesize .dt-note ul { margin: 4px 0 4px 18px; padding: 0; }
+.freesize .dt-warn li { color: #b06f17; }
+.freesize .dt-facts { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.freesize .dt-fact { flex: 1 1 200px; border: 1px solid var(--dt-line); border-radius: 6px; padding: 10px 12px; }
+.freesize .dt-link { font-size: 0.9em; }
+.freesize .dt-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin: 8px 0; }
+.freesize .dt-form label { display: flex; flex-direction: column; gap: 3px; font-size: 0.9em; }
+.freesize .dt-form .dt-grow { flex: 1 1 280px; }
+.freesize .dt-form input, .freesize .dt-form select, .freesize .dt-form textarea { margin: 0; min-width: 0; width: 100%; box-sizing: border-box; }
+.freesize .dt-form textarea { font-family: monospace; }
+.freesize .dt-key { font-family: monospace; text-transform: uppercase; max-width: 220px; }
+.freesize .dt-settings { display: grid; grid-template-columns: max-content max-content; gap: 8px 16px; align-items: center; }
+.freesize .dt-settings label { display: contents; }
+.freesize .dt-settings input[type=number] { width: 70px; margin: 0 6px 0 0; }
+.freesize .dt-settings select { margin: 0; justify-self: start; }
+.freesize .dt-card { border: 1px solid var(--dt-line); border-radius: 6px; padding: 10px 12px; margin: 10px 0; }
+.freesize .dt-list, .dt-dialog .dt-list { margin: 6px 0; padding-left: 18px; }
+.freesize .dt-list li, .dt-dialog .dt-list li { margin: 3px 0; }
+.freesize .dt-details { margin: 6px 0; }
+.freesize .dt-details summary { cursor: pointer; }
+.freesize .dt-browse, .dt-dialog .dt-browse { font-size: 0.9em; white-space: nowrap; }
+.freesize button.dt-primary, .dt-dialog button.dt-primary { font-weight: 600; }
+.freesize button.dt-danger, .dt-dialog button.dt-danger { color: #c0392b; }
+.freesize button:disabled, .dt-dialog button:disabled { opacity: 0.5; cursor: default; }
+.dt-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.dt-dialog { background: var(--background-color, #fff); color: var(--text-color, #222); border-radius: 8px; padding: 18px 20px; max-width: 640px; width: 100%; max-height: 85vh; overflow: auto; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); }
+.dt-dialog h3 { margin: 0 0 10px; }
+.dt-dialog .dt-muted { opacity: 0.72; font-size: 0.92em; }
+.dt-dialog .dt-path { word-break: break-all; }
+.dt-dialog .dt-scroll { max-height: 40vh; overflow: auto; }
+.dt-dialog .dt-field { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; }
+.dt-dialog .dt-field input { margin: 0; width: 100%; box-sizing: border-box; }
+.dt-dialog .dt-tick { display: block; margin: 12px 0 4px; font-weight: 600; }
+.dt-dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.dt-toast { position: fixed; right: 20px; bottom: 20px; z-index: 10001; max-width: 420px; padding: 10px 14px; border-radius: 6px; color: #fff; background: #4f7ddb; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); white-space: pre-line; }
+.dt-toast.dt-good { background: #2b8a62; }
+.dt-toast.dt-bad { background: #c0392b; }
+@media (max-width: 700px) {
+  .freesize .dt-table .dt-wide { width: auto; }
+  /* The buttons go under what they're for. */
+  .freesize .dt-rows { grid-template-columns: minmax(0, 1fr) auto; }
+  .freesize .dt-rows.dt-pickable { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .freesize .dt-row .dt-actions { grid-column: -3 / -1; justify-content: flex-start; margin-top: 6px; }
+  .freesize .dt-row .dt-actions:empty { display: none; }
+  .freesize .dt-settings { grid-template-columns: 1fr; }
+}
+/* Moving between disks: the disks to move from, and the folder picker. */
+.freesize .dt-form .dt-field { display: flex; flex-direction: column; gap: 3px; font-size: 0.9em; }
+.freesize .dt-chips { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 0; font-size: 1.1em; }
+.freesize .dt-form label.dt-chip { flex-direction: row; align-items: center; gap: 5px; font-size: 1em; white-space: nowrap; cursor: pointer; }
+.freesize .dt-chip input { margin: 0; width: auto; }
+.freesize .dt-chip:has(input:disabled) { opacity: 0.45; cursor: default; }
+.freesize .dt-form > button { margin: 0; }
+.dt-dialog .dt-crumbs { margin: 0 0 4px; overflow-wrap: anywhere; }
+.dt-dialog .dt-picker { border-top: 1px solid rgba(128, 128, 128, 0.28); }
+.dt-dialog .dt-pick-row { display: flex; gap: 12px; align-items: center; padding: 6px 4px; border-bottom: 1px solid rgba(128, 128, 128, 0.28); }
+.dt-dialog .dt-pick-row > a { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.dt-dialog .dt-pick-row > span { white-space: nowrap; }
+.dt-dialog .dt-pick-row button, .dt-dialog .dt-muted button { margin: 0; padding: 3px 10px; }
+.freesize .dt-inline { display: flex; gap: 10px; align-items: center; }
+.freesize .dt-inline button { margin: 0; flex: none; }
+.dt-dialog p { text-align: left; }

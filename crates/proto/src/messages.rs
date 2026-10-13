@@ -14,7 +14,7 @@
 //! Everything but `hello` and `pair` is a signed device request (see
 //! [`crate::signing`]).
 
-use disktree_core::snapshot::FolderSize;
+use freesize_core::snapshot::FolderSize;
 use serde::{Deserialize, Serialize};
 
 use crate::keys::PublicKey;
@@ -136,7 +136,7 @@ pub struct DeviceInfo {
     pub os: String,
     #[serde(default)]
     pub hostname: String,
-    /// "DiskTree app 0.7.0", "DiskTree agent 0.7.0".
+    /// "FreeSize app 0.7.0", "FreeSize agent 0.7.0".
     #[serde(default)]
     pub app: String,
     /// The actions this device can carry out.
@@ -279,7 +279,7 @@ pub struct AppEntry {
     /// "Play Store", "downloaded file", …
     #[serde(default)]
     pub source: String,
-    /// Whether DiskTree would suggest it for removal at all.
+    /// Whether FreeSize would suggest it for removal at all.
     #[serde(default)]
     pub removable: bool,
 }
@@ -399,11 +399,11 @@ impl Action {
                     1 => paths[0].clone(),
                     n => format!("{n} items"),
                 },
-                disktree_core::format_size(*bytes)
+                freesize_core::format_size(*bytes)
             ),
             Action::Uninstall { label, package } => format!("Uninstall {label} ({package})"),
             Action::CleanJunk { label, bytes, .. } => {
-                format!("{label} ({})", disktree_core::format_size(*bytes))
+                format!("{label} ({})", freesize_core::format_size(*bytes))
             }
             Action::Restore { label, .. } => format!("Put back {label}"),
             Action::EmptyQuarantine { batches, bytes } => format!(
@@ -412,7 +412,7 @@ impl Action {
                     1 => "1 batch".to_string(),
                     n => format!("{n} batches"),
                 },
-                disktree_core::format_size(*bytes)
+                freesize_core::format_size(*bytes)
             ),
             Action::DockerCleanup { labels, bytes, .. } => format!(
                 "Remove {} from Docker ({})",
@@ -420,7 +420,7 @@ impl Action {
                     1 => labels[0].clone(),
                     n => format!("{n} items"),
                 },
-                disktree_core::format_size(*bytes)
+                freesize_core::format_size(*bytes)
             ),
         }
     }

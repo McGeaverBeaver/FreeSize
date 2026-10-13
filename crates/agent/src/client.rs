@@ -1,10 +1,10 @@
 //! Talking to the Hub as a paired device: every request signed with the
 //! device's key.
 
-use disktree_proto::signing::{
+use freesize_proto::signing::{
     DEVICE_HEADER, NONCE_HEADER, SIGNATURE_HEADER, TIME_HEADER, sign_request,
 };
-use disktree_proto::{
+use freesize_proto::{
     CommandUpdate, Decision, DeviceInfo, DeviceKey, ErrorBody, Hello, KeyPair, PROTOCOL,
     PairRequest, PairResponse, PairingLink, PollRequest, PollResponse, Purpose, Report, Signed,
 };
@@ -83,7 +83,7 @@ pub fn hello(transport: &dyn Transport, hub: &str) -> AgentResult<Hello> {
     let hello: Hello = decode(status, &body)?;
     if hello.protocol != PROTOCOL {
         return Err(AgentError::new(format!(
-            "this Hub speaks a different version (protocol {}); update DiskTree",
+            "this Hub speaks a different version (protocol {}); update FreeSize",
             hello.protocol
         )));
     }
@@ -258,7 +258,7 @@ impl<'a> Client<'a> {
             "GET",
             &format!(
                 "/api/v1/devices/{}",
-                disktree_proto::pairing::encode(&fingerprint)
+                freesize_proto::pairing::encode(&fingerprint)
             ),
             None,
             TIMEOUT,

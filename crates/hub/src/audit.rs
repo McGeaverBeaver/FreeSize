@@ -2,7 +2,7 @@
 //! only ever added. Each one carries the hash of the one before, so changing
 //! or removing an entry breaks the chain from there on, which `verify` finds.
 
-use disktree_proto::keys::sha256_hex;
+use freesize_proto::keys::sha256_hex;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;

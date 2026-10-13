@@ -1,27 +1,27 @@
-# DiskTree Hub as a system service on Linux.
+# FreeSize Hub as a system service on Linux.
 #
-#   sudo install -m 755 disktree-hub /usr/local/bin/
-#   sudo install -m 644 disktree-hub.service /etc/systemd/system/
-#   sudo install -m 600 disktree-hub.env /etc/disktree-hub.env   # then fill it in
-#   sudo systemctl enable --now disktree-hub
+#   sudo install -m 755 freesize-hub /usr/local/bin/
+#   sudo install -m 644 freesize-hub.service /etc/systemd/system/
+#   sudo install -m 600 freesize-hub.env /etc/freesize-hub.env   # then fill it in
+#   sudo systemctl enable --now freesize-hub
 #
-# The database and key live in /var/lib/disktree-hub; back that folder up.
+# The database and key live in /var/lib/freesize-hub; back that folder up.
 [Unit]
-Description=DiskTree Hub
+Description=FreeSize Hub
 Documentation=https://github.com/McGeaverBeaver/FreeSize
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-EnvironmentFile=/etc/disktree-hub.env
-Environment=DISKTREE_HUB_DATA=/var/lib/disktree-hub
-ExecStart=/usr/local/bin/disktree-hub
+EnvironmentFile=/etc/freesize-hub.env
+Environment=FREESIZE_HUB_DATA=/var/lib/freesize-hub
+ExecStart=/usr/local/bin/freesize-hub
 Restart=on-failure
 RestartSec=5
 
 # Its own user, made when it starts, and nothing it doesn't need.
 DynamicUser=yes
-StateDirectory=disktree-hub
+StateDirectory=freesize-hub
 StateDirectoryMode=0700
 NoNewPrivileges=yes
 ProtectSystem=strict

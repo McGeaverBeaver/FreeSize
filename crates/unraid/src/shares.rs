@@ -5,8 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use disktree_core::{SizeMode, Tree};
-use disktree_proto::unraid::{Placement, ShareUse};
+use freesize_core::{SizeMode, Tree};
+use freesize_proto::unraid::{Placement, ShareUse};
 use serde::{Deserialize, Serialize};
 
 use crate::System;
@@ -69,7 +69,7 @@ pub fn tops_of(tree: &Tree) -> BTreeMap<String, u64> {
         .filter(|&id| tree.node(id).is_dir())
         .filter_map(|id| {
             let name = tree.name(id).into_owned();
-            // DiskTree's quarantine and other hidden folders aren't shares.
+            // FreeSize's quarantine and other hidden folders aren't shares.
             (!name.starts_with('.')).then(|| (name, tree.node(id).size_in(SizeMode::Allocated)))
         })
         .collect()
@@ -193,12 +193,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("Movies/2024")).unwrap();
         std::fs::write(dir.path().join("Movies/2024/a.mkv"), vec![1u8; 100_000]).unwrap();
-        std::fs::create_dir_all(dir.path().join(".disktree")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".freesize")).unwrap();
         std::fs::write(dir.path().join("loose.txt"), b"x").unwrap();
-        let tree = disktree_core::scan(
+        let tree = freesize_core::scan(
             dir.path(),
-            &disktree_core::ScanOptions::default(),
-            &disktree_core::ScanProgress::new(),
+            &freesize_core::ScanOptions::default(),
+            &freesize_core::ScanProgress::new(),
         )
         .unwrap()
         .tree;

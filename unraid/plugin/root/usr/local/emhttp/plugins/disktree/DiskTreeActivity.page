@@ -1,5 +1,0 @@
-Menu="DiskTree:4"
-Title="Disk activity"
----
-<?require_once "$docroot/plugins/disktree/include/page.php";?>
-<div class="disktree" id="dt-activity"><p class="dt-muted">Loading…</p></div>

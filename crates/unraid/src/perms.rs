@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use disktree_proto::unraid::PermissionIssue;
+use freesize_proto::unraid::PermissionIssue;
 
 use crate::System;
 use crate::array::Array;

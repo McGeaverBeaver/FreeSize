@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-use disktree_core::{NodeId, Tree};
+use freesize_core::{NodeId, Tree};
 use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 
 use crate::owners::Pixels;
@@ -459,7 +459,7 @@ fn read_tiff(bytes: &[u8], tiff: usize, end: usize, found: &mut Exif) {
 mod tests {
     use std::fs;
 
-    use disktree_core::{ScanOptions, ScanProgress, scan};
+    use freesize_core::{ScanOptions, ScanProgress, scan};
     use image::{GrayImage, Luma, RgbImage};
 
     use super::*;
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn groups_photos_that_look_alike() {
-        let dir = std::env::temp_dir().join(format!("disktree-similar-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("freesize-similar-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("Camera")).unwrap();
         fs::create_dir_all(dir.join(".thumbnails")).unwrap();
