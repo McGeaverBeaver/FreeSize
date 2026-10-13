@@ -106,6 +106,10 @@ async fn the_approver_decides_for_a_server() {
         };
         let made = ask(&mut admin, "isos/old.iso");
         assert_eq!(made.status, 200, "{}", made.body);
+        // Only what the newest scan listed can be named.
+        let unknown = ask(&mut admin, "isos/never-scanned.iso");
+        assert_eq!(unknown.status, 400, "{}", unknown.body);
+        assert!(unknown.body.contains("newest scan"), "{}", unknown.body);
 
         // The server gets it and asks its approver.
         let poll = Client::new(&server, &transport).poll(1).unwrap();

@@ -126,7 +126,9 @@ pub fn consider(
         signed: signed.clone(),
         targets,
     };
-    if let Some(grant) = state.grant_for(&request.command.by.subject, kind, now) {
+    if kind.grantable()
+        && let Some(grant) = state.grant_for(&request.command.by.subject, kind, now)
+    {
         let approval = Approval {
             by: ApprovedBy::Grant {
                 expires: grant.expires,
@@ -150,8 +152,12 @@ pub fn consider(
     }
 }
 
-/// The grant lengths to offer for a command: the Hub's, capped.
+/// The grant lengths to offer for a command: the Hub's, capped; none for
+/// what can't be undone.
 pub fn offered_minutes(command: &Command) -> Vec<u32> {
+    if !command.action.kind().grantable() {
+        return Vec::new();
+    }
     let mut minutes: Vec<u32> = command
         .grant_minutes
         .iter()
@@ -187,6 +193,8 @@ pub fn decide(
             return None;
         }
         Choice::Once => 0,
+        // A grant for what can't be undone is never kept: this once only.
+        Choice::For(_) if !request.command.action.kind().grantable() => 0,
         Choice::For(m) => m.min(MAX_GRANT_MINUTES),
     };
     if minutes > 0 {
@@ -247,6 +255,19 @@ pub fn delete_targets(
     let real_root = root
         .canonicalize()
         .map_err(|e| format!("{}: {e}", root.display()))?;
+    // The folder itself may be a link: it must still lead inside a scanned
+    // folder once resolved, or a link to anywhere would open everything.
+    let really_inside = policy.roots.iter().any(|scanned| {
+        scanned
+            .canonicalize()
+            .is_ok_and(|real| real_root == real || real_root.starts_with(&real))
+    });
+    if !really_inside {
+        return Err(format!(
+            "{} leads outside the folders this device scans",
+            root.display()
+        ));
+    }
     if paths.is_empty() {
         return Err("nothing to delete".into());
     }
@@ -659,7 +680,7 @@ mod tests {
         );
         let policy = Policy {
             attended,
-            actions: vec![ActionKind::Delete],
+            actions: vec![ActionKind::Delete, ActionKind::Empty],
             roots: vec![dir.join("share")],
             keep: vec![],
             guards: Guards::default(),
@@ -731,6 +752,38 @@ mod tests {
             Verdict::Ask(..)
         ));
 
+        // The grant never covers emptying the quarantine: that is asked
+        // for every time, and "approve for N minutes" on it means once.
+        let empty = Signed::sign(
+            &Command {
+                action: Action::EmptyQuarantine {
+                    batches: vec!["b1".into()],
+                    bytes: 10,
+                },
+                ..next.peek().unwrap()
+            },
+            &s.hub,
+            Purpose::Command,
+        );
+        let Verdict::Ask(asked) = consider(&s.state, &empty, &s.policy, 600) else {
+            panic!("emptying the quarantine must be asked for, grant or not");
+        };
+        assert!(offered_minutes(&asked.command).is_empty());
+        let once = decide(
+            &mut s.state,
+            &asked,
+            Choice::For(30),
+            ApprovedBy::Device,
+            600,
+        )
+        .unwrap();
+        assert_eq!(once.minutes, 0);
+        assert!(
+            s.state
+                .grant_for("admin-1", ActionKind::Empty, 601)
+                .is_none()
+        );
+
         let lines = describe(&request.command, Some("Tower"));
         assert!(lines[0].starts_with("Robert asks to permanently delete 2 items"));
         assert_eq!(lines.last().unwrap(), "Reason: space");
@@ -765,6 +818,20 @@ mod tests {
                 consider(&s.state, &command(&s, "C3", &["link"]), &s.policy, 500),
                 Verdict::Ask(..)
             ));
+            // A scanned folder that is itself a link to somewhere else
+            // doesn't make that place deletable.
+            let mut through_link = command(&s, "C6", &["precious.txt"]).peek().unwrap();
+            through_link.action = Action::Delete {
+                root: s.dir.join("share/link").to_string_lossy().into_owned(),
+                paths: vec!["precious.txt".into()],
+                bytes: 4,
+            };
+            let signed = Signed::sign(&through_link, &s.hub, Purpose::Command);
+            assert!(matches!(
+                consider(&s.state, &signed, &s.policy, 500),
+                Verdict::Refuse { reason, .. } if reason.contains("leads outside")
+            ));
+            assert!(s.dir.join("outside/precious.txt").exists());
         }
         // Expired.
         assert!(matches!(

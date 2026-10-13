@@ -80,6 +80,10 @@ pub enum ActionKind {
     Clean,
     /// Put quarantined files back.
     Restore,
+    /// Delete quarantined batches for good. Never covered by a grant.
+    Empty,
+    /// Remove Docker images or build cache. Never covered by a grant.
+    Docker,
     /// One a newer device or Hub knows and this one doesn't.
     #[serde(other)]
     Unknown,
@@ -92,8 +96,21 @@ impl ActionKind {
             ActionKind::Uninstall => "uninstall apps",
             ActionKind::Clean => "clean up junk",
             ActionKind::Restore => "put back files",
+            ActionKind::Empty => "empty the quarantine",
+            ActionKind::Docker => "remove Docker images",
             ActionKind::Unknown => "do something this version doesn't know",
         }
+    }
+
+    /// Whether "approve for N minutes" may cover this kind. What can't be
+    /// put back (emptying the quarantine, removing images) is asked for
+    /// every time, with the paths shown, however long a grant for deleting
+    /// is still running.
+    pub fn grantable(self) -> bool {
+        matches!(
+            self,
+            ActionKind::Delete | ActionKind::Uninstall | ActionKind::Clean | ActionKind::Restore
+        )
     }
 }
 
@@ -368,8 +385,8 @@ impl Action {
             Action::Uninstall { .. } => ActionKind::Uninstall,
             Action::CleanJunk { .. } => ActionKind::Clean,
             Action::Restore { .. } => ActionKind::Restore,
-            Action::EmptyQuarantine { .. } => ActionKind::Delete,
-            Action::DockerCleanup { .. } => ActionKind::Clean,
+            Action::EmptyQuarantine { .. } => ActionKind::Empty,
+            Action::DockerCleanup { .. } => ActionKind::Docker,
         }
     }
 

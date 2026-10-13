@@ -443,7 +443,7 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
               device.approver_name ? h("strong", {}, device.approver_name) : "a device", " (key ", h("span", { class: "mono" }, info.approver), ")."]
           : "Nobody is at this device and it has no approver yet, so it can't be asked to do anything.",
         (info.grants || []).filter((g) => g.expires * 1000 > Date.now()).map((g) =>
-          h("span", { class: "badge accent", style: "margin-left:8px" }, `${g.admin_name} may ${g.kind === "delete" ? "delete files" : g.kind === "uninstall" ? "uninstall apps" : "clean up"} until ${new Date(g.expires * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)))),
+          h("span", { class: "badge accent", style: "margin-left:8px" }, `${g.admin_name} may ${g.kind === "delete" ? "delete files" : g.kind === "uninstall" ? "uninstall apps" : g.kind === "restore" ? "put back files" : "clean up"} until ${new Date(g.expires * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)))),
     h("div", { class: "row" },
       state.me.admin && device.agentless ? h("button", { class: "primary", onclick: () => uploadDialog(device) }, "Upload a scan") : null,
       h("a", { class: "button", href: `/api/devices/${encodeURIComponent(id)}/report`, target: "_blank", rel: "noopener" }, "Report"),
@@ -710,7 +710,7 @@ function bytesAgo(secs) {
 function findingRow(device, f) {
   const [label, tone] = SAFETY[f.safety] || ["", ""];
   let ask = null;
-  if (canDo(device, "clean") && f.safety !== "protected" && ["image", "dangling_image", "build_cache"].includes(f.kind)) {
+  if (canDo(device, "docker") && f.safety !== "protected" && ["image", "dangling_image", "build_cache"].includes(f.kind)) {
     ask = h("button", { class: "small", onclick: () => requestDialog(device,
       { type: "docker_cleanup", items: [f.id], labels: [f.label], bytes: f.bytes },
       [`Remove ${f.label} from Docker (${size(f.bytes)})`, f.reason]) }, "Remove…");
@@ -777,7 +777,7 @@ function deviceUnraid(device) {
     const safeBytes = safe.reduce((sum, f) => sum + f.bytes, 0);
     sections.push(h("div", { class: "card" },
       h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Docker"),
-        safe.length && canDo(device, "clean") ? h("button", { class: "small", onclick: () => requestDialog(device,
+        safe.length && canDo(device, "docker") ? h("button", { class: "small", onclick: () => requestDialog(device,
           { type: "docker_cleanup", items: safe.map((f) => f.id), labels: safe.map((f) => f.label), bytes: safeBytes },
           [`Remove what's safe to remove (${size(safeBytes)}):`, ...safe.map((f) => `${f.label} (${size(f.bytes)})`)]) },
           `Remove all safe (${size(safeBytes)})…`) : null),
@@ -838,7 +838,7 @@ function deviceQuarantine(device) {
         h("p", { class: "dim small", style: "margin:4px 0 0" }, batches.length
           ? `${count(batches.length, "batch", "batches")}, ${size(total)}. Their space is freed only when the quarantine is emptied.`
           : "Empty. Deleting on this device moves things here first.")),
-      batches.length && canDo(device, "delete") ? h("button", { onclick: () => requestDialog(device,
+      batches.length && canDo(device, "empty") ? h("button", { onclick: () => requestDialog(device,
         { type: "empty_quarantine", batches: batches.map((b) => b.id), bytes: total },
         [`Empty the whole quarantine for good (${size(total)}):`, ...batches.flatMap((b) => b.items.slice(0, 20).map((i) => i.original))]) },
         "Empty all…") : null),
@@ -849,7 +849,7 @@ function deviceQuarantine(device) {
         h("div", { class: "dim small" }, `${date(b.when)} · by ${b.by || "the device"}${b.reason ? ` · ${b.reason}` : ""}`)),
       canDo(device, "restore") ? h("button", { class: "small", onclick: () => requestDialog(device,
         { type: "restore", batch: b.id, label: "" }, ["Put back where they were:", ...b.items.map((i) => i.original)]) }, "Put back…") : null,
-      canDo(device, "delete") ? h("button", { class: "small", onclick: () => requestDialog(device,
+      canDo(device, "empty") ? h("button", { class: "small", onclick: () => requestDialog(device,
         { type: "empty_quarantine", batches: [b.id], bytes: b.bytes },
         [`Delete for good (${size(b.bytes)}):`, ...b.items.map((i) => i.original)]) }, "Empty…") : null),
     h("div", { class: "paths", style: "margin-top:8px" }, b.items.slice(0, 10).map((i) => h("div", {}, i.original, h("span", { class: "dim" }, ` · ${size(i.bytes)}`))),
@@ -1344,8 +1344,15 @@ function requestDialog(device, action, lines) {
 
 function canDo(device, kind) {
   const info = device.info || {};
+  const actions = info.actions || [];
+  // Devices from 0.8.3 don't name the kinds split off in 0.8.4: one that
+  // puts back can empty its quarantine, a server that cleans removes
+  // Docker images.
+  const can = actions.includes(kind)
+    || (kind === "empty" && actions.includes("restore"))
+    || (kind === "docker" && actions.includes("clean") && !info.attended);
   // A device nobody is at, without an approver, can't be asked anything.
-  return state.me.admin && (info.actions || []).includes(kind) && (info.attended || Boolean(info.approver));
+  return state.me.admin && can && (info.attended || Boolean(info.approver));
 }
 
 /** A bar under a list for asking to delete the checked items. */

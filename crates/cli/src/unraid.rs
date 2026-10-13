@@ -27,8 +27,8 @@ use disktree_unraid::array::{self, Array};
 use disktree_unraid::docker::{self, Engine, Inventory};
 use disktree_unraid::protect::{self, Rule, UnraidGuard, UnraidPlaces};
 use disktree_unraid::round::{self, Round, Settings};
-use disktree_unraid::shares::{self, DiskTops};
-use disktree_unraid::{System, ini, mover, vms};
+use disktree_unraid::shares::DiskTops;
+use disktree_unraid::{System, ini, mover};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{Outcome, handle, log};
@@ -274,37 +274,10 @@ fn own_rules(dirs: &Dirs) -> Vec<Rule> {
         .unwrap_or_default()
 }
 
-/// What must never be deleted, worked out now (without scanning).
+/// What must never be deleted, worked out now (without scanning), with
+/// the owner's own list.
 fn current_rules(dirs: &Dirs, array: &Array) -> (Vec<Rule>, Option<Inventory>) {
-    let system = &dirs.system;
-    let docker_cfg = docker::config(system);
-    let engine = Engine::new(system);
-    let inventory = engine
-        .available()
-        .then(|| docker::inventory(&engine, system).ok())
-        .flatten();
-    let vm_cfg = vms::config(system);
-    let definitions = vms::definitions(system);
-    let mut share_names: Vec<String> = shares::read(system).into_iter().map(|s| s.name).collect();
-    for (_, mount) in array.file_disks() {
-        if let Ok(entries) = std::fs::read_dir(system.file(mount)) {
-            share_names.extend(
-                entries
-                    .flatten()
-                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .filter(|n| !n.starts_with('.')),
-            );
-        }
-    }
-    share_names.sort();
-    share_names.dedup();
-    let mut rules = protect::rules(
-        array,
-        &share_names,
-        (&docker_cfg, inventory.as_ref()),
-        (&vm_cfg, definitions.as_deref()),
-    );
+    let (mut rules, inventory) = protect::current(&dirs.system, array);
     rules.extend(own_rules(dirs));
     (rules, inventory)
 }
@@ -778,7 +751,11 @@ impl Daemon {
         report
     }
 
-    fn policy(&self, array: &Array) -> Policy {
+    /// The policy for a request arriving now, with the rules worked out
+    /// now: a container installed since the last round protects its
+    /// appdata at once, not at the next round. Also what Docker has now,
+    /// for removing images.
+    fn policy(&self, array: &Array) -> (Policy, Option<Inventory>) {
         let system = &self.dirs.system;
         let mut roots: Vec<PathBuf> = array
             .file_disks()
@@ -786,17 +763,15 @@ impl Daemon {
             .map(|(_, mount)| system.file(mount))
             .collect();
         roots.push(system.file("/mnt/user"));
-        let rules = match &self.round {
-            Some(round) => {
-                let mut rules = round.rules.clone();
-                rules.extend(own_rules(&self.dirs));
-                rules
-            }
-            None => current_rules(&self.dirs, array).0,
-        };
-        Policy {
+        let (rules, inventory) = current_rules(&self.dirs, array);
+        let policy = Policy {
             attended: false,
-            actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Clean],
+            actions: vec![
+                ActionKind::Delete,
+                ActionKind::Restore,
+                ActionKind::Empty,
+                ActionKind::Docker,
+            ],
             roots,
             keep: vec![self.dirs.state(), self.dirs.config.clone()],
             guards: Guards(vec![
@@ -808,7 +783,8 @@ impl Daemon {
                     rules,
                 }),
             ]),
-        }
+        };
+        (policy, inventory)
     }
 
     /// Sends a report to the Hub, if paired and reporting is on.
@@ -857,14 +833,15 @@ impl Daemon {
             return;
         };
         let array = self.array();
-        let policy = self.policy(&array);
+        let (policy, inventory) = self.policy(&array);
         let executor = UnraidExecutor {
             inner: QuarantineExecutor {
                 quarantine: quarantine_for(&self.dirs.system, &array),
                 device: state.name.clone(),
             },
             engine: Engine::new(&self.dirs.system),
-            inventory: self.round.as_ref().and_then(|r| r.inventory.clone()),
+            // What Docker has now; the last round's if it isn't answering.
+            inventory: inventory.or_else(|| self.round.as_ref().and_then(|r| r.inventory.clone())),
         };
         let transport = UreqTransport::new();
         let Outcome { changed, ran } = handle(
@@ -1134,7 +1111,12 @@ pub fn device_info(system: &System, name: &str, state: Option<&AgentState>) -> D
         os: format!("Unraid {}", system.version()),
         hostname: disktree_agent::hostname(),
         app: format!("DiskTree for Unraid {}", env!("CARGO_PKG_VERSION")),
-        actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Clean],
+        actions: vec![
+            ActionKind::Delete,
+            ActionKind::Restore,
+            ActionKind::Empty,
+            ActionKind::Docker,
+        ],
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),

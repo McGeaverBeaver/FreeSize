@@ -112,6 +112,15 @@ else that can delete:
   and the VMs are off. Moving between disks has a folder picker that shows
   which disks hold each folder and ticks them; a folder on several disks
   moves from each, one after another.
+- 0.8.4: the Hub signs people in through Authentik providers without a
+  signing key (HS256 with the client secret). Emptying the quarantine and
+  Docker cleanup are action kinds of their own that no grant covers. The
+  Unraid plugin works out what's protected when a request arrives, not at
+  the last round. A scanned folder that is a link can't lead a delete out.
+  The Hub refuses paths that aren't in the device's newest scan. Pairing
+  over plain `http://` to another machine warns. A damaged device key is
+  refused rather than replaced. The README reads the client secret from a
+  file and says what a device sends.
 
 Left over and planned (the release it goes in is under Next releases):
 - **A quarantine on phones and desktops**, with one Put back for everything,
@@ -178,16 +187,6 @@ Each release is small enough to ship in a few weeks, and each says what
 the junk cleaner before Nextcloud; Nextcloud in two halves so the read-only
 half ships even if an action stalls on a device nobody has.
 
-- **0.8.4, fixes.** The Hub sign-in fix for providers without a signing
-  key. Emptying the quarantine and Docker cleanup get their own action
-  kinds that a device never grants. Unraid works out its protection rules
-  when a request arrives, not at the last round. Scanned roots are
-  canonicalized, so a root that is a symlink can't lead a delete out.
-  The Hub refuses paths that aren't in the device's newest scan. Pairing
-  over plain `http://` to anything but the local machine warns. The README
-  reads the client secret from a file. Done when each has a test, the
-  checks pass, and the plugin is installed on a real server from the
-  release and its log, status and a quarantine add and restore look right.
 - **0.8.5, the rename to FreeSize.** Crates, binaries (`freesize`,
   `freesize-gui`, `freesize-hub`), the Docker image, the plugin
   (`freesize.plg`, migrating `/boot/config/plugins/disktree`), the data

@@ -545,7 +545,11 @@ line), and the server (`hub`).
   do, whether someone is at it, its approver and grants), `Report` (info,
   disks, a scan summary, Android's apps), `PollResponse` (commands, approval
   requests for another device, decisions, withdrawals), `Command` with its
-  `Action` (`delete`, `uninstall`, `clean_junk`) and `CommandUpdate`.
+  `Action` (`delete`, `uninstall`, `clean_junk`, `restore`,
+  `empty_quarantine`, `docker_cleanup`) and `CommandUpdate`. Each action
+  has an `ActionKind`, which is what a grant covers; emptying the
+  quarantine and removing images are kinds of their own that no grant
+  covers, so they are asked for every time.
 
 A scan summary holds the 10,000 biggest folders (path, size, size on disk),
 the 500 biggest files and the 100 biggest file types: under a megabyte for a
@@ -569,9 +573,13 @@ whole array, rather than every file.
   1. it must be signed by the pinned Hub key, for this device, not expired
      and not handled before;
   2. a delete must stay inside a folder this device scans, with no `..` and
-     no symbolic link leading out (parents are resolved), and never touch
-     protected system paths or DiskTree's own files;
+     no symbolic link leading out (parents are resolved, and the folder
+     itself must resolve to somewhere inside a scanned folder, so a scanned
+     folder that is a link opens nothing), and never touch protected system
+     paths or DiskTree's own files;
   3. a grant for that admin and kind of action runs it without asking;
+     emptying the quarantine and removing Docker images never run under a
+     grant, and "approve for N minutes" on them means once;
   4. otherwise a device with someone at it asks them; one without asks its
      approver, and one without an approver refuses.
 

@@ -129,6 +129,45 @@ pub fn check(rules: &[Rule], path: &str) -> Option<String> {
     None
 }
 
+/// The rules as of right now, without scanning: Docker and the VMs are
+/// asked what they use at this moment, so a container installed since the
+/// last round protects its appdata at once. Also what Docker has now, for
+/// removing images.
+pub fn current(system: &System, array: &Array) -> (Vec<Rule>, Option<Inventory>) {
+    let docker_cfg = docker::config(system);
+    let engine = docker::Engine::new(system);
+    let inventory = engine
+        .available()
+        .then(|| docker::inventory(&engine, system).ok())
+        .flatten();
+    let vm_cfg = vms::config(system);
+    let definitions = vms::definitions(system);
+    let mut share_names: Vec<String> = crate::shares::read(system)
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    for (_, mount) in array.file_disks() {
+        if let Ok(entries) = std::fs::read_dir(system.file(mount)) {
+            share_names.extend(
+                entries
+                    .flatten()
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| !n.starts_with('.')),
+            );
+        }
+    }
+    share_names.sort();
+    share_names.dedup();
+    let rules = rules(
+        array,
+        &share_names,
+        (&docker_cfg, inventory.as_ref()),
+        (&vm_cfg, definitions.as_deref()),
+    );
+    (rules, inventory)
+}
+
 /// Paths the owner listed in the plugin's settings, one per line, kept
 /// with everything inside them.
 pub fn own_rules(text: &str) -> Vec<Rule> {
@@ -332,6 +371,32 @@ mod tests {
         );
         assert!(check(&own, "/mnt/user/Photos/2020").is_some());
         assert_eq!(check(&own, "/mnt/user/Backups2"), None);
+    }
+
+    /// A request is checked against what Docker says now, not what the
+    /// last round found: a container that appeared since is protected.
+    #[cfg(unix)]
+    #[test]
+    fn rules_come_from_docker_as_it_is_now() {
+        use crate::docker::tests::{docker_answers, fake_docker};
+        let (_dir, system) = server();
+        let array = array::read(&system);
+        // Before Docker answers: nothing is known, so all of appdata is kept.
+        let (before, inventory) = current(&system, &array);
+        assert!(inventory.is_none());
+        assert!(check(&before, "/mnt/user/appdata/sonarr").is_some());
+        assert!(check(&before, "/mnt/user/appdata/gone").is_some());
+        // Docker is up, with plex running and sonarr stopped: their
+        // settings are kept, a folder no container uses isn't.
+        let _calls = fake_docker(&system, docker_answers());
+        let (now, inventory) = current(&system, &array);
+        assert_eq!(inventory.unwrap().containers.len(), 2);
+        assert_eq!(
+            check(&now, "/mnt/user/appdata/sonarr").as_deref(),
+            Some("the settings of sonarr")
+        );
+        assert!(check(&now, "/mnt/cache/appdata/plex/db").is_some());
+        assert_eq!(check(&now, "/mnt/user/appdata/gone"), None);
     }
 
     #[test]

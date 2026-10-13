@@ -9,8 +9,8 @@ use disktree_core::snapshot::FolderSize;
 use disktree_proto::keys::random_id;
 use disktree_proto::unraid::{QuarantineBatch, Safety, UnraidReport};
 use disktree_proto::{
-    Action, Admin as AdminRef, ApprovalRequest, AppsReport, Command, CommandState, CommandUpdate,
-    Decision, PollResponse, PublicKey, Purpose, Signed,
+    Action, ActionKind, Admin as AdminRef, ApprovalRequest, AppsReport, Command, CommandState,
+    CommandUpdate, Decision, PollResponse, PublicKey, Purpose, Signed,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -83,13 +83,10 @@ struct Target {
     info: disktree_proto::DeviceInfo,
 }
 
-/// Size of each path in the device's newest scan of `root`, where known.
-fn sizes_in_scan(
-    c: &Connection,
-    device: &str,
-    root: &str,
-    paths: &[String],
-) -> rusqlite::Result<Option<u64>> {
+/// The size of the paths in the device's newest scan of `root`. Every path
+/// must be a folder or file that scan listed: the dashboard only offers
+/// those, and the device checks each one again before asking anyone.
+fn sizes_in_scan(c: &Connection, device: &str, root: &str, paths: &[String]) -> ApiResult<u64> {
     let scan: Option<(i64, Vec<u8>)> = c
         .query_row(
             "SELECT id, folders FROM scans WHERE device_id = ?1 AND root = ?2 ORDER BY taken DESC LIMIT 1",
@@ -98,7 +95,9 @@ fn sizes_in_scan(
         )
         .optional()?;
     let Some((scan, blob)) = scan else {
-        return Ok(None);
+        return Err(ApiError::bad_request(
+            "the device never reported scanning that folder",
+        ));
     };
     let folders: Vec<FolderSize> = gunzip_json(&blob).unwrap_or_default();
     let mut total = 0u64;
@@ -114,9 +113,29 @@ fn sizes_in_scan(
                 |r| r.get(0),
             )
             .optional()?;
-        total += file.unwrap_or(0) as u64;
+        match file {
+            Some(bytes) => total += bytes as u64,
+            None => {
+                return Err(ApiError::bad_request(format!(
+                    "{path} isn't in the device's newest scan of {root}; scan again first"
+                )));
+            }
+        }
     }
-    Ok(Some(total))
+    Ok(total)
+}
+
+/// Whether a device can be asked for `kind`. Devices from 0.8.3 don't
+/// name the kinds split off in 0.8.4: one that puts back can empty its
+/// quarantine, one that cleans on Unraid removes Docker images.
+fn can_do(info: &disktree_proto::DeviceInfo, kind: ActionKind) -> bool {
+    let has = |k| info.actions.contains(&k);
+    has(kind)
+        || match kind {
+            ActionKind::Empty => has(ActionKind::Restore),
+            ActionKind::Docker => has(ActionKind::Clean) && !info.attended,
+            _ => false,
+        }
 }
 
 /// Checks a requested action against what the device reported.
@@ -127,7 +146,7 @@ fn check_action(
     action: &mut Action,
 ) -> ApiResult<()> {
     let kind = action.kind();
-    if !target.info.actions.contains(&kind) {
+    if !can_do(&target.info, kind) {
         return Err(ApiError::bad_request(format!(
             "{} doesn't {}",
             target.name,
@@ -163,9 +182,7 @@ fn check_action(
                 // use (old appdata, ISOs, VM files) can be named by share.
                 findings_size(c, device, paths)?
             } else {
-                sizes_in_scan(c, device, root, paths)?.ok_or_else(|| {
-                    ApiError::bad_request("the device never reported scanning that folder")
-                })?
+                sizes_in_scan(c, device, root, paths)?
             };
         }
         Action::Uninstall { package, label } => {
@@ -367,6 +384,7 @@ pub async fn create(
             }
             let mut action = request.action;
             check_action(c, &device, &target, &mut action)?;
+            let grantable = action.kind().grantable();
             let command = Command {
                 id: random_id::<10>(),
                 device: device.clone(),
@@ -378,7 +396,13 @@ pub async fn create(
                 reason,
                 created: now(),
                 expires: now() + LIFETIME,
-                grant_minutes: group.grant_minutes.clone(),
+                // What can't be undone is asked for every time: no grant
+                // lengths offered, whatever the group allows.
+                grant_minutes: if grantable {
+                    group.grant_minutes.clone()
+                } else {
+                    Vec::new()
+                },
             };
             let signed = Signed::sign(
                 &command,

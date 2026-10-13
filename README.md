@@ -505,7 +505,9 @@ on the device itself:
   same admin do the same kind of thing again without asking until it runs
   out; the lengths on offer (and a maximum of 8 hours) are set per device
   group in Settings. The device lists its grants and ends them on request
-  (Hub settings → End grants, or `disktree agent revoke`).
+  (Hub settings → End grants, or `disktree agent revoke`). What can't be
+  put back, emptying the quarantine and removing Docker images, is never
+  covered by a grant: it's asked for every time, with the paths shown.
 - A server with nobody at it sends its requests to its **approver**, a
   phone or PC with the DiskTree app. The approver is chosen **on the server
   only**, with `disktree approver set <key>` (the key is under Hub settings

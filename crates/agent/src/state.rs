@@ -67,13 +67,17 @@ impl AgentState {
         }
     }
 
-    pub fn key(&self) -> KeyPair {
-        let seed: [u8; 32] = STANDARD
+    fn seed(&self) -> Option<[u8; 32]> {
+        STANDARD
             .decode(&self.key)
             .ok()
             .and_then(|b| b.try_into().ok())
-            .unwrap_or([0; 32]);
-        KeyPair::from_seed(seed)
+    }
+
+    pub fn key(&self) -> KeyPair {
+        // `load` refuses a file whose key doesn't decode, and `new` writes
+        // a fresh one, so this never falls back to a known key.
+        KeyPair::from_seed(self.seed().expect("the device key was checked when loaded"))
     }
 
     pub fn fingerprint(&self) -> String {
@@ -82,9 +86,17 @@ impl AgentState {
 
     pub fn load(path: &Path) -> Result<Option<AgentState>, String> {
         match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text)
-                .map(Some)
-                .map_err(|e| format!("{}: {e}", path.display())),
+            Ok(text) => {
+                let state: AgentState =
+                    serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+                if state.seed().is_none() {
+                    return Err(format!(
+                        "{}: the device key in it is damaged; pair again",
+                        path.display()
+                    ));
+                }
+                Ok(Some(state))
+            }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(format!("{}: {err}", path.display())),
         }
@@ -188,6 +200,13 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+        // A damaged key is refused rather than replaced by a known one.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let damaged = text.replace(&back.key, "bm90IGEga2V5");
+        assert_ne!(text, damaged);
+        std::fs::write(&path, damaged).unwrap();
+        let err = AgentState::load(&path).unwrap_err();
+        assert!(err.contains("damaged"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

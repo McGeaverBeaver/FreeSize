@@ -223,7 +223,7 @@ fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
         os: os_name(),
         hostname: disktree_agent::hostname(),
         app: format!("DiskTree agent {}", env!("CARGO_PKG_VERSION")),
-        actions: vec![ActionKind::Delete, ActionKind::Restore],
+        actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty],
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),
@@ -259,6 +259,13 @@ fn pair(
         link.key = fingerprint.map(|f| f.trim().to_uppercase());
     }
     let name = name.unwrap_or_else(disktree_agent::hostname);
+    if disktree_proto::pairing::plain_http_over_network(&link.hub) {
+        eprintln!(
+            "warning: {} is plain http, so what this machine reports (folder and file names) \
+             can be read on the network. Put HTTPS in front of the Hub.",
+            link.hub
+        );
+    }
     let transport = UreqTransport::new();
     let mut confirm = |hello: &disktree_proto::Hello| {
         println!("The Hub \"{}\" at {} has the key", hello.name, link.hub);
@@ -431,7 +438,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
     let keep = vec![path.canonicalize().unwrap_or_else(|_| path.to_path_buf())];
     let policy = Policy {
         attended: false,
-        actions: vec![ActionKind::Delete, ActionKind::Restore],
+        actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty],
         roots: roots.clone(),
         keep,
         guards: Guards(vec![Arc::new(OpenFiles::default())]),

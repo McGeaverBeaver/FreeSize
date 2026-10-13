@@ -186,6 +186,13 @@ impl Hub {
         let transport = self.transport.clone();
         let path = self.path.clone();
         let state = self.state.clone();
+        if disktree_proto::pairing::plain_http_over_network(&link.hub) {
+            let _ = events.send(Event::Status(format!(
+                "{} is plain http: what this device reports (folder and file names) can be read \
+                 on the network. Put HTTPS in front of the Hub.",
+                link.hub
+            )));
+        }
         std::thread::spawn(move || {
             let mut asked = false;
             let mut confirm = |hello: &Hello| match &confirmed {

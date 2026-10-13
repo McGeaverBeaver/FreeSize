@@ -81,6 +81,24 @@ pub fn code_hash(code: &str) -> String {
     sha256_hex(normalize_code(code).as_bytes())
 }
 
+/// Whether `hub` (as `normalize_hub` writes it) sends what a device reports
+/// over the network unencrypted: plain `http://` to anything but this
+/// machine. Devices warn before pairing with such a Hub.
+pub fn plain_http_over_network(hub: &str) -> bool {
+    let Some(rest) = hub.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .trim_start_matches('[')
+        .rsplit_once(':')
+        .map_or(rest.split('/').next().unwrap_or_default(), |(h, _)| h)
+        .trim_end_matches(']');
+    !matches!(host, "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
+}
+
 /// A Hub address as typed: a scheme is added if missing (`https://`), and a
 /// trailing slash removed.
 pub fn normalize_hub(text: &str) -> Option<String> {
@@ -173,6 +191,12 @@ mod tests {
         );
         assert_eq!(normalize_hub("  "), None);
         assert_eq!(normalize_hub("https://"), None);
+        assert!(plain_http_over_network("http://10.0.0.2:9090"));
+        assert!(plain_http_over_network("http://hub.lan"));
+        assert!(!plain_http_over_network("http://localhost:9090"));
+        assert!(!plain_http_over_network("http://127.0.0.1:9090"));
+        assert!(!plain_http_over_network("http://[::1]:9090"));
+        assert!(!plain_http_over_network("https://hub.lan"));
         assert_eq!(decode("a%20b+c"), Some("a b c".into()));
         assert_eq!(decode("%zz"), None);
     }
