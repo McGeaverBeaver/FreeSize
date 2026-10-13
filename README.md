@@ -96,9 +96,9 @@ A fast disk space analyzer in the spirit of TreeSize, written in Rust with a
 
 | Platform | What gets scanned | Notes |
 |---|---|---|
-| Windows | Any drive or folder | Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
-| macOS | Everything, once Full Disk Access is granted | Grant it in System Settings → Privacy & Security for the full picture. Detects iCloud "dataless" files. |
-| Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. |
+| Windows | Any drive or folder your account can open | Folders it can't open are marked "no access" and counted; run DiskTree as administrator to include most of them. Detects OneDrive placeholders; asks Windows for the real size of compressed and sparse files. |
+| macOS | Everything your account can open, once Full Disk Access is granted | Grant it in System Settings → Privacy & Security for the full picture. Other users' folders need `sudo disktree / --export scan.json`, which the app opens. Detects iCloud "dataless" files. |
+| Linux | Anything you can read | Stays on one filesystem by default (skips `/proc`, other mounts) and counts hard links once. `sudo disktree / --export scan.json` scans everything, and the app opens the file. |
 | Android 8.0+ | All shared storage and SD cards, plus sizes for every app and the system | Files need **All files access** (Android 11+). Apps' private data can't be opened as files on Android, so it's measured through Android's storage statistics instead, which need **Usage access**. |
 | iOS | — | Not planned: the iOS sandbox doesn't allow scanning the device. |
 

@@ -234,6 +234,43 @@ half ships even if an action stalls on a device nobody has.
   refuses another certificate for its Hub's address, the Hub's authority
   isn't trusted for any other address, and a move to a new address must
   carry the Hub's signature.
+- **0.8.8, the whole disk on every platform.** A scan already marks folders
+  it couldn't open ("no access"), counts them, and on a whole drive says how
+  much space no file accounts for. It doesn't offer a way to see the rest,
+  and the Hub's dashboard never shows that a scan was incomplete. DiskTree
+  keeps running without extra rights by default: on Windows an elevated
+  program doesn't see the user's mapped network drives, and extra rights
+  make every delete riskier. When a scan misses folders it offers:
+  - Windows: **Scan as administrator** relaunches DiskTree through UAC for
+    that scan, turns on the backup privilege administrators hold so folders
+    whose permissions leave administrators out can still be listed (needs
+    testing on a real PC), and says "administrator" in the title. The size
+    of shadow copies then comes from `vssadmin`, which needs it. The card
+    names what stays out of reach: System Volume Information, closed even
+    to administrators, and Windows' reserved storage (about 7 GB), which no
+    program sees. Deleting from an elevated window keeps the same rules and
+    refuses Windows' own folders.
+  - macOS: DiskTree checks Full Disk Access by reading a file it protects
+    and, without it, opens the setting (`Privacy_AllFiles`). Other users'
+    folders need root: the app runs `disktree / --export` through an
+    administrator prompt and opens the result as a saved scan. The grant
+    follows the app's signature, so an unsigned build may lose it with each
+    update (needs testing on a Mac, by a volunteer).
+  - Linux: the same root scan through `pkexec`, never the window as root.
+  - Android: nothing new. Shared storage needs All files access, and apps'
+    private data (`Android/data` and `obb` included, which Android closes
+    even to All files access) comes from Android's storage statistics
+    through Usage access; the app already asks for both.
+  - The Unraid plugin and the Linux agent run as root and see everything;
+    the Windows agent sees what its user sees, and says so in its report.
+  - The dashboard shows a scan with unreadable folders as incomplete, with
+    the count, on the scan and on the device.
+  Done when, on a Windows PC, a normal scan of C: names the folders it
+  missed and the administrator scan reads them, with the total within a few
+  percent of the drive's used space after the named gaps; the same on Linux
+  with `pkexec`; and the dashboard flags an incomplete scan. Tests: a folder
+  without read permission is counted, marked and named in the card, and an
+  imported root scan opens read-only.
 - **0.9, trust and updates.** The license (GPL-3.0-or-later) and a
   SECURITY.md with the threat model and what leaves a device. CI on every
   push for clippy and tests on Windows, macOS and Linux. The quarantine on
@@ -712,6 +749,13 @@ that no file in the scan accounts for, on every platform.
   Linux didn't for imported roots as of 2023. The authority is named for
   the Hub's address only, and whether each browser enforces that needs
   testing before the dashboard suggests installing it.
+- **Extra rights on each platform**: an elevated Windows program doesn't see
+  the user's mapped network drives (a separate sign-in session), System
+  Volume Information stays closed even to administrators, and Windows'
+  reserved storage is invisible to every program. macOS has no API to ask
+  whether Full Disk Access is granted; reading a protected file is the
+  test. Running a window as root on Linux is refused by Wayland sessions
+  and bad practice anyway, so only the scan runs as root.
 - **The first visit in a browser** to a generated certificate is trust on
   first use: an attacker on the network at that moment could stand in.
   Devices don't have that gap, since the pairing link carries the Hub's key.
@@ -742,7 +786,8 @@ that no file in the scan accounts for, on every platform.
   the quarantine and the approver in its settings page, in 0.8.
 - After 0.8.3 (decided 2026-10-12): 0.8.4 fixes, 0.8.5 the fixes found
   testing 0.8.4 on a real server and phone, 0.8.6 the rename to FreeSize,
-  0.8.7 HTTPS by default (added 2026-10-13), 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
+  0.8.7 HTTPS by default, 0.8.8 the whole disk on every platform (both
+  added 2026-10-13), 0.9 trust and updates (phase 7), 0.9.1 Community Applications,
   0.10 the junk cleaner (phase 6), 0.11 where the space goes (phase 8) and
   balancing, 0.12 Nextcloud read-only, 0.13 Nextcloud actions, 0.14 the
   phone in the background. See Next releases.
