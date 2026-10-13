@@ -384,6 +384,9 @@ Parked, each with its reason:
   top of the disk and failed; the data folder is now made first. And on
   Windows and macOS every https request crashed (the Hub since 0.8.7,
   the update check): ureq was built without its `native-tls` feature.
+  Releases stop making `disktree.plg` and tagging the image as
+  `disktree-hub`: every install runs FreeSize now. The last of each stays
+  where it is.
 - 0.13: copies, actions (phase 5, second half). The Copies page's
   Suggestions tab turns the join into requests, each still shown and
   approved on the device: free a folder's local copies on Windows (the

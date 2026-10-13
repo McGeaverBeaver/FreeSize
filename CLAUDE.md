@@ -148,7 +148,9 @@ compiling inside Docker.
   FreeSize had saved anything went to the disk's top and failed; and the
   Windows and macOS app and command line crashed on any https address
   (the Hub since 0.8.7, update checks): ureq needs its `native-tls`
-  feature, not `native-tls-no-default`.
+  feature, not `native-tls-no-default`. Releases no longer make
+  `disktree.plg` or tag the `disktree-hub` image (the owner's call,
+  2026-10-13: his installs all run FreeSize).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

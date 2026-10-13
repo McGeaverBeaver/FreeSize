@@ -1185,11 +1185,11 @@ starts the daemon at nice 19 with idle I/O priority; the array's events
 (`event/stopping`, `stopped`, `started`) stop it before the disks unmount
 and start it again. `scripts/unraid-plugin.sh` packs the static binary
 and these into a Slackware `.txz`, and fills in the `.plg`'s version and
-the package's SHA-256. It also writes `disktree.plg`, the update that
-servers with the plugin from before the rename find at their old
-`pluginURL`: it starts `plugin install freesize.plg` in the background
-(Unraid records the updated `.plg` only after its scripts finish), and
-`freesize.plg`'s first script copies `/boot/config/plugins/disktree` (with
+the package's SHA-256. Until 0.16.2 releases also carried `disktree.plg`
+(and the Hub's image under its old name, `disktree-hub`) to move installs
+from before the rename over; they stopped at the owner's word, and
+servers still on DiskTree install `freesize.plg` by hand.
+`freesize.plg`'s first script still copies `/boot/config/plugins/disktree` (with
 `disktree.cfg` renamed), stops and removes the old package, its page and
 its `.plg`.
 

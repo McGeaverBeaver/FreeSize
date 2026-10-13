@@ -12,9 +12,6 @@
 #                                      the command line, the page under
 #                                      Tools); Unraid installs it from the
 #                                      .plg in the latest release
-#   disktree.plg                       the update servers with the plugin
-#                                      from before the rename look for; it
-#                                      installs freesize.plg
 #   freesize-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
 #                                      the aarch64 cross-compiler is installed
 #   SHA256SUMS.txt
@@ -134,17 +131,12 @@ registry_login() {
     gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin >/dev/null
 }
 
-# Points the image's latest tag at this version, in the registry. Hubs
-# installed before the rename pull disktree-hub, so it gets the same image
-# under its old name too.
+# Points the image's latest tag at this version, in the registry. (Until
+# 0.16.2 it also tagged the old disktree-hub name; that and disktree.plg
+# stopped at the owner's word, 2026-10-13.)
 tag_latest() {
     echo "==> Pointing $image:latest at $version"
     docker buildx imagetools create --tag "$image:latest" "$image:$version"
-    if [[ "$image" == */freesize-hub ]]; then
-        local old="${image%/freesize-hub}/disktree-hub"
-        echo "==> And $old:$version and :latest, for Hubs installed before the rename"
-        docker buildx imagetools create --tag "$old:$version" --tag "$old:latest" "$image:$version"
-    fi
 }
 
 # Unraid pulls without logging in, so the package has to be public; GitHub
