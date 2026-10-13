@@ -163,6 +163,7 @@ const NAV = [
   { route: "devices", label: "Devices" },
   { route: "search", label: "Search" },
   { route: "requests", label: "Requests" },
+  { route: "copies", label: "Copies" },
   { route: "alerts", label: "Alerts" },
   { route: "audit", label: "Audit log", admin: true },
   { route: "settings", label: "Settings" },
@@ -580,7 +581,25 @@ async function deviceOverview(device) {
     alerts.length ? h("div", { class: "callout danger" }, alerts.map((a) =>
       h("div", {}, h("strong", {}, a.title.replace(`${device.name}: `, "")), " ", h("span", { class: "dim" }, a.message)))) : null,
     disks.length ? h("div", { class: "grid" }, disks) : device.agentless ? null : h("div", { class: "card dim" }, "No disks reported yet."),
-    scans);
+    scans,
+    syncCard(device));
+}
+
+/** What the device keeps of its Nextcloud folders, from its last report. */
+function syncCard(device) {
+  const accounts = (device.sync && device.sync.accounts) || [];
+  if (!accounts.length) return null;
+  return h("div", { class: "card table-wrap" }, h("h2", {}, "Nextcloud"),
+    h("p", { class: "dim small" }, `Reported ${ago(device.sync.taken)}. `,
+      h("a", { href: "#/copies" }, "Copies"), " shows where else each folder is kept."),
+    h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Folder"), h("th", {}, "On the server"),
+      h("th", { class: "num" }, "Synced"), h("th", { class: "num" }, "Stored here"), h("th", { class: "num hide-narrow" }, "Files"))),
+      h("tbody", {}, accounts.flatMap((a) => a.folders.map((f) => h("tr", {},
+        h("td", {}, f.local, h("div", { class: "sub" }, `${a.user} on ${a.server}`)),
+        h("td", {}, f.remote),
+        h("td", { class: "num" }, size(f.size)),
+        h("td", { class: "num" }, size(f.on_disk), f.on_disk < f.size ? h("div", { class: "sub" }, "rest online-only") : null),
+        h("td", { class: "num hide-narrow" }, `${Number(f.on_disk_files).toLocaleString("en-US")} of ${Number(f.files).toLocaleString("en-US")}`)))))));
 }
 
 function scanPicker(device, current, onPick) {
@@ -1215,6 +1234,144 @@ function rulesCard(rules) {
     h("p", { class: "hint" }, "0 turns a rule off."),
     editable ? h("button", { class: "primary", onclick: save }, "Save") : null);
 }
+
+// ----- Copies -----------------------------------------------------------------
+
+/** Starts Nextcloud's sign-in flow in a new tab and waits for it to finish. */
+function connectNextcloudDialog() {
+  dialog((close) => {
+    const server = h("input", { id: "nc-server", type: "text", placeholder: "https://cloud.example.com", autocomplete: "off" });
+    const status = h("p", { class: "hint" });
+    const start = h("button", { class: "primary" }, "Sign in");
+    let timer = null;
+    const stop = () => { clearInterval(timer); timer = null; };
+    start.onclick = async () => {
+      start.disabled = true;
+      status.textContent = "Asking the server…";
+      try {
+        const flow = await api("/api/nextcloud/connect", { method: "POST", body: { server: server.value } });
+        const tab = window.open(flow.login_url, "_blank", "noopener");
+        status.replaceChildren("Sign in on ", h("a", { href: flow.login_url, target: "_blank", rel: "noopener" }, flow.server),
+          " and allow FreeSize Hub. This waits until you have.", tab ? "" : " (The page didn't open by itself: use the link.)");
+        timer = setInterval(async () => {
+          try {
+            const answer = await api(`/api/nextcloud/connect/${encodeURIComponent(flow.flow)}`);
+            if (answer.state === "done") {
+              stop();
+              toast(`${answer.user} on ${answer.server} connected; listing its files`);
+              close();
+              render();
+            } else if (answer.state === "failed") {
+              stop();
+              status.textContent = `Sign-in failed: ${answer.error}`;
+              start.disabled = false;
+            }
+          } catch (e) {
+            stop();
+            status.textContent = e.message;
+            start.disabled = false;
+          }
+        }, 3000);
+      } catch (e) {
+        status.textContent = e.message;
+        start.disabled = false;
+      }
+    };
+    return [h("h2", {}, "Connect a Nextcloud account"),
+      h("p", {}, "The Hub gets its own app password through Nextcloud's sign-in page; your password never reaches it. It only reads: folder sizes, the biggest files' ids and checksums, and the trash's size."),
+      h("label", { for: "nc-server" }, "Server"), server,
+      status,
+      h("div", { class: "actions" }, h("button", { onclick: () => { stop(); close(); } }, "Cancel"), start)];
+  });
+}
+
+async function disconnectNextcloud(account) {
+  if (!confirm(`Disconnect ${account.user} on ${account.server}? The Hub forgets its listing and asks Nextcloud to drop the app password. The devices' own sync is untouched.`)) return;
+  try {
+    const answer = await api(`/api/nextcloud/${account.id}`, { method: "DELETE" });
+    toast(answer.revoked ? "Disconnected" : "Disconnected; remove the app password in Nextcloud's security settings yourself", !answer.revoked);
+    render();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function keptOn(row) {
+  const names = row.devices.filter((d) => d.on_disk > 0 || d.on_disk === true).map((d) => d.name);
+  if (!names.length) return h("span", { class: "dim" }, "no device");
+  return names.join(", ");
+}
+
+PAGES.copies = async (section = "folders") => {
+  const copies = await api("/api/copies");
+  const accounts = h("div", { class: "card" },
+    h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Nextcloud accounts"),
+      state.me.admin ? h("button", { class: "primary", onclick: connectNextcloudDialog }, "Connect an account") : null),
+    copies.accounts.length ? h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Account"), h("th", { class: "num" }, "Files"),
+        h("th", { class: "num" }, "Trash"), h("th", {}, "Listed"), h("th", {}, "Devices"), h("th", {}, ""))),
+      h("tbody", {}, copies.accounts.map((a) => h("tr", {},
+        h("td", {}, `${a.user} on ${a.server}`, a.error ? h("div", { class: "sub danger" }, a.error) : null),
+        h("td", { class: "num" }, size(a.bytes), h("div", { class: "sub" }, `${count(a.files, "big file", "big files")}, ${count(a.folders, "folder", "folders")}`)),
+        h("td", { class: "num" }, size(a.trash)),
+        h("td", {}, a.syncing ? "listing now…" : a.synced ? ago(a.synced) : "not yet"),
+        h("td", {}, a.devices.length ? a.devices.join(", ") : h("span", { class: "dim" }, "none report it")),
+        h("td", { class: "num" }, state.me.admin ? [
+          h("button", { class: "small", disabled: a.syncing, onclick: async () => {
+            try { await api(`/api/nextcloud/${a.id}/sync`, { method: "POST" }); toast("Listing the files"); setTimeout(render, 1500); } catch (e) { toast(e.message, true); }
+          } }, "List now"), " ",
+          h("button", { class: "small", onclick: () => disconnectNextcloud(a) }, "Disconnect")] : null)))))
+      : h("p", { class: "dim" }, state.me.admin
+        ? "Connect the Nextcloud account your devices sync with, and the Hub lists what the server holds: then each folder shows whether it's on the server, which devices keep it, and what's only on one device."
+        : "No Nextcloud account is connected yet; an admin can connect one."),
+    copies.unmatched.length ? h("p", { class: "hint" }, "Devices sync with accounts the Hub isn't connected to: ",
+      copies.unmatched.map((u) => `${u.user} on ${u.server} (${u.devices.join(", ")})`).join("; "), ".") : null,
+    h("p", { class: "dim small", style: "margin-bottom:0" },
+      `${count(copies.reported, "device reports", "devices report")} their Nextcloud folders. Desktops report hourly through the app or the agent; the Android app reports its Nextcloud folder when it's open.`));
+
+  const tabs = h("nav", { class: "tabs" }, [["folders", "Folders"], ["files", "Big files"], ["risks", `Only one copy${copies.risks.length ? ` (${copies.risks.length})` : ""}`]].map(([key, label]) =>
+    h("a", { href: `#/copies/${key}`, class: key === section ? "active" : "" }, label)));
+
+  let view;
+  if (section === "files") {
+    view = copies.files.length
+      ? h("div", { class: "card table-wrap" }, h("h2", {}, "Files of 100 MB and over"),
+          h("p", { class: "dim small" }, "The devices report these one by one; the server's file id is the same on every client."),
+          h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "File"), h("th", { class: "num" }, "Size"), h("th", {}, "On the server"), h("th", {}, "Kept on"))),
+            h("tbody", {}, copies.files.map((f) => h("tr", {},
+              h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`, f.fileid ? ` · id ${f.fileid}` : "", f.checksums ? ` · ${f.checksums}` : "")),
+              h("td", { class: "num" }, size(f.size)),
+              h("td", {}, f.on_server === null ? h("span", { class: "dim" }, "not listed") : f.on_server ? "yes" : h("span", { class: "warn" }, "no")),
+              h("td", {}, h("strong", {}, count(f.kept_on, "device", "devices")), h("div", { class: "sub" },
+                f.devices.map((d) => `${d.name}: ${d.on_disk ? d.local : "online-only"}`).join(" · "))))))))
+      : h("div", { class: "card empty" }, h("h2", {}, "No big files reported"), h("p", {}, "Devices list files of 100 MB and over in their synced folders."));
+  } else if (section === "risks") {
+    view = copies.risks.length
+      ? h("div", { class: "card" }, h("h2", {}, "What's kept in one place only"),
+          h("p", { class: "dim small" }, "Nothing here is a problem by itself: it's what a lost or broken device, or a failed server, would take with it. FreeSize only knows of copies on Nextcloud and on paired devices."),
+          copies.risks.map((r) => h("div", { class: "alert-row" },
+            h("span", { class: `badge ${r.severity === "warning" ? "warn" : "accent"}` }, r.kind === "only_on_device" ? "one device" : r.kind === "only_on_server" ? "server only" : "not synced"),
+            h("div", { class: "grow" }, h("strong", {}, r.title), h("div", { class: "dim small" }, r.detail)),
+            h("span", { class: "num" }, size(r.size)))))
+      : h("div", { class: "card empty" }, h("h2", {}, "Nothing is kept in one place only"),
+          h("p", {}, copies.accounts.length ? "Every synced folder and big file the devices report is on the server or on another device too." : "Connect a Nextcloud account for the Hub to know what the server holds."));
+  } else {
+    view = copies.folders.length
+      ? h("div", { class: "card table-wrap" }, h("h2", {}, "Kept on how many devices"),
+          h("p", { class: "dim small" }, "Each synced folder two levels down, with what the server holds and what each device stores of it. Online-only files count on the server, not on the device."),
+          h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Folder"), h("th", { class: "num" }, "On the server"), h("th", {}, "Kept on"), h("th", { class: "num" }, "Stored, all told"))),
+            h("tbody", {}, copies.folders.map((f) => h("tr", {},
+              h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`)),
+              h("td", { class: "num" }, f.on_server === null ? h("span", { class: "dim" }, "not listed") : size(f.on_server)),
+              h("td", {}, h("strong", {}, count(f.kept_on, "device", "devices")), h("div", { class: "sub" },
+                f.devices.map((d) => `${d.name}: ${size(d.on_disk)}${d.complete ? "" : d.on_disk ? " (part)" : " (online-only)"}`).join(" · "))),
+              h("td", { class: "num" }, size(f.stored), f.on_server && f.kept_on ? h("div", { class: "sub" }, `${f.kept_on + 1}× with the server`) : null))))))
+      : h("div", { class: "card empty" }, h("h2", {}, "No synced folders reported yet"),
+          h("p", {}, "Devices with the Nextcloud client report their sync folders in their next hourly report; the app does so when it starts."));
+  }
+  return [h("div", { class: "page-head" }, h("div", { class: "grow" }, h("h1", {}, "Copies"),
+      h("p", { class: "dim" }, "Where each synced folder is kept: on Nextcloud, and on which devices."))),
+    accounts, tabs, view];
+};
 
 PAGES.alerts = async () => {
   const [alerts, rules, channels] = await Promise.all([

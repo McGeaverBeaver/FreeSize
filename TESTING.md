@@ -33,6 +33,9 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] Scanning a whole drive on btrfs (Linux) or APFS (macOS): the Clean
       up tab's "Not in any file" names the snapshots and, on a Mac, the
       purgeable space.
+- [ ] With the Nextcloud client set up: `freesize nextcloud` lists the
+      account and its sync folders, the sizes match the client's, and a
+      file made online-only counts as not stored here.
 - [ ] Opens a saved scan; Export writes one that opens again.
 - [ ] Hub: pairs from a link, shows up online, a delete request is approved
       on the device and lands in the quarantine.
@@ -67,6 +70,12 @@ what was tried in the release's draft notes, and say what wasn't.
       fires above the limit set on the Alerts page.
 - [ ] A wrong pairing code ten times from one address is refused for a
       minute; other addresses still pair.
+- [ ] Copies: Connect an account opens Nextcloud's sign-in page, the
+      account appears with its files listed, and the app password shows
+      in Nextcloud's security settings; for 20 files checked by hand on
+      three devices, "kept on N devices" is right; a file kept on one
+      device only, not yet uploaded, is in Only one copy; Disconnect
+      removes the app password from Nextcloud.
 
 ## Unraid plugin
 

@@ -25,6 +25,64 @@ use rusqlite::params;
 const GB: u64 = 1 << 30;
 const MB: u64 = 1 << 20;
 
+/// What a device keeps of its Nextcloud folder, for the Copies page:
+/// subfolders as (path, size, stored here) and big files as (path, size,
+/// stored here), all with the same made-up account.
+fn sync(
+    local: &str,
+    remote: &str,
+    dirs: &[(&str, u64, u64)],
+    big: &[(&str, u64, bool)],
+) -> freesize_proto::sync::SyncReport {
+    use freesize_proto::sync::{SyncAccount, SyncDir, SyncFile, SyncFolder, SyncReport};
+    let size: u64 = dirs
+        .iter()
+        .filter(|d| !d.0.contains('/'))
+        .map(|d| d.1)
+        .sum();
+    let on_disk: u64 = dirs
+        .iter()
+        .filter(|d| !d.0.contains('/'))
+        .map(|d| d.2)
+        .sum();
+    SyncReport {
+        taken: freesize_hub::db::now() - 900,
+        accounts: vec![SyncAccount {
+            server: "https://cloud.example.lan".into(),
+            user: "robert".into(),
+            client: "desktop".into(),
+            folders: vec![SyncFolder {
+                local: local.into(),
+                remote: remote.into(),
+                size: size * MB,
+                on_disk: on_disk * MB,
+                files: dirs.len() as u64 * 120,
+                on_disk_files: dirs.iter().filter(|d| d.2 > 0).count() as u64 * 120,
+                virtual_files: if on_disk < size { "wincfapi" } else { "off" }.into(),
+                dirs: dirs
+                    .iter()
+                    .map(|(path, size, stored)| SyncDir {
+                        path: path.to_string(),
+                        size: size * MB,
+                        on_disk: stored * MB,
+                        files: 120,
+                        on_disk_files: if *stored > 0 { 120 } else { 0 },
+                    })
+                    .collect(),
+                big: big
+                    .iter()
+                    .map(|(path, size, stored)| SyncFile {
+                        path: path.to_string(),
+                        size: size * MB,
+                        modified: freesize_hub::db::now() - 86_400 * 40,
+                        on_disk: *stored,
+                    })
+                    .collect(),
+            }],
+        }],
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let hub_addr = std::env::var("DEMO_HUB").unwrap_or_else(|_| "127.0.0.1:9090".into());
@@ -371,6 +429,25 @@ fn seed(url: &str, state: &AppState) {
                         ),
                     ],
                 }),
+                sync: Some(sync(
+                    "C:\\Users\\Robert\\Nextcloud",
+                    "/",
+                    &[
+                        ("Photos", 61_000, 61_000),
+                        ("Photos/2019", 18_000, 18_000),
+                        ("Photos/2024", 22_000, 22_000),
+                        ("Documents", 4_200, 4_200),
+                        ("Documents/Taxes", 900, 900),
+                        ("Videos", 48_000, 48_000),
+                        ("Videos/Drone", 31_000, 31_000),
+                    ],
+                    &[
+                        ("Videos/Drone/DJI_0412.MP4", 3_900, true),
+                        ("Videos/Drone/DJI_0398.MP4", 3_100, true),
+                        ("Photos/2024/Iceland.zip", 2_400, true),
+                        ("Videos/wedding-raw.mov", 9_800, true),
+                    ],
+                )),
                 ..Report::default()
             },
             vec![("C:\\", 931, 869), ("D:\\", 1_863, 763)],
@@ -384,6 +461,25 @@ fn seed(url: &str, state: &AppState) {
                     total: 494 * GB,
                     free: 188 * GB,
                 }]),
+                sync: Some(sync(
+                    "/Users/robert/Nextcloud",
+                    "/",
+                    &[
+                        ("Photos", 61_000, 18_000),
+                        ("Photos/2019", 18_000, 18_000),
+                        ("Photos/2024", 22_000, 0),
+                        ("Documents", 4_200, 4_200),
+                        ("Documents/Taxes", 900, 900),
+                        ("Videos", 48_000, 0),
+                        ("Videos/Drone", 31_000, 0),
+                    ],
+                    &[
+                        ("Videos/Drone/DJI_0412.MP4", 3_900, false),
+                        ("Videos/Drone/DJI_0398.MP4", 3_100, false),
+                        ("Photos/2024/Iceland.zip", 2_400, false),
+                        ("Videos/wedding-raw.mov", 9_800, false),
+                    ],
+                )),
                 ..Report::default()
             },
             vec![("/", 494, 306)],

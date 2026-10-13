@@ -307,6 +307,23 @@ Parked, each with its reason:
   forum if CA asks for one (then put its address in the entry and the
   `.plg`), and check both appear in the Apps tab on a clean Unraid 7.3 and
   install from there.
+- 0.12: copies, read only (phase 5, first half). Devices with the
+  Nextcloud client report their sync folders (`freesize_agent::nextcloud`:
+  the desktop client's `nextcloud.cfg`, the Android app's folder; per
+  folder the size, what's stored on the device, subfolders two levels down
+  and files of 100 MB and over), hourly from the app and the agent, and
+  `freesize nextcloud` prints it. The Hub connects a Nextcloud account
+  through Login Flow v2 and lists it over WebDAV (folder sizes, big files'
+  ids and checksums, the trash) at start, every six hours and on request;
+  the Copies page joins the two on server, account and path: "kept on N
+  devices" per folder with each device's stored bytes, the big files with
+  the server's id, and the "only one copy" report (a file or folder one
+  device alone holds that the server lacks, folders only the server
+  holds, big scanned folders no synced folder covers). The Hub reads only.
+  The client's sync journal isn't read (an SQLite file the client keeps
+  open): paths are the key, and the Hub resolves them to file ids. Still
+  to do by hand: the counts for 20 files on three devices, and a file kept
+  on one device in the risk report (TESTING.md).
 - 0.11: where the space goes, and balancing (phase 8 and Unraid). The
   plugin finds Nextcloud's data folder (`.ncdata`, in a share or in
   appdata) and reports, per user, files against old versions, trash,
@@ -396,7 +413,7 @@ half ships even if an action stalls on a device nobody has.
   Done when the Nextcloud numbers match `du` within 1%, a stopped VM's
   sparse vdisk moves with its holes kept, and a round on a big array logs
   its peak memory under a set number.
-- **0.12, copies, read only (phase 5, first half).** Connect Nextcloud
+- **0.12, copies, read only (phase 5, first half).** Under Done. Connect Nextcloud
   through Login Flow v2; file ids, sizes and checksums over WebDAV; each
   desktop client's sync journal; the Android app's folder; the Hub joins
   on file id and shows "kept on N devices" per folder, with the "only copy"
@@ -574,11 +591,15 @@ Checked against Nextcloud 35 and desktop client 35 on 2026-10-12.
   every client of that server), size and checksums. Trash and versions have
   no size on their roots: the items are summed, or the folders read on the
   server.
-- **Desktop agents** read the client's sync journal, `.sync_<12 hex>.db`
-  next to each sync folder: `metadata.fileid`, `contentChecksum` and its
-  type, and the `flags` table's pin state (always local, online-only,
-  inherited), which is what the person asked for, not what is on disk; what
-  is on disk comes from the placeholder itself.
+- **Desktop agents** read the client's `nextcloud.cfg` for the accounts
+  and sync folders and walk each folder (0.12); what is on disk comes from
+  the placeholder itself (no blocks allocated, or the `.nextcloud` suffix).
+  The sync journal, `.sync_<12 hex>.db` next to each sync folder
+  (`metadata.fileid`, `contentChecksum`, the `flags` table's pin state:
+  always local, online-only, inherited, which is what the person asked for,
+  not what is on disk) isn't read: it is SQLite, kept open by the client,
+  and paths resolve to the same file ids on the Hub. The pin state is
+  still to come, for 0.13's online-only suggestions.
 - **Android:** the Nextcloud app's offline copies under
   `Android/media/com.nextcloud.client/nextcloud/<account>/` (readable with
   All files access) and camera photos already auto-uploaded.

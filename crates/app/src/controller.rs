@@ -1654,6 +1654,31 @@ impl Controller {
             ..freesize_proto::Report::default()
         });
         self.disks_reported = Some(std::time::Instant::now());
+        self.report_sync();
+    }
+
+    /// Tells the Hub what this device keeps of its Nextcloud folders, from
+    /// a background thread: each sync folder is walked.
+    fn report_sync(&self) {
+        let reporter = self.hub.reporter();
+        if !reporter.connected() {
+            return;
+        }
+        let _ = std::thread::Builder::new()
+            .name("freesize-sync".into())
+            .spawn(move || {
+                use freesize_agent::nextcloud;
+                let accounts = if cfg!(target_os = "android") {
+                    nextcloud::android_accounts(&locations::default_path())
+                } else {
+                    nextcloud::desktop_accounts()
+                };
+                let report = nextcloud::report(&accounts, apps::now() as i64);
+                reporter.send(freesize_proto::Report {
+                    sync: Some(report),
+                    ..freesize_proto::Report::default()
+                });
+            });
     }
 
     fn hub_tick(&mut self) {

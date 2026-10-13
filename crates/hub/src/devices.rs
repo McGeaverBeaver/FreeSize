@@ -444,6 +444,16 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
             ],
         )?;
     }
+    if let Some(sync) = report.sync {
+        tx.execute(
+            "INSERT OR REPLACE INTO sync (device_id, taken, report) VALUES (?1, ?2, ?3)",
+            params![
+                device.id,
+                sync.taken,
+                serde_json::to_string(&sync).unwrap_or_default()
+            ],
+        )?;
+    }
     if let Some(unraid) = report.unraid {
         tx.execute(
             "INSERT OR REPLACE INTO unraid (device_id, taken, report) VALUES (?1, ?2, ?3)",

@@ -196,6 +196,12 @@ rules go to the quarantine on their disk, where `freesize agent` or the
 Hub can put them back), `--only RULE` limits the look, `-y` skips the
 question and `--json` prints the findings with every path.
 
+`freesize nextcloud` prints what this machine keeps of its Nextcloud
+folders, as the agent reports it to the Hub (see
+[Copies](#copies-is-there-another-copy)): each account the desktop client
+is signed in to, its sync folders, and per folder how much is stored here
+against how much is online-only; `--json` prints the report itself.
+
 For scripts, spreadsheets and Home Assistant:
 
 ```sh
@@ -652,6 +658,11 @@ What it does:
   Prometheus and Home Assistant.
 - **Devices without an agent** (a router, a VPS, a Proxmox host): upload
   scans made with `ncdu`.
+- **Copies**: connect the Nextcloud account your devices sync with, and
+  the page says for each synced folder what the server holds and which
+  devices keep it stored ("kept on 3 devices"), with the big files one by
+  one, and lists what exists in one place only. See
+  [Copies](#copies-is-there-another-copy).
 
 ### How requests are approved
 
@@ -704,8 +715,10 @@ files with their dates, and the 100 biggest file types; on Android, every
 installed app with its size, when it was last opened and where it came
 from; on Unraid, the shares per disk, container and VM names with what they
 use, which files are open and by which process, and what's in the
-quarantine. Nothing is sent anywhere else, and no file contents are ever
-sent. The Hub keeps scans for a week, then one a day for three months, one
+quarantine; with the Nextcloud client set up, each sync folder's size and
+how much of it is stored on the device, its subfolders two levels down,
+and files of 100 MB and over one by one. Nothing is sent anywhere else,
+and no file contents are ever sent. The Hub keeps scans for a week, then one a day for three months, one
 a week for a year and one a month after that; removing a device deletes
 everything it reported.
 
@@ -877,6 +890,49 @@ ncdu -1xo- / | gzip > scan.json.gz
 Any ncdu writes this with `-o` (not ncdu 2.6's binary `-O`), and so does
 `freesize /path --export scan.json`. Files up to 128 MB unpacked; for big
 machines, run the agent instead.
+
+### Copies: is there another copy?
+
+The **Copies** page answers "is this folder kept anywhere else?" for what
+the Nextcloud client syncs. Every device with the client (the desktop
+client's `nextcloud.cfg`, or the Android app's folder) reports its sync
+folders in its hourly report: how big each is, how much of it is stored on
+the device rather than online-only, the subfolders two levels down and the
+files of 100 MB and over. The Hub joins the reports on the server, the
+account and the path, which are the same on every client.
+
+An admin connects the account itself with **Connect an account** on the
+page: the Hub starts Nextcloud's sign-in flow, you sign in on Nextcloud's
+own page in a new tab and allow "FreeSize Hub", and Nextcloud hands the
+Hub an app password of its own (your password never reaches the Hub; the
+app password shows in Nextcloud's security settings, where it can be
+revoked). From then on the Hub lists the account over WebDAV, at start and
+every six hours or with **List now**: every folder's size, the ids, sizes
+and checksums of the big files, how much is in the trash, and what the
+account uses all told. The Hub only reads; it never changes anything on
+Nextcloud, and **Disconnect** asks Nextcloud to drop the app password.
+
+With both sides in, the page shows:
+
+- **Folders**: each synced folder with what the server holds, which
+  devices keep it stored (with "part" or "online-only" when a device has
+  only some of it), and how much is stored across the devices all told.
+- **Big files**: each file of 100 MB and over with the server's file id
+  and checksums, whether it is on the server, and the devices that store
+  it, with the path on each.
+- **Only one copy**: big files and folders a device holds that aren't on
+  Nextcloud yet and no other device keeps; top folders only the server
+  holds, with nobody keeping a stored copy; and the biggest scanned folders
+  on each device (1 GB and over, outside the system's own) that no synced
+  folder covers, where FreeSize simply knows of no copy. Nothing here is
+  a problem by itself; it is what a lost device or a failed server would
+  take with it.
+
+The device page's Nextcloud card shows the same device's folders on their
+own. `freesize nextcloud` on a desktop prints what that machine reports,
+for checking the counts by hand. A device whose account the Hub isn't
+connected to is still counted against the other devices, just not against
+the server.
 
 ### Alerts, metrics and Home Assistant
 

@@ -674,7 +674,12 @@ line), and the server (`hub`).
   `empty_quarantine`, `docker_cleanup`) and `CommandUpdate`. `unraid.rs`
   holds what an Unraid server reports (the array, shares, Docker, VMs,
   activity, permissions, moves with the file being copied, Nextcloud's
-  data folders and the round's peak memory). Each action
+  data folders and the round's peak memory). `sync.rs` (0.12) is what a
+  device keeps of its Nextcloud folders: per account (server, user,
+  client) and sync folder (local path, folder on the server, size, bytes
+  stored on the device, file counts, the virtual-files mode) its
+  subfolders two levels down and files of 100 MB and over one by one, each
+  with whether it is stored on the device. Each action
   has an `ActionKind`, which is what a grant covers; emptying the
   quarantine and removing images are kinds of their own that no grant
   covers, so they are asked for every time.
@@ -736,6 +741,20 @@ whole array, rather than every file.
 - `estimate.rs`: what deleting would really free: hard-linked files count
   only when every link goes, and ZFS snapshots holding the data are named.
 - `guard.rs`: refuses files some process has open (`/proc/*/fd`).
+- `nextcloud.rs` (0.12): the desktop client's accounts and sync folders
+  from its `nextcloud.cfg` (`%APPDATA%\Nextcloud`, `~/Library/Preferences/
+  Nextcloud` or `~/.config/Nextcloud`, this user's and every user's when
+  the agent runs with the rights to read them; on macOS with virtual files,
+  `~/Library/CloudStorage/Nextcloud-*`), the Android app's folder under
+  `Android/media/com.nextcloud.client/nextcloud/<user>@<host>`, and
+  `measure`: a scan of each sync folder summed per subfolder, with the
+  biggest files one by one. A file is stored on the device when its size is
+  zero or it has blocks allocated (Windows marks placeholders with the
+  cloud attributes, and `platform.rs` gives those no allocation; macOS's
+  dataless files have none); in the client's "suffix" mode, `x.nextcloud`
+  is a placeholder for `x`. The client's sync journal (SQLite, kept open by
+  the client) isn't read: paths are the key, the same on every client of a
+  server, and the Hub matches them to the server's file ids itself.
 
 The command line's agent (`crates/cli/src/agent.rs`) reports disks hourly,
 scans its folders on a thread every `--every` hours, and long-polls the Hub
@@ -767,7 +786,8 @@ and their daily samples, scans (folders as gzipped JSON) and their files,
 apps, commands, approvals, the audit log, sessions and sign-ins; then
 devices without an agent and saved searches; then alerts and their
 channels; then what Unraid servers report and the quarantine; then the
-folders a scan couldn't read; then each device's junk report. The dashboard marks such a scan incomplete,
+folders a scan couldn't read; then each device's junk report; then
+Nextcloud accounts, their listings and each device's sync report. The dashboard marks such a scan incomplete,
 with the count, on the device card, the scans table and the folders page
 (which names them), as does the HTML report; a Windows agent's page says
 it scans as its user.
@@ -845,6 +865,36 @@ it scans as its user.
 - `dashboard.rs` also reads each device's app version out of its name and
   marks it `behind` when it's older than the Hub's, which the device cards
   and the device page show.
+- `nextcloud.rs` (0.12): the Hub's own Nextcloud account(s). `connect`
+  starts Login Flow v2 (`POST <server>/index.php/login/v2`), keeps the
+  flow in `Shared.nextcloud` and polls its endpoint every 5 s for up to 20
+  minutes on a task until Nextcloud answers with the server, the login
+  name and an app password, which go in the `nextcloud` table (the
+  password is never sent to the dashboard); the dashboard asks
+  `/api/nextcloud/connect/{flow}` meanwhile. `list_files` lists the
+  account over WebDAV: PROPFIND with Depth 1 (ureq with non-standard
+  methods allowed) on `remote.php/dav/files/<user>/`, every folder two
+  levels down and deeper where a folder holds 100 MB or more, at most
+  5,000 requests, reading `oc:fileid`, `oc:size`, `oc:checksums`,
+  `d:getlastmodified` and the root's `d:quota-used-bytes`, plus the
+  trash's total from `remote.php/dav/trashbin/<user>/trash`; the
+  multistatus XML is read by a small tokenizer that goes by local names,
+  whatever prefixes the server uses. Listings run at start, every six
+  hours and on request, one per account at a time, replacing the
+  `nextcloud_files` rows in one transaction. Disconnecting asks Nextcloud
+  to revoke the app password (`DELETE ocs/v2.php/core/apppassword`) and
+  drops the rows. The Hub reads only.
+- `copies.rs` (0.12): `join` puts the devices' sync reports (the `sync`
+  table) together with the listings on (server, user, path): per folder
+  two levels down, what the server holds and each device's stored bytes,
+  file counts and whether it is complete; per big file, the server's id
+  and checksums, whether it is on the server and which devices store it;
+  and the risks: a big file or folder one device alone holds that the
+  server lacks (only for accounts the Hub has listed), top folders only
+  the server holds, and the biggest depth-one folders of each device's
+  latest scans (1 GB and over, outside system folders) that no synced
+  folder covers. `GET /api/copies` runs it for the devices the person may
+  see.
 - `web/`: the dashboard, plain JavaScript without a build step. All text
   goes in through `textContent`; the page's CSP allows scripts and styles
   from the Hub only, so styles are set through the CSSOM.
@@ -853,7 +903,9 @@ The tests in `crates/hub/tests` run a Hub on a random port against a mock
 OpenID provider (`tests/common/idp.rs`) and pair real agents with it:
 sign-in, pairing, signatures and replays, scoped viewers, requests and
 approvals through an approver, comparing, search, exports, uploads, alerts
-to a local ntfy and webhook stand-in, and metrics. `examples/demo.rs` runs
+to a local ntfy and webhook stand-in, metrics, and connecting a stand-in
+Nextcloud (the sign-in flow, PROPFIND listings, the Copies join and the
+risk report). `examples/demo.rs` runs
 the same with made-up devices for trying the dashboard.
 
 ### Packaging

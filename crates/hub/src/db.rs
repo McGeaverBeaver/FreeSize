@@ -245,6 +245,44 @@ const MIGRATIONS: &[&str] = &[
         report TEXT NOT NULL
     );
     ",
+    // 7: Nextcloud accounts the Hub reads, their files, and what each
+    // device keeps of its Nextcloud folders (0.12).
+    "
+    CREATE TABLE nextcloud (
+        id INTEGER PRIMARY KEY,
+        server TEXT NOT NULL,
+        user TEXT NOT NULL,
+        -- The app password Nextcloud's sign-in flow handed the Hub.
+        password TEXT NOT NULL,
+        added INTEGER NOT NULL,
+        added_by TEXT NOT NULL,
+        synced INTEGER,
+        error TEXT,
+        files INTEGER NOT NULL DEFAULT 0,
+        folders INTEGER NOT NULL DEFAULT 0,
+        bytes INTEGER NOT NULL DEFAULT 0,
+        trash INTEGER NOT NULL DEFAULT 0,
+        quota_used INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (server, user)
+    );
+
+    CREATE TABLE nextcloud_files (
+        account_id INTEGER NOT NULL REFERENCES nextcloud (id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        fileid INTEGER NOT NULL,
+        size INTEGER NOT NULL,
+        is_dir INTEGER NOT NULL,
+        modified INTEGER NOT NULL,
+        checksums TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (account_id, path)
+    );
+
+    CREATE TABLE sync (
+        device_id TEXT PRIMARY KEY,
+        taken INTEGER NOT NULL,
+        report TEXT NOT NULL
+    );
+    ",
 ];
 
 impl Db {

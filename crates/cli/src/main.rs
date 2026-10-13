@@ -12,6 +12,7 @@ use freesize_core::{
 
 mod agent;
 mod junk;
+mod nextcloud;
 mod release;
 #[cfg(unix)]
 mod unraid;

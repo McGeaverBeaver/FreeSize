@@ -8,6 +8,7 @@ pub mod audit;
 pub mod auth;
 pub mod commands;
 pub mod config;
+pub mod copies;
 pub mod dashboard;
 pub mod db;
 pub mod devices;
@@ -16,6 +17,7 @@ pub mod history;
 pub mod limits;
 pub mod maintenance;
 pub mod metrics;
+pub mod nextcloud;
 pub mod reports;
 pub mod tls;
 pub mod updates;
@@ -30,7 +32,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use freesize_proto::KeyPair;
@@ -63,6 +65,8 @@ pub struct Shared {
     pub tls: Option<Arc<tls::Tls>>,
     /// The newest release, when the update check is on and found one.
     pub latest: updates::Latest,
+    /// Nextcloud sign-ins under way, and listings running.
+    pub nextcloud: nextcloud::Logins,
 }
 
 impl Deref for AppState {
@@ -85,6 +89,7 @@ impl AppState {
             pair_limiter: limits::Limiter::pairing(),
             login_limiter: limits::Limiter::sign_in(),
             latest: updates::Latest::default(),
+            nextcloud: nextcloud::Logins::default(),
             tls: tls.map(Arc::new),
         }))
     }
@@ -189,6 +194,15 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(alerts::update_channel).delete(alerts::remove_channel),
         )
         .route("/api/alerts/channels/{id}/test", post(alerts::test_channel))
+        .route("/api/nextcloud", get(nextcloud::list))
+        .route("/api/nextcloud/connect", post(nextcloud::connect))
+        .route(
+            "/api/nextcloud/connect/{flow}",
+            get(nextcloud::connect_status),
+        )
+        .route("/api/nextcloud/{id}", delete(nextcloud::remove))
+        .route("/api/nextcloud/{id}/sync", post(nextcloud::sync_now))
+        .route("/api/copies", get(copies::copies))
         .route("/metrics", get(metrics::prometheus))
         .route("/metrics/json", get(metrics::summary))
         .route(
@@ -288,6 +302,7 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
     let refreshing = tokio::spawn(tls::refresh_loop(state.clone()));
     let housekeeping = tokio::spawn(maintenance::run(state.clone()));
     let updates = tokio::spawn(updates::run(state.clone()));
+    let listing = tokio::spawn(nextcloud::run(state.clone()));
     let app = router(state.clone());
     let builder = auto::Builder::new(TokioExecutor::new());
     let graceful = GracefulShutdown::new();
@@ -320,6 +335,7 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
     refreshing.abort();
     housekeeping.abort();
     updates.abort();
+    listing.abort();
     Ok(())
 }
 

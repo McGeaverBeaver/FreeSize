@@ -242,3 +242,6 @@ body.plain main.notice { margin-top: 12vh; }
   .hide-narrow { display: none; }
   .show-narrow { display: inline; }
 }
+
+.warn { color: var(--warn); }
+td .sub.danger { color: var(--danger); }

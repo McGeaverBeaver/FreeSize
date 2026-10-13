@@ -378,6 +378,8 @@ pub struct DeviceDetail {
     pub quarantine: Option<Value>,
     /// What its junk cleaner found, rule by rule.
     pub junk_report: Option<Value>,
+    /// What it keeps of its Nextcloud folders.
+    pub sync: Option<Value>,
 }
 
 /// `GET /api/devices/{id}`.
@@ -438,6 +440,7 @@ pub async fn detail(
             let unraid = stored("SELECT report FROM unraid WHERE device_id = ?1")?;
             let quarantine = stored("SELECT batches FROM quarantine WHERE device_id = ?1")?;
             let junk_report = stored("SELECT report FROM junk WHERE device_id = ?1")?;
+            let sync = stored("SELECT report FROM sync WHERE device_id = ?1")?;
             Ok(DeviceDetail {
                 summary,
                 history,
@@ -446,6 +449,7 @@ pub async fn detail(
                 unraid,
                 quarantine,
                 junk_report,
+                sync,
             })
         })
         .await?;

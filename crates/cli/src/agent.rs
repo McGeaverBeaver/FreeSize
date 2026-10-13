@@ -50,6 +50,9 @@ pub enum Command {
     /// Find junk in the known places (temporary files, caches, the trash,
     /// old downloads) and, if asked, clean what's safe.
     Junk(crate::junk::JunkArgs),
+    /// What this machine keeps of its Nextcloud folders, as reported to
+    /// the Hub.
+    Nextcloud(crate::nextcloud::NextcloudArgs),
     /// The Unraid plugin's background work, and the commands its page uses.
     #[cfg(unix)]
     Unraid {
@@ -172,6 +175,7 @@ pub fn main(command: Command) -> ExitCode {
         Command::Release { action } => crate::release::main(action),
         Command::Update(args) => crate::update::main(args),
         Command::Junk(args) => crate::junk::main(args),
+        Command::Nextcloud(args) => crate::nextcloud::main(args),
         #[cfg(unix)]
         Command::Unraid { action, dirs } => crate::unraid::main(action, dirs),
     };
@@ -541,6 +545,7 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
                 disks: Some(freesize_agent::report::disks(&places)),
                 quarantine: Some(executor.quarantine.list()),
                 junk: Some(junk_report()),
+                sync: Some(sync_report()),
                 ..Report::default()
             });
             if sent.is_ok() {
@@ -636,6 +641,13 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
             }
         }
     }
+}
+
+/// What this machine keeps of its Nextcloud folders; a walk of each sync
+/// folder.
+fn sync_report() -> freesize_proto::sync::SyncReport {
+    let accounts = freesize_agent::nextcloud::desktop_accounts();
+    freesize_agent::nextcloud::report(&accounts, now())
 }
 
 /// What the junk cleaner finds now; a few seconds of looking.

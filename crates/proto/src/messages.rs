@@ -215,6 +215,9 @@ pub struct Report {
     /// What the junk cleaner found (0.10).
     #[serde(default)]
     pub junk: Option<JunkReport>,
+    /// What the device keeps of its Nextcloud folders (0.12).
+    #[serde(default)]
+    pub sync: Option<crate::sync::SyncReport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
