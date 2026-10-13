@@ -222,6 +222,8 @@ pub struct Container {
     pub running: bool,
     /// Host paths it mounts.
     pub mounts: Vec<String>,
+    /// The same with where each is inside the container (host, inside).
+    pub binds: Vec<(String, String)>,
     /// What it wrote inside itself.
     pub size_rw: u64,
     pub log_bytes: u64,
@@ -278,11 +280,24 @@ pub fn inventory(engine: &Engine, system: &System) -> Result<Inventory, String> 
             .unwrap_or_default()
             .trim_start_matches('/')
             .to_string();
-        let mounts = c["Mounts"]
+        let mounts: Vec<String> = c["Mounts"]
             .as_array()
             .map(|list| {
                 list.iter()
                     .filter_map(|m| m["Source"].as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let binds: Vec<(String, String)> = c["Mounts"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|m| {
+                        Some((
+                            m["Source"].as_str()?.to_string(),
+                            m["Destination"].as_str()?.to_string(),
+                        ))
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -302,6 +317,7 @@ pub fn inventory(engine: &Engine, system: &System) -> Result<Inventory, String> 
             id,
             name,
             mounts,
+            binds,
             log_bytes,
         });
     }

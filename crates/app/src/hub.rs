@@ -279,12 +279,18 @@ pub fn device_info(name: &str, os: &str, state: Option<&AgentState>) -> DeviceIn
                 ActionKind::Empty,
             ]
         } else {
-            vec![
+            let mut actions = vec![
                 ActionKind::Delete,
                 ActionKind::Clean,
                 ActionKind::Restore,
                 ActionKind::Empty,
-            ]
+                ActionKind::MoveIn,
+            ];
+            // Freeing local copies is the client's virtual files, Windows only.
+            if platform == Platform::Windows {
+                actions.push(ActionKind::OnlineOnly);
+            }
+            actions
         },
         attended: true,
         approver: None,
@@ -654,6 +660,31 @@ impl Executor for AppExecutor {
 
     fn empty_quarantine(&self, batches: &[String]) -> Result<u64, String> {
         crate::quarantine::empty(batches)
+    }
+
+    fn online_only(
+        &self,
+        root: &Path,
+        paths: &[String],
+        keep: bool,
+    ) -> Result<freesize_agent::nextcloud::PinOutcome, String> {
+        freesize_agent::nextcloud::online_only(root, paths, keep)
+    }
+
+    fn move_in(
+        &self,
+        source: &Path,
+        into: &Path,
+        target: &str,
+    ) -> Result<freesize_agent::nextcloud::MoveOutcome, String> {
+        freesize_agent::nextcloud::move_in(source, into, target, &|paths| {
+            let (bytes, errors) =
+                crate::quarantine::delete_all(paths, "moved into the Nextcloud folder");
+            match errors.into_iter().next() {
+                Some(err) => Err(err),
+                None => Ok(bytes),
+            }
+        })
     }
 
     fn note(&self, request: &Request) -> String {

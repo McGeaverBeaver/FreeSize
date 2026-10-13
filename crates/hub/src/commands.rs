@@ -7,10 +7,11 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use freesize_core::snapshot::FolderSize;
 use freesize_proto::keys::random_id;
+use freesize_proto::sync::{SyncFolder, SyncReport, join_remote};
 use freesize_proto::unraid::{QuarantineBatch, Safety, UnraidReport};
 use freesize_proto::{
     Action, ActionKind, Admin as AdminRef, ApprovalRequest, AppsReport, Command, CommandState,
-    CommandUpdate, Decision, PollResponse, PublicKey, Purpose, Signed,
+    CommandUpdate, Decision, Platform, PollResponse, PublicKey, Purpose, Signed,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,7 @@ use crate::auth::{Admin, User};
 use crate::db::now;
 use crate::devices::{Device, DeviceRequest, gunzip_json};
 use crate::error::{ApiError, ApiResult};
+use crate::nextcloud::{self, Credentials};
 use crate::{AppState, audit};
 
 /// How long a device has to act on a request.
@@ -297,8 +299,194 @@ fn check_action(
                 *bytes += finding.bytes;
             }
         }
+        Action::OnlineOnly {
+            root,
+            paths,
+            bytes,
+            keep,
+        } => {
+            let report = sync_report(c, device)?;
+            let folder = sync_folder(&report, root)?;
+            if target.info.platform != Platform::Windows {
+                return Err(ApiError::bad_request(format!(
+                    "only Windows frees local copies from here; on {} use the Nextcloud \
+                     client's own menu",
+                    target.name
+                )));
+            }
+            if folder.virtual_files != "wincfapi" {
+                return Err(ApiError::bad_request(format!(
+                    "{root} on {} isn't set to virtual files; turn that on in the Nextcloud \
+                     client first (Settings, the folder's menu, Enable virtual file support)",
+                    target.name
+                )));
+            }
+            for path in paths.iter_mut() {
+                *path = path.trim_matches(['/', '\\']).replace('\\', "/");
+            }
+            paths.sort();
+            paths.dedup();
+            if paths.is_empty() {
+                paths.push(String::new());
+            }
+            if paths.len() > MAX_PATHS {
+                return Err(ApiError::bad_request(format!(
+                    "choose 1 to {MAX_PATHS} items"
+                )));
+            }
+            if paths.iter().any(|p| p.split('/').any(|part| part == "..")) {
+                return Err(ApiError::bad_request("paths must be below the sync folder"));
+            }
+            *bytes = 0;
+            for path in paths.iter() {
+                // What's stored is freed; what isn't is fetched.
+                let (size, on_disk) = if path.is_empty() {
+                    (folder.size, folder.on_disk)
+                } else if let Some(dir) = folder.dirs.iter().find(|d| &d.path == path) {
+                    (dir.size, dir.on_disk)
+                } else if let Some(file) = folder.big.iter().find(|f| &f.path == path) {
+                    (file.size, if file.on_disk { file.size } else { 0 })
+                } else {
+                    return Err(ApiError::bad_request(format!(
+                        "{path} isn't in what {} reported of {root}",
+                        target.name
+                    )));
+                };
+                *bytes += if *keep {
+                    size.saturating_sub(on_disk)
+                } else {
+                    on_disk
+                };
+            }
+        }
+        Action::MoveIn {
+            root,
+            path,
+            into,
+            target: to,
+            bytes,
+        } => {
+            *path = path.trim_matches(['/', '\\']).to_string();
+            if path.is_empty()
+                || path
+                    .split(['/', '\\'])
+                    .any(|part| part == ".." || part.is_empty())
+            {
+                return Err(ApiError::bad_request(
+                    "the folder must be below the scanned folder",
+                ));
+            }
+            let report = sync_report(c, device)?;
+            sync_folder(&report, into)?;
+            *to = clean_target(to)?;
+            *bytes = sizes_in_scan(c, device, root, std::slice::from_ref(path))?;
+        }
+        Action::ExternalStorage {
+            share,
+            container,
+            mount,
+            inside,
+        } => {
+            let report = unraid_report(c, device)?;
+            let install = report
+                .nextcloud
+                .iter()
+                .find(|n| !n.container.is_empty() && &n.container == container)
+                .ok_or_else(|| {
+                    ApiError::bad_request("the server didn't report Nextcloud in that container")
+                })?;
+            if !report.shares.iter().any(|s| &s.name == share) {
+                return Err(ApiError::bad_request(format!(
+                    "the server didn't report a share named {share}"
+                )));
+            }
+            let host = format!("/mnt/user/{share}");
+            let bound = install
+                .mounts
+                .iter()
+                .find(|m| m.host == host)
+                .ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "{container} doesn't mount the share {share}; add the path to the \
+                         container first"
+                    ))
+                })?;
+            *inside = bound.inside.clone();
+            *mount = format!("/{}", clean_target(mount)?);
+            if install.external.iter().any(|m| m == mount) {
+                return Err(ApiError::bad_request(format!(
+                    "Nextcloud already has a storage at {mount}"
+                )));
+            }
+        }
     }
     Ok(())
+}
+
+/// A folder path in Nextcloud as typed, `Archive/Desktop/GoPro`: names
+/// with `/` between, nothing that climbs or that a file system refuses.
+fn clean_target(target: &str) -> ApiResult<String> {
+    let parts: Vec<String> = target
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(String::from)
+        .collect();
+    if parts.is_empty() {
+        return Err(ApiError::bad_request("give the folder a name"));
+    }
+    if parts.iter().any(|p| {
+        p == "." || p == ".." || p.contains(|c: char| c.is_control() || ":*?\"<>|".contains(c))
+    }) {
+        return Err(ApiError::bad_request(format!(
+            "{target} isn't a folder name Nextcloud and every device accept"
+        )));
+    }
+    Ok(parts.join("/"))
+}
+
+/// What a device last reported of its Nextcloud folders.
+fn sync_report(c: &Connection, device: &str) -> ApiResult<SyncReport> {
+    let text: Option<String> = c
+        .query_row(
+            "SELECT report FROM sync WHERE device_id = ?1",
+            [device],
+            |r| r.get(0),
+        )
+        .optional()?;
+    text.and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| ApiError::bad_request("the device hasn't reported its Nextcloud folders"))
+}
+
+/// The sync folder a device reported at `local`.
+fn sync_folder<'a>(report: &'a SyncReport, local: &str) -> ApiResult<&'a SyncFolder> {
+    report
+        .accounts
+        .iter()
+        .flat_map(|a| a.folders.iter())
+        .find(|f| f.local == local)
+        .ok_or_else(|| ApiError::bad_request("the device didn't report that sync folder"))
+}
+
+/// For a move into a sync folder: the Hub's sign-in to the same account,
+/// and the folder to make there, so it exists before the client uploads.
+fn folder_to_make(c: &Connection, device: &str, action: &Action) -> Option<(Credentials, String)> {
+    let Action::MoveIn { into, target, .. } = action else {
+        return None;
+    };
+    let report = sync_report(c, device).ok()?;
+    let (account, folder) = report
+        .accounts
+        .iter()
+        .find_map(|a| a.folders.iter().find(|f| &f.local == into).map(|f| (a, f)))?;
+    let key = nextcloud::account_key(&account.server, &account.user);
+    let id = nextcloud::accounts(c)
+        .ok()?
+        .into_iter()
+        .find(|a| nextcloud::account_key(&a.server, &a.user) == key)?
+        .id;
+    let creds = nextcloud::credentials(c, id).ok()?;
+    Some((creds, join_remote(&folder.remote, target)))
 }
 
 /// The size of Unraid findings by their paths below `/mnt/user`; each must
@@ -390,58 +578,61 @@ pub async fn create(
     let device_id = device.clone();
     let id = state
         .db
-        .call(move |c| -> ApiResult<String> {
-            let target: Target = c
-                .query_row(
-                    "SELECT name, group_id, info FROM devices WHERE id = ?1 AND removed = 0",
-                    [&device],
-                    |r| {
-                        Ok(Target {
-                            name: r.get(0)?,
-                            group_id: r.get(1)?,
-                            info: serde_json::from_str(&r.get::<_, String>(2)?).unwrap_or_default(),
-                        })
+        .call(
+            move |c| -> ApiResult<(String, Option<(Credentials, String)>)> {
+                let target: Target = c
+                    .query_row(
+                        "SELECT name, group_id, info FROM devices WHERE id = ?1 AND removed = 0",
+                        [&device],
+                        |r| {
+                            Ok(Target {
+                                name: r.get(0)?,
+                                group_id: r.get(1)?,
+                                info: serde_json::from_str(&r.get::<_, String>(2)?)
+                                    .unwrap_or_default(),
+                            })
+                        },
+                    )
+                    .optional()?
+                    .ok_or_else(|| ApiError::not_found("no such device"))?;
+                let groups = crate::dashboard::groups(c)?;
+                let group = groups
+                    .iter()
+                    .find(|g| g.id == target.group_id)
+                    .ok_or_else(|| ApiError::not_found("no such device"))?;
+                if !user.sees(&group.viewer_groups, &config) {
+                    return Err(ApiError::not_found("no such device"));
+                }
+                let mut action = request.action;
+                check_action(c, &device, &target, &mut action)?;
+                let make = folder_to_make(c, &device, &action);
+                let grantable = action.kind().grantable();
+                let command = Command {
+                    id: random_id::<10>(),
+                    device: device.clone(),
+                    action,
+                    by: AdminRef {
+                        subject: user.subject.clone(),
+                        name: user.name.clone(),
                     },
-                )
-                .optional()?
-                .ok_or_else(|| ApiError::not_found("no such device"))?;
-            let groups = crate::dashboard::groups(c)?;
-            let group = groups
-                .iter()
-                .find(|g| g.id == target.group_id)
-                .ok_or_else(|| ApiError::not_found("no such device"))?;
-            if !user.sees(&group.viewer_groups, &config) {
-                return Err(ApiError::not_found("no such device"));
-            }
-            let mut action = request.action;
-            check_action(c, &device, &target, &mut action)?;
-            let grantable = action.kind().grantable();
-            let command = Command {
-                id: random_id::<10>(),
-                device: device.clone(),
-                action,
-                by: AdminRef {
-                    subject: user.subject.clone(),
-                    name: user.name.clone(),
-                },
-                reason,
-                created: now(),
-                expires: now() + LIFETIME,
-                // What can't be undone is asked for every time: no grant
-                // lengths offered, whatever the group allows.
-                grant_minutes: if grantable {
-                    group.grant_minutes.clone()
-                } else {
-                    Vec::new()
-                },
-            };
-            let signed = Signed::sign(
-                &command,
-                &freesize_proto::KeyPair::from_seed(key),
-                Purpose::Command,
-            );
-            let summary = command.action.summary();
-            c.execute(
+                    reason,
+                    created: now(),
+                    expires: now() + LIFETIME,
+                    // What can't be undone is asked for every time: no grant
+                    // lengths offered, whatever the group allows.
+                    grant_minutes: if grantable {
+                        group.grant_minutes.clone()
+                    } else {
+                        Vec::new()
+                    },
+                };
+                let signed = Signed::sign(
+                    &command,
+                    &freesize_proto::KeyPair::from_seed(key),
+                    Purpose::Command,
+                );
+                let summary = command.action.summary();
+                c.execute(
                 "INSERT INTO commands (id, device_id, kind, summary, admin, admin_name, created,
                                        expires, signed, state, updated)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?7)",
@@ -460,18 +651,29 @@ pub async fn create(
                     serde_json::to_string(&signed).unwrap_or_default(),
                 ],
             )?;
-            audit::append(
-                c,
-                &user.name,
-                "request made",
-                Some(&device),
-                &json!({"request": command.id, "summary": summary,
+                audit::append(
+                    c,
+                    &user.name,
+                    "request made",
+                    Some(&device),
+                    &json!({"request": command.id, "summary": summary,
                         "action": command.action, "reason": command.reason}),
-            )?;
-            Ok(command.id)
-        })
+                )?;
+                Ok((command.id, make))
+            },
+        )
         .await?;
+    let (id, make) = id;
     state.wakers.wake(&device_id);
+    if let Some((creds, path)) = make {
+        // Best effort: the client makes the folder itself when it uploads;
+        // this only has it there first, so other devices see it sooner.
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = nextcloud::mkcol(&creds, &path) {
+                tracing::warn!("Nextcloud: couldn't make {path}: {err}");
+            }
+        });
+    }
     Ok(Json(json!({"id": id})))
 }
 

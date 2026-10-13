@@ -31,5 +31,10 @@ ureq = { version = "3.4.2", optional = true, default-features = false, features 
 [target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
 ureq = { version = "3.4.2", optional = true, default-features = false, features = ["rustls", "platform-verifier"] }
 
+# The Nextcloud client's placeholders on Windows (0.13): the pinned and
+# unpinned attributes, like Explorer's "Free up space".
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"

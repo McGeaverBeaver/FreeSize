@@ -283,6 +283,11 @@ const MIGRATIONS: &[&str] = &[
         report TEXT NOT NULL
     );
     ",
+    // 8: how much the server says an account has left (0.13); -1 until
+    // the next listing, and for an unlimited account.
+    "
+    ALTER TABLE nextcloud ADD COLUMN quota_free INTEGER NOT NULL DEFAULT -1;
+    ",
 ];
 
 impl Db {

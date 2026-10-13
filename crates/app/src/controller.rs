@@ -391,12 +391,17 @@ fn new_hub(junk: &Arc<Mutex<Vec<cleanup::Junk>>>, transport: SharedTransport) ->
                 freesize_proto::ActionKind::Empty,
             ]
         } else {
-            vec![
+            let mut actions = vec![
                 freesize_proto::ActionKind::Delete,
                 freesize_proto::ActionKind::Clean,
                 freesize_proto::ActionKind::Restore,
                 freesize_proto::ActionKind::Empty,
-            ]
+                freesize_proto::ActionKind::MoveIn,
+            ];
+            if platform == freesize_proto::Platform::Windows {
+                actions.push(freesize_proto::ActionKind::OnlineOnly);
+            }
+            actions
         },
         roots,
         keep: vec![path.clone()],

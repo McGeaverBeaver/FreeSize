@@ -891,6 +891,44 @@ impl Executor for UnraidExecutor {
         self.inner.clean(kind)
     }
 
+    fn external_storage(
+        &self,
+        share: &str,
+        container: &str,
+        mount: &str,
+        inside: &str,
+    ) -> Result<String, String> {
+        let inventory = self.inventory.as_ref().ok_or("Docker isn't running")?;
+        let found = inventory
+            .containers
+            .iter()
+            .find(|c| c.name == container)
+            .ok_or_else(|| format!("no container named {container}"))?;
+        if !found.running {
+            return Err(format!("{container} isn't running"));
+        }
+        // The share must be bound there, at that path: the Hub's word
+        // isn't enough.
+        let bound = found.binds.iter().any(|(host, in_container)| {
+            in_container == inside
+                && docker::share_of(host).is_some_and(|s| s == share)
+                && host.trim_end_matches('/').ends_with(&format!("/{share}"))
+        });
+        if !bound {
+            return Err(format!(
+                "{container} doesn't mount the share {share} at {inside}"
+            ));
+        }
+        if mount.len() < 2
+            || !mount.starts_with('/')
+            || mount.contains("..")
+            || mount.contains(|c: char| c.is_control() || c == '\\')
+        {
+            return Err("that's not a folder name for Nextcloud".into());
+        }
+        freesize_unraid::nextcloud::add_external_storage(container, mount, inside)
+    }
+
     fn note(&self, request: &Request) -> String {
         self.inner.note(request)
     }
@@ -988,6 +1026,7 @@ impl Daemon {
                 ActionKind::Restore,
                 ActionKind::Empty,
                 ActionKind::Docker,
+                ActionKind::Mount,
             ],
             roots,
             keep: vec![self.dirs.state(), self.dirs.config.clone()],
@@ -1342,6 +1381,7 @@ pub fn device_info(system: &System, name: &str, state: Option<&AgentState>) -> D
             ActionKind::Restore,
             ActionKind::Empty,
             ActionKind::Docker,
+            ActionKind::Mount,
         ],
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),

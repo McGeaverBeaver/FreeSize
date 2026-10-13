@@ -5,6 +5,14 @@
 //! from the client's sync journal (an SQLite file the client keeps open):
 //! paths are the key, which are the same on every client of a server, and
 //! the Hub matches them to the server's file ids itself.
+//!
+//! The two things a device does on request (0.13): free the local copies
+//! of synced files on Windows, by marking the placeholders unpinned as
+//! Explorer's "Free up space" does (the client frees them on its next
+//! run, and brings them back when opened or marked pinned again); and
+//! move a scanned folder into the sync folder so the client uploads it:
+//! a rename on the same drive, otherwise a copy checked byte for byte,
+//! with the original moved to the quarantine.
 
 use std::path::{Path, PathBuf};
 
@@ -428,6 +436,406 @@ fn is_client_file(name: &str) -> bool {
     name.starts_with(".sync_") || name.starts_with("._sync_") || CLIENT_FILES.contains(&name)
 }
 
+/// Whether `path` is one of the desktop client's sync folders here, so a
+/// request may name it.
+pub fn is_sync_folder(path: &Path) -> bool {
+    let wanted = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    desktop_accounts()
+        .iter()
+        .flat_map(|a| &a.folders)
+        .any(|f| f.local.canonicalize().unwrap_or_else(|_| f.local.clone()) == wanted)
+}
+
+/// A relative path with `/` between names below `base`, refusing anything
+/// that could lead out of it.
+pub fn below(base: &Path, relative: &str) -> Result<PathBuf, String> {
+    let mut out = base.to_path_buf();
+    for part in relative.split('/') {
+        if part.is_empty() {
+            continue;
+        }
+        if part == "." || part == ".." || part.contains(['\\', '\0', ':']) {
+            return Err(format!("\"{relative}\" isn't a path below the folder"));
+        }
+        out.push(part);
+    }
+    Ok(out)
+}
+
+/// What marking files did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PinOutcome {
+    /// Files whose mark changed.
+    pub files: u64,
+    /// What the client will free (or fetch) for them.
+    pub bytes: u64,
+}
+
+impl PinOutcome {
+    pub fn detail(&self, keep: bool) -> String {
+        if keep {
+            format!(
+                "marked {} to keep on this device ({}); the Nextcloud client fetches them on \
+                 its next run",
+                count(self.files),
+                freesize_core::format_size(self.bytes)
+            )
+        } else {
+            format!(
+                "marked {} online-only ({}); the Nextcloud client frees them on its next run, \
+                 and they stay listed",
+                count(self.files),
+                freesize_core::format_size(self.bytes)
+            )
+        }
+    }
+}
+
+fn count(files: u64) -> String {
+    match files {
+        1 => "1 file".to_string(),
+        n => format!("{n} files"),
+    }
+}
+
+/// Why this platform can't free local copies from here, pointing to what
+/// can.
+pub fn online_only_pointer() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "on a Mac the Nextcloud client's files are managed by macOS: in Finder, right-click \
+         the folder and choose Remove Download"
+    } else if cfg!(target_os = "android") {
+        "on Android, the Nextcloud app's own \"available offline\" setting decides what's kept"
+    } else {
+        "on Linux the Nextcloud client's virtual files (in the client, marked beta) decide \
+         what's kept"
+    }
+}
+
+/// Marks the files below `paths` in the sync folder `root` online-only
+/// (`keep` false) or to keep on this device (`keep` true). Windows only:
+/// elsewhere it says what to use instead.
+pub fn online_only(root: &Path, paths: &[String], keep: bool) -> Result<PinOutcome, String> {
+    if !is_sync_folder(root) {
+        return Err(format!(
+            "{} isn't a folder the Nextcloud client syncs on this machine",
+            root.display()
+        ));
+    }
+    let mut targets = Vec::new();
+    if paths.is_empty() {
+        targets.push(root.to_path_buf());
+    }
+    for relative in paths {
+        let target = below(root, relative)?;
+        if !target.exists() {
+            return Err(format!("{} isn't there", target.display()));
+        }
+        targets.push(target);
+    }
+    let mut outcome = PinOutcome::default();
+    for target in &targets {
+        pin::mark(target, keep, &mut outcome)?;
+    }
+    Ok(outcome)
+}
+
+#[cfg(windows)]
+mod pin {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+
+    use windows_sys::Win32::Storage::FileSystem::{GetFileAttributesW, SetFileAttributesW};
+
+    use super::PinOutcome;
+
+    const INVALID: u32 = u32::MAX;
+    const DIRECTORY: u32 = 0x10;
+    const OFFLINE: u32 = 0x1000;
+    const PINNED: u32 = 0x8_0000;
+    const UNPINNED: u32 = 0x10_0000;
+    const RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
+
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    }
+
+    /// Sets the marks on `path` and everything below it.
+    pub fn mark(path: &Path, keep: bool, outcome: &mut PinOutcome) -> Result<(), String> {
+        let wide = wide(path);
+        // SAFETY: a NUL-terminated wide string that outlives the calls.
+        let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+        if attrs == INVALID {
+            return Err(format!(
+                "{}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        let wanted = if keep {
+            (attrs | PINNED) & !UNPINNED
+        } else {
+            (attrs | UNPINNED) & !PINNED
+        };
+        if wanted != attrs {
+            // SAFETY: as above.
+            if unsafe { SetFileAttributesW(wide.as_ptr(), wanted) } == 0 {
+                return Err(format!(
+                    "{}: {}",
+                    path.display(),
+                    std::io::Error::last_os_error()
+                ));
+            }
+            if attrs & DIRECTORY == 0 {
+                outcome.files += 1;
+                let dehydrated = attrs & (OFFLINE | RECALL_ON_DATA_ACCESS) != 0;
+                if dehydrated == keep {
+                    outcome.bytes += std::fs::metadata(path).map_or(0, |m| m.len());
+                }
+            }
+        }
+        if attrs & DIRECTORY != 0 {
+            for entry in std::fs::read_dir(path).map_err(|e| format!("{}: {e}", path.display()))? {
+                let entry = entry.map_err(|e| format!("{}: {e}", path.display()))?;
+                if entry.file_type().is_ok_and(|t| t.is_symlink()) {
+                    continue;
+                }
+                mark(&entry.path(), keep, outcome)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+mod pin {
+    use std::path::Path;
+
+    use super::PinOutcome;
+
+    pub fn mark(_path: &Path, _keep: bool, _outcome: &mut PinOutcome) -> Result<(), String> {
+        Err(format!(
+            "this machine can't free local copies from here: {}",
+            super::online_only_pointer()
+        ))
+    }
+}
+
+/// What moving a folder into the sync folder did.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MoveOutcome {
+    pub files: u64,
+    pub bytes: u64,
+    /// The folder was renamed in place (same drive); nothing was copied.
+    pub renamed: bool,
+    /// Bytes the original took, now in the quarantine (a copy).
+    pub quarantined: u64,
+    pub notes: Vec<String>,
+}
+
+impl MoveOutcome {
+    pub fn detail(&self) -> String {
+        let mut text = if self.renamed {
+            format!(
+                "moved {} ({}) into the sync folder on the same drive; the Nextcloud client \
+                 uploads it next",
+                count(self.files),
+                freesize_core::format_size(self.bytes)
+            )
+        } else {
+            format!(
+                "copied {} ({}) into the sync folder, checked every byte, and moved the \
+                 original to the quarantine; the Nextcloud client uploads it next",
+                count(self.files),
+                freesize_core::format_size(self.bytes)
+            )
+        };
+        for note in &self.notes {
+            text.push_str("; ");
+            text.push_str(note);
+        }
+        text
+    }
+}
+
+/// Moves `source` (a folder) to `target` below the sync folder `into`.
+/// `quarantine` moves the original aside once a copy checked out and
+/// returns its bytes.
+pub fn move_in(
+    source: &Path,
+    into: &Path,
+    target: &str,
+    quarantine: &dyn Fn(&[PathBuf]) -> Result<u64, String>,
+) -> Result<MoveOutcome, String> {
+    if !is_sync_folder(into) {
+        return Err(format!(
+            "{} isn't a folder the Nextcloud client syncs on this machine",
+            into.display()
+        ));
+    }
+    if !source.is_dir() {
+        return Err(format!("{} isn't a folder", source.display()));
+    }
+    let dest = below(into, target)?;
+    if dest == into {
+        return Err("say where below the sync folder it goes".into());
+    }
+    if dest.exists() {
+        return Err(format!("{} is already there", dest.display()));
+    }
+    let real_source = source
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", source.display()))?;
+    let real_into = into
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", into.display()))?;
+    if real_into.starts_with(&real_source) {
+        return Err("the sync folder is inside that folder".into());
+    }
+    if real_source.starts_with(&real_into) {
+        return Err(format!(
+            "{} is in the sync folder already",
+            source.display()
+        ));
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    move_folder(source, &dest, quarantine)
+}
+
+/// The move itself, without the sync folder checks (tests use it).
+fn move_folder(
+    source: &Path,
+    dest: &Path,
+    quarantine: &dyn Fn(&[PathBuf]) -> Result<u64, String>,
+) -> Result<MoveOutcome, String> {
+    let mut outcome = MoveOutcome::default();
+    match std::fs::rename(source, dest) {
+        Ok(()) => {
+            let (files, bytes) = measure_tree(dest);
+            outcome.files = files;
+            outcome.bytes = bytes;
+            outcome.renamed = true;
+            return Ok(outcome);
+        }
+        Err(err) if crosses_devices(&err) => {}
+        Err(err) => return Err(format!("{} -> {}: {err}", source.display(), dest.display())),
+    }
+    copy_tree(source, dest, &mut outcome)?;
+    if let Err(err) = check_tree(source, dest) {
+        // Leave nothing half done: the copy goes, the original stays.
+        let _ = std::fs::remove_dir_all(dest);
+        return Err(format!(
+            "the copy didn't check out, so it was removed: {err}"
+        ));
+    }
+    outcome.quarantined = quarantine(&[source.to_path_buf()])?;
+    Ok(outcome)
+}
+
+fn crosses_devices(err: &std::io::Error) -> bool {
+    // EXDEV on Unix, ERROR_NOT_SAME_DEVICE on Windows.
+    matches!(err.raw_os_error(), Some(18) if cfg!(unix))
+        || matches!(err.raw_os_error(), Some(17) if cfg!(windows))
+}
+
+fn measure_tree(path: &Path) -> (u64, u64) {
+    let mut files = 0;
+    let mut bytes = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let (f, b) = measure_tree(&entry.path());
+                files += f;
+                bytes += b;
+            } else if kind.is_file() {
+                files += 1;
+                bytes += entry.metadata().map_or(0, |m| m.len());
+            }
+        }
+    }
+    (files, bytes)
+}
+
+fn copy_tree(source: &Path, dest: &Path, outcome: &mut MoveOutcome) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+    for entry in std::fs::read_dir(source).map_err(|e| format!("{}: {e}", source.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", source.display()))?;
+        let from = entry.path();
+        let to = dest.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", from.display()))?;
+        if kind.is_dir() {
+            copy_tree(&from, &to, outcome)?;
+        } else if kind.is_file() {
+            let bytes = std::fs::copy(&from, &to)
+                .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
+            outcome.files += 1;
+            outcome.bytes += bytes;
+        } else {
+            outcome
+                .notes
+                .push(format!("{} is a link and wasn't copied", from.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Every file in `source` has a byte-for-byte equal copy in `dest`.
+fn check_tree(source: &Path, dest: &Path) -> Result<(), String> {
+    use std::io::Read;
+    for entry in std::fs::read_dir(source).map_err(|e| format!("{}: {e}", source.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", source.display()))?;
+        let from = entry.path();
+        let to = dest.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", from.display()))?;
+        if kind.is_dir() {
+            check_tree(&from, &to)?;
+        } else if kind.is_file() {
+            let mut a =
+                std::fs::File::open(&from).map_err(|e| format!("{}: {e}", from.display()))?;
+            let mut b = std::fs::File::open(&to).map_err(|e| format!("{}: {e}", to.display()))?;
+            let (mut buf_a, mut buf_b) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
+            loop {
+                let read_a = a
+                    .read(&mut buf_a)
+                    .map_err(|e| format!("{}: {e}", from.display()))?;
+                let mut read_b = 0;
+                while read_b < read_a {
+                    let n = b
+                        .read(&mut buf_b[read_b..read_a])
+                        .map_err(|e| format!("{}: {e}", to.display()))?;
+                    if n == 0 {
+                        break;
+                    }
+                    read_b += n;
+                }
+                if read_a != read_b || buf_a[..read_a] != buf_b[..read_b] {
+                    return Err(format!("{} differs from its copy", from.display()));
+                }
+                if read_a == 0 {
+                    let mut extra = [0u8; 1];
+                    if b.read(&mut extra)
+                        .map_err(|e| format!("{}: {e}", to.display()))?
+                        != 0
+                    {
+                        return Err(format!("{} differs from its copy", from.display()));
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One line per account for logs and the command line.
 pub fn describe(account: &Account) -> String {
     format!(
@@ -545,6 +953,76 @@ version=2
         );
         assert_eq!(report.taken, 5);
         assert_eq!(report.accounts[0].folders[0].files, 5);
+    }
+
+    #[test]
+    fn moves_a_folder_in_and_checks_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let write = |path: &str, bytes: &[u8]| {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        };
+        write("Videos/GoPro/a.mp4", &[1u8; 5000]);
+        write("Videos/GoPro/2024/b.mp4", &[2u8; 300]);
+        write("Videos/GoPro/empty.txt", b"");
+        std::fs::create_dir_all(root.join("Nextcloud/Archive/Desktop")).unwrap();
+        let no_quarantine = |_: &[PathBuf]| Err::<u64, String>("not used".into());
+        // Same drive: a rename.
+        let moved = move_folder(
+            &root.join("Videos/GoPro"),
+            &root.join("Nextcloud/Archive/Desktop/GoPro"),
+            &no_quarantine,
+        )
+        .unwrap();
+        assert!(moved.renamed);
+        assert_eq!(moved.files, 3);
+        assert_eq!(moved.bytes, 5300);
+        assert!(
+            root.join("Nextcloud/Archive/Desktop/GoPro/2024/b.mp4")
+                .is_file()
+        );
+        assert!(!root.join("Videos/GoPro").exists());
+        assert!(moved.detail().contains("same drive"));
+        // A copy that checks out, then the original aside.
+        write("Pictures/x.jpg", &[3u8; 1234]);
+        let mut out = MoveOutcome::default();
+        copy_tree(
+            &root.join("Pictures"),
+            &root.join("Nextcloud/Pictures"),
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!((out.files, out.bytes), (1, 1234));
+        check_tree(&root.join("Pictures"), &root.join("Nextcloud/Pictures")).unwrap();
+        std::fs::write(root.join("Nextcloud/Pictures/x.jpg"), [3u8; 1233]).unwrap();
+        assert!(
+            check_tree(&root.join("Pictures"), &root.join("Nextcloud/Pictures"))
+                .unwrap_err()
+                .contains("differs")
+        );
+        // The checks around the sync folder.
+        assert!(below(root, "a/../b").is_err());
+        assert_eq!(below(root, "a//b/").unwrap(), root.join("a").join("b"));
+        assert!(
+            move_in(
+                &root.join("Pictures"),
+                &root.join("Nextcloud"),
+                "Pictures",
+                &no_quarantine
+            )
+            .unwrap_err()
+            .contains("isn't a folder the Nextcloud client syncs")
+        );
+        if !cfg!(windows) {
+            assert!(
+                online_only(&root.join("Nextcloud"), &[], false)
+                    .unwrap_err()
+                    .contains("syncs")
+            );
+            assert!(!online_only_pointer().is_empty());
+        }
     }
 
     #[test]

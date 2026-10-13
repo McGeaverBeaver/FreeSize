@@ -218,7 +218,6 @@ Left over and planned (the release it goes in is under Next releases):
   `~/Library` once matching folders to programs is reliable enough to call
   one abandoned (old downloads and screen recordings are junk cleaner
   rules since 0.10).
-- **Making Nextcloud files online-only** on Windows (phase 5, 0.13).
 
 Parked, each with its reason:
 - **The Hub on Windows** as a service from the installer: needs the
@@ -307,6 +306,23 @@ Parked, each with its reason:
   forum if CA asks for one (then put its address in the entry and the
   `.plg`), and check both appear in the Apps tab on a clean Unraid 7.3 and
   install from there.
+- 0.13: copies, actions (phase 5, second half). The Copies page's
+  Suggestions tab turns the join into requests, each still shown and
+  approved on the device: free a folder's local copies on Windows (the
+  cloud files API's pin attributes, which the Nextcloud client honours on
+  its next run and only for what it has uploaded; macOS and Linux are
+  pointed to the client's own menu), with Free and Keep here per device
+  on the Folders tab; camera files a phone still holds after the app
+  uploaded them, matched by name and size, to the phone's quarantine; a
+  big folder outside any synced folder moved into the sync folder as
+  `Archive/<device>/<folder>` (a rename on the same drive, else a copy
+  checked byte for byte with the original quarantined; the Hub makes the
+  folder on Nextcloud first with MKCOL and reads the account's free
+  quota); and on Unraid a share the Nextcloud container mounts added as
+  external storage through `occ files_external:create` in the container,
+  which the plugin reports along with the container and its mounts. Still
+  to do by hand: the 10 GB folder on a Windows PC becoming online-only
+  after the next sync and coming back on demand (TESTING.md).
 - 0.12: copies, read only (phase 5, first half). Devices with the
   Nextcloud client report their sync folders (`freesize_agent::nextcloud`:
   the desktop client's `nextcloud.cfg`, the Android app's folder; per
@@ -419,7 +435,7 @@ half ships even if an action stalls on a device nobody has.
   on file id and shows "kept on N devices" per folder, with the "only copy"
   risk report. Done when the count is right for 20 files checked by hand
   on three devices and the risk report lists a file kept on one device only.
-- **0.13, copies, actions (phase 5, second half).** Online-only on
+- **0.13, copies, actions (phase 5, second half).** Under Done. Online-only on
   Windows, uploaded camera photos to the phone's quarantine, moving a
   folder into the sync folder, creating folders on Nextcloud, External
   storage on Unraid. macOS and Linux show and point to the client. Done
@@ -598,8 +614,9 @@ Checked against Nextcloud 35 and desktop client 35 on 2026-10-12.
   (`metadata.fileid`, `contentChecksum`, the `flags` table's pin state:
   always local, online-only, inherited, which is what the person asked for,
   not what is on disk) isn't read: it is SQLite, kept open by the client,
-  and paths resolve to the same file ids on the Hub. The pin state is
-  still to come, for 0.13's online-only suggestions.
+  and paths resolve to the same file ids on the Hub. 0.13's online-only
+  suggestions go by what is on disk, not the pin state, and set the pin
+  attributes themselves.
 - **Android:** the Nextcloud app's offline copies under
   `Android/media/com.nextcloud.client/nextcloud/<account>/` (readable with
   All files access) and camera photos already auto-uploaded.

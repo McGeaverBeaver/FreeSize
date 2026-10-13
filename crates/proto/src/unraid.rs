@@ -61,6 +61,27 @@ pub struct NextcloudReport {
     pub versions_expired: u64,
     pub trash_expired: u64,
     pub notes: Vec<String>,
+    /// The Docker container running this install, when one mounts its
+    /// data folder (0.13); empty when none was found.
+    #[serde(default)]
+    pub container: String,
+    /// What that container mounts: shares it can reach, for external
+    /// storage.
+    #[serde(default)]
+    pub mounts: Vec<ContainerMount>,
+    /// Nextcloud's external storages already set up (their mount points),
+    /// when `occ files_external:list` answered.
+    #[serde(default)]
+    pub external: Vec<String>,
+}
+
+/// One bind mount of a container.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContainerMount {
+    /// On the server: `/mnt/user/Media`.
+    pub host: String,
+    /// In the container: `/media`.
+    pub inside: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

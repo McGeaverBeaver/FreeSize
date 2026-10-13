@@ -12,8 +12,11 @@ use axum::Json;
 use axum::extract::State;
 use freesize_core::snapshot::FolderSize;
 use freesize_proto::sync::{BIG_FILE, SyncReport};
-use rusqlite::{Connection, params};
+use freesize_proto::unraid::{NextcloudReport, UnraidReport};
+use freesize_proto::{Action, ActionKind};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::AppState;
 use crate::auth::User;
@@ -32,6 +35,8 @@ const MAX_ROWS: usize = 2_000;
 /// Folders of the system's own that nobody syncs, by name, in any case.
 const SYSTEM_FOLDERS: &[&str] = &[
     "windows",
+    "users",
+    "home",
     "program files",
     "program files (x86)",
     "programdata",
@@ -74,7 +79,38 @@ pub struct DeviceSync {
     pub id: String,
     pub name: String,
     pub report: SyncReport,
+    /// "windows", "macos", "linux", "android".
+    pub platform: String,
+    pub actions: Vec<ActionKind>,
+    /// Its disks: mount path, total and free bytes.
+    pub disks: Vec<(String, u64, u64)>,
 }
+
+/// A phone's camera folder, from its newest scan: every file under
+/// `DCIM/`, with its size.
+pub struct PhoneCamera {
+    pub device_id: String,
+    pub device_name: String,
+    /// The scanned root, as the phone writes it.
+    pub root: String,
+    /// The phone syncs with these accounts (server, user), if it said.
+    pub accounts: Vec<(String, String)>,
+    pub files: Vec<(String, u64)>,
+}
+
+/// An Unraid server's Nextcloud installs and shares.
+pub struct UnraidServer {
+    pub device_id: String,
+    pub device_name: String,
+    pub shares: Vec<(String, u64)>,
+    pub installs: Vec<NextcloudReport>,
+}
+
+/// Below this much free on the disk a synced folder is on, freeing the
+/// local copies is suggested even without another device keeping it.
+const LOW_SPACE: f64 = 0.15;
+/// Most camera files in one request: what the device accepts.
+const MAX_CAMERA_FILES: usize = 500;
 
 /// One connected account and what the Hub listed on it (empty until the
 /// first listing).
@@ -103,8 +139,28 @@ pub struct Copies {
     pub folders: Vec<FolderCopies>,
     pub files: Vec<FileCopies>,
     pub risks: Vec<Risk>,
+    /// What could be done about it (0.13), each one request away.
+    pub suggestions: Vec<Suggestion>,
     /// Devices that reported their Nextcloud folders.
     pub reported: usize,
+}
+
+/// One thing to do, as a request the dashboard can send as it stands.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Suggestion {
+    /// "online_only", "camera_uploads", "move_in" or "external_storage".
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub device_id: String,
+    pub device_name: String,
+    /// What it frees on the device, or (external storage) makes reachable.
+    pub bytes: u64,
+    /// The request, as `POST /api/devices/{id}/commands` takes it; none
+    /// when the device can't do it from here, and `pointer` says what to
+    /// do on the device instead.
+    pub action: Option<Value>,
+    pub pointer: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -508,6 +564,35 @@ fn risks(copies: &Copies, devices: &[DeviceSync], scans: &[ScanTop]) -> Vec<Risk
         });
     }
     // Big scanned folders that no synced folder covers.
+    for (scan, name, path, size) in not_synced(devices, scans) {
+        risks.push(Risk {
+            kind: "not_synced".into(),
+            severity: "info".into(),
+            title: format!("{path} on {} isn't in a synced folder", scan.device_name),
+            detail: "FreeSize knows of no copy elsewhere. If there is one, nothing is \
+                     wrong; if not, this is what a lost or broken device would take."
+                .into(),
+            device_id: Some(scan.device_id.clone()),
+            device_name: Some(scan.device_name.clone()),
+            path,
+            size,
+        });
+        let _ = name;
+    }
+    risks.sort_by(|a, b| {
+        severity_rank(&a.severity)
+            .cmp(&severity_rank(&b.severity))
+            .then_with(|| b.size.cmp(&a.size))
+    });
+    risks
+}
+
+/// Big top folders in each device's scans that no synced folder covers:
+/// the scan, the folder's name, its full path on the device and size.
+fn not_synced<'a>(
+    devices: &[DeviceSync],
+    scans: &'a [ScanTop],
+) -> Vec<(&'a ScanTop, String, String, u64)> {
     let mut synced_locals: HashMap<&str, Vec<String>> = HashMap::new();
     for device in devices {
         for account in &device.report.accounts {
@@ -519,13 +604,14 @@ fn risks(copies: &Copies, devices: &[DeviceSync], scans: &[ScanTop]) -> Vec<Risk
             }
         }
     }
+    let mut out = Vec::new();
     for scan in scans {
         let locals = synced_locals
             .get(scan.device_id.as_str())
             .cloned()
             .unwrap_or_default();
         let sep = if scan.root.contains('\\') { "\\" } else { "/" };
-        let mut found: Vec<(String, u64)> = scan
+        let mut found: Vec<(String, String, u64)> = scan
             .folders
             .iter()
             .filter(|(path, size)| {
@@ -535,6 +621,7 @@ fn risks(copies: &Copies, devices: &[DeviceSync], scans: &[ScanTop]) -> Vec<Risk
             })
             .map(|(path, size)| {
                 (
+                    path.clone(),
                     format!(
                         "{}{sep}{}",
                         scan.root.trim_end_matches(['/', '\\']),
@@ -543,7 +630,7 @@ fn risks(copies: &Copies, devices: &[DeviceSync], scans: &[ScanTop]) -> Vec<Risk
                     *size,
                 )
             })
-            .filter(|(full, _)| {
+            .filter(|(_, full, _)| {
                 let full = normalize(full);
                 !locals.iter().any(|local| {
                     full == *local
@@ -552,28 +639,344 @@ fn risks(copies: &Copies, devices: &[DeviceSync], scans: &[ScanTop]) -> Vec<Risk
                 })
             })
             .collect();
-        found.sort_by_key(|f| std::cmp::Reverse(f.1));
-        for (path, size) in found.into_iter().take(NOT_SYNCED_PER_DEVICE) {
-            risks.push(Risk {
-                kind: "not_synced".into(),
-                severity: "info".into(),
-                title: format!("{path} on {} isn't in a synced folder", scan.device_name),
-                detail: "FreeSize knows of no copy elsewhere. If there is one, nothing is \
-                         wrong; if not, this is what a lost or broken device would take."
-                    .into(),
-                device_id: Some(scan.device_id.clone()),
-                device_name: Some(scan.device_name.clone()),
-                path,
-                size,
-            });
+        found.sort_by_key(|f| std::cmp::Reverse(f.2));
+        out.extend(
+            found
+                .into_iter()
+                .take(NOT_SYNCED_PER_DEVICE)
+                .map(|(name, full, size)| (scan, name, full, size)),
+        );
+    }
+    out
+}
+
+// ----- Suggestions (0.13) ---------------------------------------------------
+
+/// What could be done, from the join and the devices' other reports.
+/// Each is one request the device still asks about; nothing here deletes.
+pub fn suggestions(
+    copies: &Copies,
+    devices: &[DeviceSync],
+    listings: &[ServerListing],
+    scans: &[ScanTop],
+    phones: &[PhoneCamera],
+    servers: &[UnraidServer],
+) -> Vec<Suggestion> {
+    let mut out = Vec::new();
+    let listed: HashSet<Key> = listings
+        .iter()
+        .filter(|l| l.account.synced.is_some())
+        .map(|l| account_key(&l.account.server, &l.account.user))
+        .collect();
+    let folder_rows: HashMap<(Key, &str), &FolderCopies> = copies
+        .folders
+        .iter()
+        .map(|f| ((account_key(&f.server, &f.user), f.path.as_str()), f))
+        .collect();
+
+    // Free the local copies of a folder the server has whole, when another
+    // device keeps it too or the disk is running out.
+    for device in devices {
+        let low_on = |local: &str| -> bool {
+            let local = normalize(local);
+            device
+                .disks
+                .iter()
+                .filter(|(path, total, _)| {
+                    *total > 0 && local.starts_with(normalize(path).trim_end_matches('/'))
+                })
+                .max_by_key(|(path, _, _)| path.len())
+                .is_some_and(|(_, total, free)| (*free as f64) < (*total as f64) * LOW_SPACE)
+        };
+        for account in &device.report.accounts {
+            let key = account_key(&account.server, &account.user);
+            if !listed.contains(&key) {
+                continue;
+            }
+            for folder in &account.folders {
+                if folder.on_disk == 0 || folder.files == 0 {
+                    continue;
+                }
+                let root = folder.remote_path("");
+                let Some(row) = folder_rows.get(&(key.clone(), root.as_str())) else {
+                    continue;
+                };
+                let Some(on_server) = row.on_server else {
+                    continue;
+                };
+                if on_server < folder.size {
+                    // The server doesn't have everything the device has.
+                    continue;
+                }
+                let elsewhere: Vec<&str> = row
+                    .devices
+                    .iter()
+                    .filter(|d| d.id != device.id && d.complete)
+                    .map(|d| d.name.as_str())
+                    .collect();
+                let low = low_on(&folder.local);
+                if elsewhere.is_empty() && !low {
+                    continue;
+                }
+                let why = if !elsewhere.is_empty() {
+                    format!(
+                        "Nextcloud has all of it and {} keeps it whole.",
+                        elsewhere.join(" and ")
+                    )
+                } else {
+                    "Nextcloud has all of it and the disk is nearly full.".to_string()
+                };
+                let (action, pointer) = match (
+                    device.platform.as_str(),
+                    folder.virtual_files.as_str(),
+                ) {
+                    ("windows", "wincfapi") if device.actions.contains(&ActionKind::OnlineOnly) => {
+                        (
+                            Some(Action::OnlineOnly {
+                                root: folder.local.clone(),
+                                paths: vec![],
+                                bytes: folder.on_disk,
+                                keep: false,
+                            }),
+                            String::new(),
+                        )
+                    }
+                    ("windows", _) => (
+                        None,
+                        "Turn on virtual file support for the folder in the Nextcloud client \
+                         (Settings, the folder's menu); FreeSize can then free it from here."
+                            .into(),
+                    ),
+                    ("android", _) => (
+                        None,
+                        "The Nextcloud app on the phone keeps files online-only unless they're \
+                         marked available offline; check its Downloads and offline files."
+                            .into(),
+                    ),
+                    _ => (
+                        None,
+                        "In the Nextcloud client, right-click the folder and choose Free up \
+                         local space (the files stay listed, and download when opened)."
+                            .into(),
+                    ),
+                };
+                out.push(Suggestion {
+                    kind: "online_only".into(),
+                    title: format!(
+                        "Free {} on {}: {}",
+                        freesize_core::format_size(folder.on_disk),
+                        device.name,
+                        folder.local
+                    ),
+                    detail: format!(
+                        "{why} The files stay listed on {} and download when opened.",
+                        device.name
+                    ),
+                    device_id: device.id.clone(),
+                    device_name: device.name.clone(),
+                    bytes: folder.on_disk,
+                    action: action.and_then(|a| serde_json::to_value(a).ok()),
+                    pointer,
+                });
+            }
         }
     }
-    risks.sort_by(|a, b| {
-        severity_rank(&a.severity)
-            .cmp(&severity_rank(&b.severity))
-            .then_with(|| b.size.cmp(&a.size))
-    });
-    risks
+
+    // Camera photos and videos a phone holds that Nextcloud already has
+    // (the app's auto upload): same name and size.
+    let mut by_name: HashMap<Key, HashMap<(String, u64), &str>> = HashMap::new();
+    for listing in listings {
+        let key = account_key(&listing.account.server, &listing.account.user);
+        let names = by_name.entry(key).or_default();
+        for entry in listing.entries.iter().filter(|e| !e.is_dir) {
+            let name = entry.path.rsplit('/').next().unwrap_or_default();
+            names.insert((name.to_lowercase(), entry.size), entry.path.as_str());
+        }
+    }
+    for phone in phones {
+        let keys: Vec<Key> = if phone.accounts.is_empty() {
+            by_name.keys().cloned().collect()
+        } else {
+            phone
+                .accounts
+                .iter()
+                .map(|(s, u)| account_key(s, u))
+                .collect()
+        };
+        let mut matched: Vec<(String, u64)> = phone
+            .files
+            .iter()
+            .filter(|(path, size)| {
+                let name = path.rsplit('/').next().unwrap_or_default().to_lowercase();
+                keys.iter().any(|k| {
+                    by_name
+                        .get(k)
+                        .is_some_and(|names| names.contains_key(&(name.clone(), *size)))
+                })
+            })
+            .cloned()
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+        matched.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let all = matched.len();
+        let all_bytes: u64 = matched.iter().map(|m| m.1).sum();
+        matched.truncate(MAX_CAMERA_FILES);
+        let bytes: u64 = matched.iter().map(|m| m.1).sum();
+        out.push(Suggestion {
+            kind: "camera_uploads".into(),
+            title: format!(
+                "{all} camera files on {} are on Nextcloud too ({})",
+                phone.device_name,
+                freesize_core::format_size(all_bytes)
+            ),
+            detail: format!(
+                "The same names and sizes are in the connected account. Moving them to the \
+                 phone's quarantine frees {}{}; they can be put back for 30 days, and are on \
+                 Nextcloud either way.",
+                freesize_core::format_size(bytes),
+                if matched.len() < all {
+                    format!(" for the {} biggest", matched.len())
+                } else {
+                    String::new()
+                }
+            ),
+            device_id: phone.device_id.clone(),
+            device_name: phone.device_name.clone(),
+            bytes,
+            action: serde_json::to_value(Action::Delete {
+                root: phone.root.clone(),
+                paths: matched.into_iter().map(|m| m.0).collect(),
+                bytes,
+            })
+            .ok(),
+            pointer: String::new(),
+        });
+    }
+
+    // Big folders outside any synced folder, on a device that syncs: move
+    // them in, so the client uploads them.
+    for (scan, name, full, size) in not_synced(devices, scans) {
+        let Some(device) = devices.iter().find(|d| d.id == scan.device_id) else {
+            continue;
+        };
+        if !device.actions.contains(&ActionKind::MoveIn) {
+            continue;
+        }
+        // The account's root folder, or the first synced one.
+        let Some((account, folder)) = device.report.accounts.iter().find_map(|a| {
+            a.folders
+                .iter()
+                .find(|f| f.remote_path("") == "/")
+                .or_else(|| a.folders.first())
+                .map(|f| (a, f))
+        }) else {
+            continue;
+        };
+        let key = account_key(&account.server, &account.user);
+        let room = listings
+            .iter()
+            .find(|l| account_key(&l.account.server, &l.account.user) == key)
+            .map(|l| l.account.quota_free);
+        if let Some(free) = room
+            && free >= 0
+            && (free as u64) < size
+        {
+            continue;
+        }
+        let target = format!("Archive/{}/{name}", device.name.replace(['/', '\\'], " "));
+        out.push(Suggestion {
+            kind: "move_in".into(),
+            title: format!("Move {full} on {} into Nextcloud", device.name),
+            detail: format!(
+                "It would go to {} in {}'s folder {} and upload from there, so a copy is on \
+                 Nextcloud and every device that syncs it. On the same drive that's a rename; \
+                 otherwise it's copied, checked byte for byte, and the original goes to the \
+                 quarantine.{}",
+                folder.remote_path(&target),
+                device.name,
+                folder.local,
+                match room {
+                    Some(free) if free >= 0 => format!(
+                        " The account has {} left.",
+                        freesize_core::format_size(free as u64)
+                    ),
+                    _ => String::new(),
+                }
+            ),
+            device_id: device.id.clone(),
+            device_name: device.name.clone(),
+            bytes: size,
+            action: serde_json::to_value(Action::MoveIn {
+                root: scan.root.clone(),
+                path: name,
+                into: folder.local.clone(),
+                target,
+                bytes: size,
+            })
+            .ok(),
+            pointer: String::new(),
+        });
+    }
+
+    // Shares an Unraid server's Nextcloud container mounts but Nextcloud
+    // doesn't offer: external storage, without a second copy.
+    for server in servers {
+        for install in &server.installs {
+            if install.container.is_empty() {
+                continue;
+            }
+            for mount in &install.mounts {
+                let Some(share) = mount.host.strip_prefix("/mnt/user/") else {
+                    continue;
+                };
+                let share = share.split('/').next().unwrap_or_default();
+                if share.is_empty() || !mount.host.ends_with(&format!("/{share}")) {
+                    continue;
+                }
+                let point = format!("/{share}");
+                if install
+                    .external
+                    .iter()
+                    .any(|m| m.eq_ignore_ascii_case(&point))
+                {
+                    continue;
+                }
+                let size = server
+                    .shares
+                    .iter()
+                    .find(|(n, _)| n == share)
+                    .map_or(0, |(_, s)| *s);
+                out.push(Suggestion {
+                    kind: "external_storage".into(),
+                    title: format!(
+                        "Add the share {share} to Nextcloud on {}",
+                        server.device_name
+                    ),
+                    detail: format!(
+                        "{} already mounts it at {}. As external storage, every device reaches \
+                         it through Nextcloud where it is: nothing is copied, and the share's \
+                         own files stay as they are.",
+                        install.container, mount.inside
+                    ),
+                    device_id: server.device_id.clone(),
+                    device_name: server.device_name.clone(),
+                    bytes: size,
+                    action: serde_json::to_value(Action::ExternalStorage {
+                        share: share.to_string(),
+                        container: install.container.clone(),
+                        mount: point,
+                        inside: mount.inside.clone(),
+                    })
+                    .ok(),
+                    pointer: String::new(),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.title.cmp(&b.title)));
+    out
 }
 
 fn severity_rank(severity: &str) -> u8 {
@@ -604,8 +1007,87 @@ pub(crate) fn device_syncs(
                 id: device.id.clone(),
                 name: device.name.clone(),
                 report,
+                platform: device.platform.clone(),
+                actions: device.info.actions.clone(),
+                disks: device
+                    .disks
+                    .iter()
+                    .map(|d| (d.path.clone(), d.total.max(0) as u64, d.free.max(0) as u64))
+                    .collect(),
             });
         }
+    }
+    Ok(out)
+}
+
+/// Each phone's camera files from its newest scan, with the accounts it
+/// syncs with.
+pub(crate) fn phone_cameras(
+    c: &Connection,
+    devices: &[DeviceSummary],
+) -> rusqlite::Result<Vec<PhoneCamera>> {
+    let mut stmt =
+        c.prepare("SELECT path, size FROM scan_files WHERE scan_id = ?1 AND path LIKE 'DCIM/%'")?;
+    let mut sync = c.prepare("SELECT report FROM sync WHERE device_id = ?1")?;
+    let mut out = Vec::new();
+    for device in devices
+        .iter()
+        .filter(|d| d.platform == "android" && d.info.actions.contains(&ActionKind::Delete))
+    {
+        let Some(scan) = device.scans.iter().max_by_key(|s| s.taken) else {
+            continue;
+        };
+        let files: Vec<(String, u64)> = stmt
+            .query_map([scan.id], |r| {
+                Ok((r.get(0)?, r.get::<_, i64>(1)?.max(0) as u64))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        if files.is_empty() {
+            continue;
+        }
+        let accounts: Vec<(String, String)> = sync
+            .query_row([&device.id], |r| r.get::<_, String>(0))
+            .optional()?
+            .and_then(|t| serde_json::from_str::<SyncReport>(&t).ok())
+            .map(|r| r.accounts.into_iter().map(|a| (a.server, a.user)).collect())
+            .unwrap_or_default();
+        out.push(PhoneCamera {
+            device_id: device.id.clone(),
+            device_name: device.name.clone(),
+            root: scan.root.clone(),
+            accounts,
+            files,
+        });
+    }
+    Ok(out)
+}
+
+/// Each Unraid server's Nextcloud installs and shares.
+pub(crate) fn unraid_servers(
+    c: &Connection,
+    devices: &[DeviceSummary],
+) -> rusqlite::Result<Vec<UnraidServer>> {
+    let mut stmt = c.prepare("SELECT report FROM unraid WHERE device_id = ?1")?;
+    let mut out = Vec::new();
+    for device in devices
+        .iter()
+        .filter(|d| d.info.actions.contains(&ActionKind::Mount))
+    {
+        let report: Option<String> = stmt.query_row([&device.id], |r| r.get(0)).optional()?;
+        let Some(report) = report.and_then(|t| serde_json::from_str::<UnraidReport>(&t).ok())
+        else {
+            continue;
+        };
+        out.push(UnraidServer {
+            device_id: device.id.clone(),
+            device_name: device.name.clone(),
+            shares: report
+                .shares
+                .iter()
+                .map(|s| (s.name.clone(), s.total))
+                .collect(),
+            installs: report.nextcloud,
+        });
     }
     Ok(out)
 }
@@ -691,7 +1173,11 @@ pub async fn copies(State(state): State<AppState>, user: User) -> ApiResult<Json
             let syncs = device_syncs(c, &devices)?;
             let listings = listings(c)?;
             let scans = scan_tops(c, &devices)?;
-            Ok(join(&syncs, &listings, &scans))
+            let phones = phone_cameras(c, &devices)?;
+            let servers = unraid_servers(c, &devices)?;
+            let mut copies = join(&syncs, &listings, &scans);
+            copies.suggestions = suggestions(&copies, &syncs, &listings, &scans, &phones, &servers);
+            Ok(copies)
         })
         .await?;
     for account in &mut copies.accounts {
@@ -722,6 +1208,7 @@ mod tests {
             bytes: 0,
             trash: 0,
             quota_used: 0,
+            quota_free: -1,
             syncing: false,
         }
     }
@@ -755,6 +1242,13 @@ mod tests {
         DeviceSync {
             id: id.into(),
             name: name.into(),
+            platform: "windows".into(),
+            actions: vec![
+                ActionKind::Delete,
+                ActionKind::MoveIn,
+                ActionKind::OnlineOnly,
+            ],
+            disks: vec![("C:\\".into(), 100 * GB, 50 * GB)],
             report: SyncReport {
                 taken: 1,
                 accounts: vec![SyncAccount {
@@ -956,6 +1450,9 @@ mod tests {
             id: "p1".into(),
             name: "Phone".into(),
             report: copies_report(),
+            platform: "android".into(),
+            actions: vec![ActionKind::Delete],
+            disks: vec![],
         };
         let listing = ServerListing {
             account: account(1, None),

@@ -1303,7 +1303,24 @@ function keptOn(row) {
 }
 
 PAGES.copies = async (section = "folders") => {
-  const copies = await api("/api/copies");
+  const [copies, deviceList] = await Promise.all([api("/api/copies"), api("/api/devices").catch(() => [])]);
+  const deviceById = new Map(deviceList.map((d) => [d.id, d]));
+  const KINDS = { online_only: "free space", camera_uploads: "camera", move_in: "move in", external_storage: "external storage" };
+  const askDialog = (s) => {
+    const device = deviceById.get(s.device_id);
+    if (!device) { toast("That device isn't in your groups", true); return; }
+    requestDialog(device, s.action, [s.title, s.detail]);
+  };
+  // Free a folder's local copies on one device, or keep them there again.
+  const pinButtons = (f, d) => {
+    const device = deviceById.get(d.id);
+    if (!device || !canDo(device, "online_only")) return null;
+    const ask = (keep) => requestDialog(device, { type: "online_only", root: d.local, paths: [], bytes: keep ? d.size - d.on_disk : d.on_disk, keep },
+      [keep ? `Keep ${f.path} on ${d.name} (${size(d.size - d.on_disk)} to fetch)` : `Free ${size(d.on_disk)} on ${d.name}: ${f.path}`,
+        keep ? "The Nextcloud client downloads the files on its next run." : "The files stay listed on the device and download when opened; the Nextcloud client frees them on its next run."]);
+    return [" ", d.on_disk ? h("button", { class: "small", onclick: () => ask(false) }, "Free") : null,
+      d.on_disk_files < d.files ? h("button", { class: "small", onclick: () => ask(true) }, "Keep here") : null];
+  };
   const accounts = h("div", { class: "card" },
     h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Nextcloud accounts"),
       state.me.admin ? h("button", { class: "primary", onclick: connectNextcloudDialog }, "Connect an account") : null),
@@ -1328,11 +1345,33 @@ PAGES.copies = async (section = "folders") => {
     h("p", { class: "dim small", style: "margin-bottom:0" },
       `${count(copies.reported, "device reports", "devices report")} their Nextcloud folders. Desktops report hourly through the app or the agent; the Android app reports its Nextcloud folder when it's open.`));
 
-  const tabs = h("nav", { class: "tabs" }, [["folders", "Folders"], ["files", "Big files"], ["risks", `Only one copy${copies.risks.length ? ` (${copies.risks.length})` : ""}`]].map(([key, label]) =>
+  const suggestions = copies.suggestions || [];
+  const tabs = h("nav", { class: "tabs" }, [["folders", "Folders"], ["files", "Big files"], ["risks", `Only one copy${copies.risks.length ? ` (${copies.risks.length})` : ""}`],
+    ["suggestions", `Suggestions${suggestions.length ? ` (${suggestions.length})` : ""}`]].map(([key, label]) =>
     h("a", { href: `#/copies/${key}`, class: key === section ? "active" : "" }, label)));
 
   let view;
-  if (section === "files") {
+  if (section === "suggestions") {
+    view = suggestions.length
+      ? h("div", { class: "card" }, h("h2", {}, "What could be done"),
+          h("p", { class: "dim small" }, "Each is one request: the device shows it and asks before doing anything, and what's freed can be put back from the quarantine. Nothing here is done on its own."),
+          suggestions.map((s) => {
+            const device = deviceById.get(s.device_id);
+            const kind = s.action ? s.action.type === "delete" ? "delete" : s.action.type === "online_only" ? "online_only" : s.action.type === "move_in" ? "move_in" : "mount" : null;
+            const can = device && kind && canDo(device, kind);
+            return h("div", { class: "alert-row" },
+              h("span", { class: "badge accent" }, KINDS[s.kind] || s.kind),
+              h("div", { class: "grow" }, h("strong", {}, s.title), h("div", { class: "dim small" }, s.detail),
+                s.pointer ? h("div", { class: "small", style: "margin-top:4px" }, "On the device: ", s.pointer) : null),
+              h("span", { class: "num" }, size(s.bytes)),
+              can ? h("button", { class: "small primary", onclick: () => askDialog(s) }, "Ask the device")
+                : s.action && state.me.admin ? h("span", { class: "dim small" }, "needs an approver") : null);
+          }))
+      : h("div", { class: "card empty" }, h("h2", {}, "Nothing to suggest"),
+          h("p", {}, copies.accounts.length
+            ? "Suggestions come from what the devices and the server report: a folder kept whole in three places on a nearly full disk, camera files a phone still holds after they uploaded, big folders outside any synced folder, and shares an Unraid Nextcloud container could offer as external storage."
+            : "Connect a Nextcloud account for the Hub to know what the server holds."));
+  } else if (section === "files") {
     view = copies.files.length
       ? h("div", { class: "card table-wrap" }, h("h2", {}, "Files of 100 MB and over"),
           h("p", { class: "dim small" }, "The devices report these one by one; the server's file id is the same on every client."),
@@ -1363,7 +1402,7 @@ PAGES.copies = async (section = "folders") => {
               h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`)),
               h("td", { class: "num" }, f.on_server === null ? h("span", { class: "dim" }, "not listed") : size(f.on_server)),
               h("td", {}, h("strong", {}, count(f.kept_on, "device", "devices")), h("div", { class: "sub" },
-                f.devices.map((d) => `${d.name}: ${size(d.on_disk)}${d.complete ? "" : d.on_disk ? " (part)" : " (online-only)"}`).join(" · "))),
+                f.devices.map((d, i) => [i ? " · " : null, `${d.name}: ${size(d.on_disk)}${d.complete ? "" : d.on_disk ? " (part)" : " (online-only)"}`, pinButtons(f, d)]))),
               h("td", { class: "num" }, size(f.stored), f.on_server && f.kept_on ? h("div", { class: "sub" }, `${f.kept_on + 1}× with the server`) : null))))))
       : h("div", { class: "card empty" }, h("h2", {}, "No synced folders reported yet"),
           h("p", {}, "Devices with the Nextcloud client report their sync folders in their next hourly report; the app does so when it starts."));

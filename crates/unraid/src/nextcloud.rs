@@ -6,10 +6,11 @@
 //! versions:cleanup`, `occ trashbin:cleanup`, the settings), never from
 //! the file system.
 
-use freesize_proto::unraid::{NextcloudReport, NextcloudUser};
+use freesize_proto::unraid::{ContainerMount, NextcloudReport, NextcloudUser};
 
 use crate::System;
 use crate::array::Array;
+use crate::docker::{Container, Inventory, share_of};
 use crate::scans::{Keep, Scans};
 
 /// How deep below a disk's top the data folder is looked for: a share
@@ -205,6 +206,150 @@ fn allocated(scans: &Scans, array: &Array, path: &str) -> u64 {
     scans.size(array, path).map_or(0, |s| s.allocated)
 }
 
+// ----- The container (0.13) ------------------------------------------------
+
+/// A `/mnt/<disk or user>/<share>/...` path from the share down, so the
+/// same folder compares equal on `/mnt/user` and `/mnt/cache`.
+fn below_mnt(path: &str) -> Option<String> {
+    let rest = path.trim_start_matches('/').strip_prefix("mnt/")?;
+    let (_, share_path) = rest.split_once('/')?;
+    let share_path = share_path.trim_end_matches('/');
+    (!share_path.is_empty()).then(|| share_path.to_string())
+}
+
+/// The Docker container running an install: one that binds the data
+/// folder or a folder above it. Among several (a database beside it, a
+/// cron container), the one whose image is Nextcloud's, then a running
+/// one, then the one bound nearest the data folder.
+pub fn container_for<'a>(instance: &Instance, inventory: &'a Inventory) -> Option<&'a Container> {
+    let data = below_mnt(&instance.data)?;
+    let mut best: Option<(&Container, (bool, bool, usize))> = None;
+    for container in &inventory.containers {
+        let nearest = container
+            .binds
+            .iter()
+            .filter_map(|(host, _)| below_mnt(host))
+            .filter(|bound| data == *bound || data.starts_with(&format!("{bound}/")))
+            .map(|bound| bound.len())
+            .max();
+        let Some(nearest) = nearest else { continue };
+        let score = (
+            container.image.to_lowercase().contains("nextcloud"),
+            container.running,
+            nearest,
+        );
+        if best.as_ref().is_none_or(|(_, b)| score > *b) {
+            best = Some((container, score));
+        }
+    }
+    best.map(|(c, _)| c)
+}
+
+/// The shares a container binds, with where each is inside it: what
+/// Nextcloud in that container could offer as external storage. The
+/// install's own data folder and the appdata share aren't shares to
+/// offer.
+pub fn share_mounts(instance: &Instance, container: &Container) -> Vec<ContainerMount> {
+    let data = below_mnt(&instance.data).unwrap_or_default();
+    let mut out: Vec<ContainerMount> = Vec::new();
+    for (host, inside) in &container.binds {
+        let Some(share) = share_of(host) else {
+            continue;
+        };
+        let Some(bound) = below_mnt(host) else {
+            continue;
+        };
+        if data == bound
+            || data.starts_with(&format!("{bound}/"))
+            || bound.starts_with(&format!("{data}/"))
+            || share.eq_ignore_ascii_case("appdata")
+            || share.eq_ignore_ascii_case("system")
+        {
+            continue;
+        }
+        let mount = ContainerMount {
+            host: format!("/mnt/user/{bound}"),
+            inside: inside.clone(),
+        };
+        if !out.contains(&mount) {
+            out.push(mount);
+        }
+    }
+    out.sort_by(|a, b| a.host.cmp(&b.host));
+    out
+}
+
+/// Runs `occ` in the container, as the web server's user, and falls back
+/// to the container's own `occ` wrapper (the linuxserver image) when PHP
+/// isn't where the official image keeps it. Needs the real `docker`
+/// command: only on the server itself.
+pub fn occ(container: &str, args: &[&str]) -> Result<String, String> {
+    let run = |mut command: std::process::Command| -> Result<String, String> {
+        let output = command.output().map_err(|e| format!("docker exec: {e}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if output.status.success() {
+            Ok(stdout)
+        } else {
+            Err(if stderr.is_empty() { stdout } else { stderr })
+        }
+    };
+    let mut official = std::process::Command::new("docker");
+    official
+        .args(["exec", "-u", "www-data", container, "php", "occ"])
+        .args(args);
+    match run(official) {
+        Ok(out) => Ok(out),
+        Err(first) => {
+            let mut wrapper = std::process::Command::new("docker");
+            wrapper.args(["exec", container, "occ"]).args(args);
+            run(wrapper).map_err(|second| if first.is_empty() { second } else { first })
+        }
+    }
+}
+
+/// Where external storages are mounted in Nextcloud, from `occ
+/// files_external:list`.
+pub fn external_storages(container: &str) -> Result<Vec<String>, String> {
+    let text = occ(container, &["files_external:list", "--output=json"])?;
+    let list: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("files_external:list answered oddly: {e}"))?;
+    let mut mounts: Vec<String> = list
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row["mount_point"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    mounts.sort();
+    mounts.dedup();
+    Ok(mounts)
+}
+
+/// Adds a folder inside the container to Nextcloud as external storage
+/// (the `local` backend, for every user), mounted at `mount`. Nothing is
+/// copied: Nextcloud reads the share where it is.
+pub fn add_external_storage(container: &str, mount: &str, inside: &str) -> Result<String, String> {
+    let datadir = format!("datadir={inside}");
+    let out = occ(
+        container,
+        &[
+            "files_external:create",
+            mount,
+            "local",
+            "null::null",
+            "-c",
+            &datadir,
+        ],
+    )?;
+    Ok(if out.is_empty() {
+        format!("Nextcloud now offers {inside} as {mount}")
+    } else {
+        out
+    })
+}
+
 /// The report for one install, from this round's scans.
 pub fn report(
     system: &System,
@@ -348,6 +493,90 @@ mod tests {
     use super::*;
     use crate::array::{self, tests::server};
     use crate::scans::{DiskScan, Scans};
+
+    fn container(name: &str, image: &str, running: bool, binds: &[(&str, &str)]) -> Container {
+        Container {
+            name: name.into(),
+            image: image.into(),
+            running,
+            mounts: binds.iter().map(|(h, _)| h.to_string()).collect(),
+            binds: binds
+                .iter()
+                .map(|(h, i)| (h.to_string(), i.to_string()))
+                .collect(),
+            ..Container::default()
+        }
+    }
+
+    #[test]
+    fn finds_the_container_and_its_shares() {
+        let instance = Instance {
+            data: "/mnt/user/appdata/nextcloud/data".into(),
+            config: None,
+        };
+        let inventory = Inventory {
+            containers: vec![
+                container(
+                    "mariadb",
+                    "mariadb:11",
+                    true,
+                    &[("/mnt/cache/appdata/nextcloud", "/var/lib/mysql")],
+                ),
+                container(
+                    "nextcloud",
+                    "nextcloud:31-apache",
+                    true,
+                    &[
+                        ("/mnt/cache/appdata/nextcloud", "/var/www/html"),
+                        ("/mnt/user/Media", "/media"),
+                        ("/mnt/user/Photos/", "/photos"),
+                        ("/mnt/user/system/docker", "/sys-docker"),
+                        ("/mnt/user/Media", "/media-again"),
+                        ("/mnt/disk1/TV", "/tv"),
+                    ],
+                ),
+                container(
+                    "plex",
+                    "plexinc/pms-docker",
+                    true,
+                    &[("/mnt/user/Media", "/data")],
+                ),
+            ],
+            ..Inventory::default()
+        };
+        let found = container_for(&instance, &inventory).unwrap();
+        assert_eq!(found.name, "nextcloud");
+        let mounts = share_mounts(&instance, found);
+        assert_eq!(
+            mounts
+                .iter()
+                .map(|m| format!("{}={}", m.host, m.inside))
+                .collect::<Vec<_>>(),
+            [
+                "/mnt/user/Media=/media",
+                "/mnt/user/Media=/media-again",
+                "/mnt/user/Photos=/photos",
+                "/mnt/user/TV=/tv",
+            ]
+        );
+        // Nothing binds a data folder on its own share.
+        let share = Instance {
+            data: "/mnt/user/nextcloud".into(),
+            config: None,
+        };
+        assert!(container_for(&share, &inventory).is_none());
+        // A stopped container still counts, after a running one.
+        let stopped = Inventory {
+            containers: vec![container(
+                "nc",
+                "linuxserver/nextcloud",
+                false,
+                &[("/mnt/user/appdata/nextcloud", "/config")],
+            )],
+            ..Inventory::default()
+        };
+        assert_eq!(container_for(&instance, &stopped).unwrap().name, "nc");
+    }
 
     #[test]
     fn retention_settings() {

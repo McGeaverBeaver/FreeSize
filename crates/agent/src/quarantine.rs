@@ -488,6 +488,38 @@ impl crate::commands::Executor for QuarantineExecutor {
         })
     }
 
+    fn online_only(
+        &self,
+        root: &Path,
+        paths: &[String],
+        keep: bool,
+    ) -> Result<crate::nextcloud::PinOutcome, String> {
+        crate::nextcloud::online_only(root, paths, keep)
+    }
+
+    fn move_in(
+        &self,
+        source: &Path,
+        into: &Path,
+        target: &str,
+    ) -> Result<crate::nextcloud::MoveOutcome, String> {
+        let id = format!("m{}", crate::now());
+        crate::nextcloud::move_in(source, into, target, &|paths| {
+            let moved = self.quarantine.move_in(
+                &id,
+                "",
+                "moved into the Nextcloud folder",
+                paths,
+                crate::now(),
+            );
+            let bytes: u64 = moved.results.iter().flatten().sum();
+            match moved.results.iter().find_map(|r| r.as_ref().err()) {
+                Some(err) => Err(err.clone()),
+                None => Ok(bytes),
+            }
+        })
+    }
+
     fn note(&self, request: &crate::commands::Request) -> String {
         use freesize_proto::Action;
         match &request.command.action {

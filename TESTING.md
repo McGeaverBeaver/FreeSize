@@ -76,6 +76,14 @@ what was tried in the release's draft notes, and say what wasn't.
       three devices, "kept on N devices" is right; a file kept on one
       device only, not yet uploaded, is in Only one copy; Disconnect
       removes the app password from Nextcloud.
+- [ ] Copies, Suggestions (0.13): on a Windows PC with virtual files on,
+      Free on a 10 GB folder is approved on the PC, the files stay listed,
+      the space is free after the client's next sync, and Keep here
+      brings them back; a phone's camera files the account already has
+      are offered and land in the phone's quarantine; Move in on a folder
+      on another drive copies, checks and quarantines the original, and
+      the folder appears on Nextcloud; on Unraid, External storage adds a
+      mounted share and it shows in Nextcloud's files.
 
 ## Unraid plugin
 

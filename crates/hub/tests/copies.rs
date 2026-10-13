@@ -5,8 +5,8 @@
 
 mod common;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -18,8 +18,12 @@ use axum::routing::post;
 use common::idp::MockUser;
 use common::{Browser, blocking, start_hub};
 use freesize_agent::{Client, UreqTransport, pair};
+use freesize_core::snapshot::FolderSize;
 use freesize_proto::sync::{SyncAccount, SyncDir, SyncFile, SyncFolder, SyncReport};
-use freesize_proto::{ActionKind, DeviceInfo, PairingLink, Platform, Report};
+use freesize_proto::unraid::{ContainerMount, NextcloudReport, ShareUse, UnraidReport};
+use freesize_proto::{
+    ActionKind, DeviceInfo, FileEntry, PairingLink, Platform, Report, ScanReport,
+};
 use serde_json::{Value, json};
 
 const MB: u64 = 1024 * 1024;
@@ -31,6 +35,8 @@ struct MockNextcloud {
     /// The person has signed in on the flow's page.
     signed_in: Arc<AtomicBool>,
     revoked: Arc<AtomicBool>,
+    /// Folders made with MKCOL, as asked.
+    made: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockNextcloud {
@@ -40,6 +46,7 @@ impl MockNextcloud {
             base: format!("http://{}", listener.local_addr().unwrap()),
             signed_in: Arc::default(),
             revoked: Arc::default(),
+            made: Arc::default(),
         };
         let app = Router::new()
             .route("/index.php/login/v2", post(login_start))
@@ -125,6 +132,14 @@ async fn dav(State(nc): State<MockNextcloud>, request: Request) -> Response {
         );
         nc.revoked.store(true, Ordering::SeqCst);
         return StatusCode::OK.into_response();
+    }
+    if method == "MKCOL" {
+        let mut made = nc.made.lock().unwrap();
+        if made.contains(&path) {
+            return StatusCode::METHOD_NOT_ALLOWED.into_response();
+        }
+        made.push(path);
+        return StatusCode::CREATED.into_response();
     }
     if method != "PROPFIND" {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
@@ -213,7 +228,15 @@ fn info(name: &str, platform: Platform) -> DeviceInfo {
         os: "Test OS".into(),
         hostname: name.to_lowercase(),
         app: "FreeSize app test".into(),
-        actions: vec![ActionKind::Delete],
+        actions: match platform {
+            Platform::Windows => vec![
+                ActionKind::Delete,
+                ActionKind::MoveIn,
+                ActionKind::OnlineOnly,
+            ],
+            Platform::Linux => vec![ActionKind::Delete, ActionKind::Mount],
+            _ => vec![ActionKind::Delete],
+        },
         attended: true,
         approver: None,
         grants: vec![],
@@ -307,7 +330,7 @@ async fn connect_list_and_count_copies() {
                         on_disk: 1200 * MB,
                         files: 6,
                         on_disk_files: 6,
-                        virtual_files: "off".into(),
+                        virtual_files: "wincfapi".into(),
                         dirs: vec![
                             dir("Photos", 500 * MB, 500 * MB, 2, 2),
                             dir("Photos/2019", 350 * MB, 350 * MB, 1, 1),
@@ -521,6 +544,250 @@ async fn connect_list_and_count_copies() {
                 .as_str()
                 .unwrap()
                 .contains("Desktop syncs it, but keeps it online-only")
+        );
+
+        // Suggestions (0.13): a big folder outside the desktop's sync
+        // folder, camera files a phone still holds after they uploaded,
+        // and a share an Unraid Nextcloud container mounts.
+        Client::new(&desktop, &transport)
+            .report(&Report {
+                scan: Some(ScanReport {
+                    root: "C:\\".into(),
+                    label: "C:".into(),
+                    taken: 1_791_800_100,
+                    size: 60_000 * MB,
+                    allocated: 60_000 * MB,
+                    files: 3,
+                    dirs: 3,
+                    errors: 0,
+                    complete: true,
+                    unreadable: vec![],
+                    folders: vec![
+                        FolderSize {
+                            path: String::new(),
+                            size: 60_000 * MB,
+                            allocated: 60_000 * MB,
+                        },
+                        FolderSize {
+                            path: "Windows".into(),
+                            size: 30_000 * MB,
+                            allocated: 30_000 * MB,
+                        },
+                        FolderSize {
+                            path: "GoPro".into(),
+                            size: 5_000 * MB,
+                            allocated: 5_000 * MB,
+                        },
+                        FolderSize {
+                            path: "Users".into(),
+                            size: 25_000 * MB,
+                            allocated: 25_000 * MB,
+                        },
+                    ],
+                    largest: vec![],
+                    types: vec![],
+                }),
+                ..Report::default()
+            })
+            .unwrap();
+        let phone = pair_device(&url, &mut admin, info("Phone", Platform::Android));
+        Client::new(&phone, &transport)
+            .report(&Report {
+                sync: Some(SyncReport {
+                    taken: 1_791_800_000,
+                    accounts: vec![SyncAccount {
+                        server: nc.base.clone(),
+                        user: "bob".into(),
+                        client: "android".into(),
+                        folders: vec![],
+                    }],
+                }),
+                scan: Some(ScanReport {
+                    root: "/storage/emulated/0".into(),
+                    label: "Internal storage".into(),
+                    taken: 1_791_800_100,
+                    size: 400 * MB,
+                    allocated: 400 * MB,
+                    files: 3,
+                    dirs: 2,
+                    errors: 0,
+                    complete: true,
+                    unreadable: vec![],
+                    folders: vec![FolderSize {
+                        path: "DCIM".into(),
+                        size: 400 * MB,
+                        allocated: 400 * MB,
+                    }],
+                    largest: vec![
+                        FileEntry {
+                            path: "DCIM/Camera/trip home.mp4".into(),
+                            size: 150 * MB,
+                            allocated: 150 * MB,
+                            modified: 1_791_799_200,
+                        },
+                        FileEntry {
+                            path: "DCIM/Camera/VID_other.mp4".into(),
+                            size: 120 * MB,
+                            allocated: 120 * MB,
+                            modified: 1_791_799_200,
+                        },
+                        FileEntry {
+                            path: "Download/a.jpg".into(),
+                            size: 350 * MB,
+                            allocated: 350 * MB,
+                            modified: 1_791_799_200,
+                        },
+                    ],
+                    types: vec![],
+                }),
+                ..Report::default()
+            })
+            .unwrap();
+        let tower = pair_device(&url, &mut admin, info("Tower", Platform::Linux));
+        Client::new(&tower, &transport)
+            .report(&Report {
+                unraid: Some(UnraidReport {
+                    started: true,
+                    shares: vec![
+                        ShareUse {
+                            name: "Media".into(),
+                            total: 9_000 * MB,
+                            ..ShareUse::default()
+                        },
+                        ShareUse {
+                            name: "Photos".into(),
+                            total: 2_000 * MB,
+                            ..ShareUse::default()
+                        },
+                    ],
+                    nextcloud: vec![NextcloudReport {
+                        data: "/mnt/user/appdata/nextcloud/data".into(),
+                        container: "nextcloud".into(),
+                        mounts: vec![
+                            ContainerMount {
+                                host: "/mnt/user/Media".into(),
+                                inside: "/media".into(),
+                            },
+                            ContainerMount {
+                                host: "/mnt/user/Photos".into(),
+                                inside: "/photos".into(),
+                            },
+                        ],
+                        external: vec!["/Photos".into()],
+                        ..NextcloudReport::default()
+                    }],
+                    ..UnraidReport::default()
+                }),
+                ..Report::default()
+            })
+            .unwrap();
+        let copies = admin.get(&format!("{url}/api/copies")).json();
+        let suggestion = |kind: &str| {
+            copies["suggestions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["kind"] == kind)
+                .unwrap_or_else(|| panic!("no {kind} suggestion in {}", copies["suggestions"]))
+                .clone()
+        };
+        assert_eq!(
+            copies["suggestions"].as_array().unwrap().len(),
+            4,
+            "{}",
+            copies["suggestions"]
+        );
+        // The laptop keeps Photos, which the server has whole and the
+        // desktop keeps too; Linux frees it in the client, not from here.
+        let free = suggestion("online_only");
+        assert_eq!(free["device_name"], "Laptop");
+        assert_eq!(free["bytes"], 350 * MB);
+        assert!(free["action"].is_null());
+        assert!(free["pointer"].as_str().unwrap().contains("Free up local space"));
+        let move_in = suggestion("move_in");
+        assert_eq!(move_in["device_name"], "Desktop");
+        assert_eq!(move_in["bytes"], 5_000 * MB);
+        assert_eq!(move_in["action"]["path"], "GoPro");
+        assert_eq!(move_in["action"]["target"], "Archive/Desktop/GoPro");
+        let camera = suggestion("camera_uploads");
+        assert_eq!(camera["device_name"], "Phone");
+        assert_eq!(camera["bytes"], 150 * MB);
+        assert_eq!(
+            camera["action"]["paths"],
+            json!(["DCIM/Camera/trip home.mp4"])
+        );
+        let external = suggestion("external_storage");
+        assert_eq!(external["device_name"], "Tower");
+        assert_eq!(external["action"]["share"], "Media");
+        assert_eq!(external["action"]["mount"], "/Media");
+        assert_eq!(external["action"]["inside"], "/media");
+
+        // The requests the suggestions make: each checked against what the
+        // device reported. The move makes its folder on Nextcloud first.
+        let mut commands = |action: &Value| {
+            admin.post(
+                &format!(
+                    "{url}/api/devices/{}/commands",
+                    action["device"].as_str().unwrap()
+                ),
+                &json!({"action": action["action"]}),
+                true,
+            )
+        };
+        let sent = commands(&json!({"device": desktop.device, "action": move_in["action"]}));
+        assert_eq!(sent.status, 200, "{}", sent.body);
+        wait_for("the folders on Nextcloud", || {
+            let made = nc.made.lock().unwrap().clone();
+            if made.len() >= 3 {
+                Ok(json!(made))
+            } else {
+                Err(json!(made))
+            }
+        });
+        assert_eq!(
+            nc.made.lock().unwrap().clone(),
+            [
+                "/remote.php/dav/files/bob/Archive",
+                "/remote.php/dav/files/bob/Archive/Desktop",
+                "/remote.php/dav/files/bob/Archive/Desktop/GoPro",
+            ]
+        );
+        let sent = commands(&json!({"device": phone.device, "action": camera["action"]}));
+        assert_eq!(sent.status, 200, "{}", sent.body);
+        let sent = commands(&json!({"device": tower.device, "action": external["action"]}));
+        assert_eq!(sent.status, 200, "{}", sent.body);
+        let refused = commands(&json!({"device": tower.device, "action": {
+            "type": "external_storage", "share": "Secrets", "container": "nextcloud", "mount": "/Secrets", "inside": "/x"}}));
+        assert_eq!(refused.status, 400, "{}", refused.body);
+        let sent = commands(&json!({"device": desktop.device, "action": {
+            "type": "online_only", "root": "C:\\Users\\bob\\Nextcloud", "paths": ["Photos", "Archive/old.tar"], "bytes": 0}}));
+        assert_eq!(sent.status, 200, "{}", sent.body);
+        let refused = commands(&json!({"device": desktop.device, "action": {
+            "type": "online_only", "root": "C:\\Users\\bob\\Nextcloud", "paths": ["../Secrets"], "bytes": 0}}));
+        assert_eq!(refused.status, 400, "{}", refused.body);
+        let refused = commands(&json!({"device": laptop.device, "action": {
+            "type": "online_only", "root": "/home/bob/Photos", "paths": [], "bytes": 0}}));
+        assert_eq!(refused.status, 400, "{}", refused.body);
+        let listed = admin.get(&format!("{url}/api/commands")).json();
+        let summaries: Vec<String> = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["summary"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            summaries
+                .iter()
+                .any(|s| s.starts_with("Make online-only 2 items in C:\\Users\\bob\\Nextcloud (500 MB)")),
+            "{summaries:?}"
+        );
+        assert!(
+            summaries.iter().any(|s| s.contains("GoPro") && s.contains("Archive/Desktop/GoPro")),
+            "{summaries:?}"
+        );
+        assert!(
+            summaries.iter().any(|s| s.contains("Media")),
+            "{summaries:?}"
         );
 
         // Listing again on request, and the audit trail.

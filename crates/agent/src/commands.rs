@@ -119,6 +119,15 @@ pub fn consider(
             Ok(targets) => targets,
             Err(reason) => return refuse(&command.id, CommandState::Denied, reason),
         },
+        // The folder to move must be in a scanned folder and nothing the
+        // rules protect, like anything deleted; the quarantine takes the
+        // original when it's copied.
+        Action::MoveIn { root, path, .. } => {
+            match delete_targets(root, std::slice::from_ref(path), policy) {
+                Ok(targets) => targets,
+                Err(reason) => return refuse(&command.id, CommandState::Denied, reason),
+            }
+        }
         _ => Vec::new(),
     };
     let request = Request {
@@ -470,6 +479,36 @@ pub trait Executor {
     fn docker_cleanup(&self, _items: &[String]) -> Result<u64, String> {
         Err("this device doesn't manage Docker".into())
     }
+    /// Marks synced files online-only (or to keep, with `keep`) below the
+    /// sync folder `root`; says what the client will free or fetch.
+    fn online_only(
+        &self,
+        _root: &Path,
+        _paths: &[String],
+        _keep: bool,
+    ) -> Result<crate::nextcloud::PinOutcome, String> {
+        Err("this device can't free local copies of synced files".into())
+    }
+    /// Moves a scanned folder (already checked to be one) to `target`
+    /// below the sync folder `into`.
+    fn move_in(
+        &self,
+        _source: &Path,
+        _into: &Path,
+        _target: &str,
+    ) -> Result<crate::nextcloud::MoveOutcome, String> {
+        Err("this device can't move folders into a Nextcloud folder".into())
+    }
+    /// Adds a share to Nextcloud as external storage (Unraid).
+    fn external_storage(
+        &self,
+        _share: &str,
+        _container: &str,
+        _mount: &str,
+        _inside: &str,
+    ) -> Result<String, String> {
+        Err("this device doesn't run Nextcloud".into())
+    }
     /// A line for whoever approves, about how this device carries the
     /// request out (e.g. that deletes go to a quarantine first), or what it
     /// would really free.
@@ -573,6 +612,30 @@ pub fn run(request: &Request, executor: &dyn Executor, approval: Approval) -> Co
                 update.detail = err;
             }
         },
+        Action::OnlineOnly {
+            root, paths, keep, ..
+        } => match executor.online_only(Path::new(root), paths, *keep) {
+            // The client frees the space later, so nothing counts as freed
+            // here.
+            Ok(outcome) => update.detail = outcome.detail(*keep),
+            Err(err) => failed(&mut update, err),
+        },
+        Action::MoveIn { into, target, .. } => match request.targets.first() {
+            Some(source) => match executor.move_in(source, Path::new(into), target) {
+                Ok(outcome) => update.detail = outcome.detail(),
+                Err(err) => failed(&mut update, err),
+            },
+            None => failed(&mut update, "nothing to move".into()),
+        },
+        Action::ExternalStorage {
+            share,
+            container,
+            mount,
+            inside,
+        } => match executor.external_storage(share, container, mount, inside) {
+            Ok(detail) => update.detail = detail,
+            Err(err) => failed(&mut update, err),
+        },
     }
     update
 }
@@ -631,6 +694,66 @@ pub fn describe(command: &Command, device_name: Option<&str>) -> Vec<String> {
                 freesize_core::format_size(*bytes)
             ));
             lines.extend(labels.iter().take(50).cloned());
+        }
+        Action::OnlineOnly {
+            root,
+            paths,
+            bytes,
+            keep,
+        } => {
+            lines.push(if *keep {
+                format!(
+                    "{} asks to keep these synced files on the device again ({}){on}; the \
+                     Nextcloud client fetches them on its next run:",
+                    command.by.name,
+                    freesize_core::format_size(*bytes)
+                )
+            } else {
+                format!(
+                    "{} asks to make these synced files online-only ({}){on}: they stay \
+                     listed, the Nextcloud client frees the space on its next run, and a file \
+                     comes back when it's opened:",
+                    command.by.name,
+                    freesize_core::format_size(*bytes)
+                )
+            });
+            if paths.is_empty() || paths.iter().all(String::is_empty) {
+                lines.push(root.clone());
+            } else {
+                lines.extend(paths.iter().take(50).map(|p| format!("{root}/{p}")));
+                if paths.len() > 50 {
+                    lines.push(format!("… and {} more", paths.len() - 50));
+                }
+            }
+        }
+        Action::MoveIn {
+            root,
+            path,
+            into,
+            target,
+            bytes,
+        } => {
+            lines.push(format!(
+                "{} asks to move {root}/{path} ({}) into the Nextcloud folder{on}, as \
+                 {into}/{target}, so the client uploads it. On the same drive it's a rename; \
+                 across drives it's copied, checked byte for byte, and the original goes to \
+                 the quarantine.",
+                command.by.name,
+                freesize_core::format_size(*bytes)
+            ));
+        }
+        Action::ExternalStorage {
+            share,
+            container,
+            mount,
+            inside,
+        } => {
+            lines.push(format!(
+                "{} asks to add the share {share} to Nextcloud ({container}) as {mount}{on}: \
+                 external storage on {inside}, which every device then reaches without a \
+                 second copy. Nothing is copied or deleted.",
+                command.by.name
+            ));
         }
     }
     if !command.reason.trim().is_empty() {

@@ -59,8 +59,10 @@ pub struct Account {
     pub folders: i64,
     pub bytes: i64,
     pub trash: i64,
-    /// What the server says the account uses, all told.
+    /// What the server says the account uses, all told, and has left
+    /// (-1 when unlimited, or not listed yet).
     pub quota_used: i64,
+    pub quota_free: i64,
     /// A listing is running now.
     #[serde(default)]
     pub syncing: bool,
@@ -69,7 +71,7 @@ pub struct Account {
 pub fn accounts(c: &Connection) -> rusqlite::Result<Vec<Account>> {
     let mut stmt = c.prepare(
         "SELECT id, server, user, added, added_by, synced, error, files, folders, bytes, trash,
-                quota_used
+                quota_used, quota_free
          FROM nextcloud ORDER BY server, user",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -86,6 +88,7 @@ pub fn accounts(c: &Connection) -> rusqlite::Result<Vec<Account>> {
             bytes: r.get(9)?,
             trash: r.get(10)?,
             quota_used: r.get(11)?,
+            quota_free: r.get(12)?,
             syncing: false,
         })
     })?;
@@ -100,7 +103,7 @@ pub struct Credentials {
     pub password: String,
 }
 
-fn credentials(c: &Connection, id: i64) -> ApiResult<Credentials> {
+pub fn credentials(c: &Connection, id: i64) -> ApiResult<Credentials> {
     c.query_row(
         "SELECT server, user, password FROM nextcloud WHERE id = ?1",
         [id],
@@ -406,6 +409,8 @@ pub struct Entry {
 pub struct Listing {
     pub entries: Vec<Entry>,
     pub quota_used: u64,
+    /// What's left, or -1 when the server doesn't say (unlimited).
+    pub quota_free: i64,
     pub trash: u64,
     pub requests: usize,
 }
@@ -417,6 +422,7 @@ const PROPFIND: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <d:getcontentlength/>
     <d:getlastmodified/>
     <d:quota-used-bytes/>
+    <d:quota-available-bytes/>
     <oc:fileid/>
     <oc:size/>
     <oc:checksums/>
@@ -458,6 +464,40 @@ fn propfind(
         .map_err(|e| format!("{url}: {e}"))
 }
 
+/// Creates a folder in the account (`MKCOL`), and the folders above it
+/// as needed: `/Archive/Desktop/GoPro` makes three. A folder that's
+/// already there is fine. Blocking.
+pub fn mkcol(creds: &Credentials, path: &str) -> Result<(), String> {
+    let http = agent();
+    let user = percent_encode(&creds.user);
+    let base = format!("{}/remote.php/dav/files/{user}", creds.server);
+    let mut so_far = String::new();
+    for part in path.split('/').filter(|p| !p.is_empty()) {
+        so_far.push('/');
+        so_far.push_str(part);
+        let url = format!("{base}{}", encode_path(&so_far));
+        let request = ureq::http::Request::builder()
+            .method("MKCOL")
+            .uri(&url)
+            .header("Authorization", basic(creds))
+            .body(())
+            .map_err(|e| e.to_string())?;
+        let response = http.run(request).map_err(|e| format!("{url}: {e}"))?;
+        match response.status().as_u16() {
+            // Made, or already there.
+            201 | 405 => {}
+            401 | 403 => {
+                return Err(format!(
+                    "{} refused the Hub's sign-in; connect the account again",
+                    creds.server
+                ));
+            }
+            status => return Err(format!("{url}: HTTP {status}")),
+        }
+    }
+    Ok(())
+}
+
 /// Lists the account: every folder two levels down, deeper where a folder
 /// holds a big file's worth, and the trash's total. Blocking, and up to
 /// a few thousand requests on a big account.
@@ -466,7 +506,10 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
     let user = percent_encode(&creds.user);
     let base = format!("{}/remote.php/dav/files/{user}", creds.server);
     let prefix = format!("/remote.php/dav/files/{user}");
-    let mut listing = Listing::default();
+    let mut listing = Listing {
+        quota_free: -1,
+        ..Listing::default()
+    };
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut queue: Vec<(String, usize)> = vec![("/".to_string(), 0)];
     while let Some((folder, depth)) = queue.pop() {
@@ -480,11 +523,13 @@ pub fn list_files(creds: &Credentials) -> Result<Listing, String> {
             let Some(path) = dav_path(&response.href, &prefix) else {
                 continue;
             };
-            if depth == 0
-                && path == "/"
-                && let Some(used) = response.quota_used
-            {
-                listing.quota_used = used;
+            if depth == 0 && path == "/" {
+                if let Some(used) = response.quota_used {
+                    listing.quota_used = used;
+                }
+                if let Some(free) = response.quota_free {
+                    listing.quota_free = free;
+                }
             }
             let entry = Entry {
                 path: path.clone(),
@@ -603,6 +648,8 @@ pub struct DavResponse {
     pub modified: Option<i64>,
     pub checksums: Vec<String>,
     pub quota_used: Option<u64>,
+    /// Negative on an unlimited account (-3 for "unlimited" in Nextcloud).
+    pub quota_free: Option<i64>,
 }
 
 /// Reads the responses out of the XML, whatever prefixes the server uses:
@@ -694,6 +741,7 @@ fn close(response: &mut DavResponse, name: &str, value: &str, stack: &[String]) 
             }
         }
         "quota-used-bytes" => response.quota_used = value.parse().ok(),
+        "quota-available-bytes" => response.quota_free = value.parse().ok(),
         _ => {}
     }
 }
@@ -809,8 +857,8 @@ fn store_listing(c: &mut Connection, id: i64, listing: &Listing) -> rusqlite::Re
         .count() as i64;
     tx.execute(
         "UPDATE nextcloud SET synced = ?1, error = NULL, files = ?2, folders = ?3, bytes = ?4,
-                trash = ?5, quota_used = ?6
-         WHERE id = ?7",
+                trash = ?5, quota_used = ?6, quota_free = ?7
+         WHERE id = ?8",
         params![
             now(),
             files,
@@ -818,6 +866,7 @@ fn store_listing(c: &mut Connection, id: i64, listing: &Listing) -> rusqlite::Re
             root.map_or(0, |r| r.size as i64),
             listing.trash as i64,
             listing.quota_used as i64,
+            listing.quota_free.max(-1),
             id
         ],
     )?;

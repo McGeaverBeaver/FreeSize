@@ -103,6 +103,13 @@ pub enum ActionKind {
     Empty,
     /// Remove Docker images or build cache. Never covered by a grant.
     Docker,
+    /// Free the local copies of synced files (make them online-only), or
+    /// keep them on the device again (0.13). Comes back with a click.
+    OnlineOnly,
+    /// Move a folder into the Nextcloud client's sync folder (0.13).
+    MoveIn,
+    /// Add a share to Nextcloud as external storage, on Unraid (0.13).
+    Mount,
     /// One a newer device or Hub knows and this one doesn't.
     #[serde(other)]
     Unknown,
@@ -117,6 +124,9 @@ impl ActionKind {
             ActionKind::Restore => "put back files",
             ActionKind::Empty => "empty the quarantine",
             ActionKind::Docker => "remove Docker images",
+            ActionKind::OnlineOnly => "free local copies of synced files",
+            ActionKind::MoveIn => "move folders into the Nextcloud folder",
+            ActionKind::Mount => "add shares to Nextcloud",
             ActionKind::Unknown => "do something this version doesn't know",
         }
     }
@@ -128,7 +138,11 @@ impl ActionKind {
     pub fn grantable(self) -> bool {
         matches!(
             self,
-            ActionKind::Delete | ActionKind::Uninstall | ActionKind::Clean | ActionKind::Restore
+            ActionKind::Delete
+                | ActionKind::Uninstall
+                | ActionKind::Clean
+                | ActionKind::Restore
+                | ActionKind::OnlineOnly
         )
     }
 }
@@ -462,6 +476,48 @@ pub enum Action {
         labels: Vec<String>,
         bytes: u64,
     },
+    /// Free the local copies of synced files (the Nextcloud client's
+    /// virtual files on Windows, like Explorer's "Free up space"), or with
+    /// `keep` bring them back to the device. The files stay listed; the
+    /// client frees or fetches them on its next run.
+    OnlineOnly {
+        /// The sync folder on the device, as it reported it.
+        root: String,
+        /// Folders or files below it with `/` between names; "" for the
+        /// whole folder.
+        paths: Vec<String>,
+        /// What it frees, or fetches.
+        bytes: u64,
+        #[serde(default)]
+        keep: bool,
+    },
+    /// Move a scanned folder into the Nextcloud client's sync folder, so
+    /// the client uploads it: a rename on the same drive, otherwise copied,
+    /// checked byte for byte and the original moved to the quarantine.
+    MoveIn {
+        /// The scanned folder the source is in, as the device writes it.
+        root: String,
+        /// The folder to move, relative to `root`.
+        path: String,
+        /// The sync folder on the device, as it reported it.
+        into: String,
+        /// Where it goes below the sync folder, with `/` between names:
+        /// `Archive/Desktop/GoPro`.
+        target: String,
+        bytes: u64,
+    },
+    /// On Unraid, add a share the Nextcloud container already mounts to
+    /// Nextcloud as external storage (`occ files_external:create` with the
+    /// `local` backend, in the container), so every device reaches it
+    /// without a second copy.
+    ExternalStorage {
+        share: String,
+        container: String,
+        /// The folder name in Nextcloud, e.g. `/Media`.
+        mount: String,
+        /// The share's path inside the container.
+        inside: String,
+    },
 }
 
 impl Action {
@@ -473,6 +529,9 @@ impl Action {
             Action::Restore { .. } => ActionKind::Restore,
             Action::EmptyQuarantine { .. } => ActionKind::Empty,
             Action::DockerCleanup { .. } => ActionKind::Docker,
+            Action::OnlineOnly { .. } => ActionKind::OnlineOnly,
+            Action::MoveIn { .. } => ActionKind::MoveIn,
+            Action::ExternalStorage { .. } => ActionKind::Mount,
         }
     }
 
@@ -508,6 +567,44 @@ impl Action {
                 },
                 freesize_core::format_size(*bytes)
             ),
+            Action::OnlineOnly {
+                root,
+                paths,
+                bytes,
+                keep,
+            } => format!(
+                "{} {} in {root} ({})",
+                if *keep {
+                    "Keep on the device"
+                } else {
+                    "Make online-only"
+                },
+                match paths.as_slice() {
+                    [] => "the folder".to_string(),
+                    [one] if one.is_empty() => "the folder".to_string(),
+                    [one] => one.clone(),
+                    many => format!("{} items", many.len()),
+                },
+                freesize_core::format_size(*bytes)
+            ),
+            Action::MoveIn {
+                root,
+                path,
+                target,
+                bytes,
+                ..
+            } => format!(
+                "Move {}{}{path} into the Nextcloud folder as {target} ({})",
+                root.trim_end_matches(['/', '\\']),
+                if root.contains('\\') { '\\' } else { '/' },
+                freesize_core::format_size(*bytes)
+            ),
+            Action::ExternalStorage {
+                share,
+                container,
+                mount,
+                ..
+            } => format!("Add the share {share} to Nextcloud ({container}) as {mount}"),
         }
     }
 }

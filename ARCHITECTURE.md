@@ -755,6 +755,15 @@ whole array, rather than every file.
   is a placeholder for `x`. The client's sync journal (SQLite, kept open by
   the client) isn't read: paths are the key, the same on every client of a
   server, and the Hub matches them to the server's file ids itself.
+  Since 0.13 it also carries the actions: `online_only` marks files below
+  a sync folder with the cloud files API's pin attributes on Windows
+  (`FILE_ATTRIBUTE_UNPINNED` to free, `PINNED` to keep; the Nextcloud
+  client dehydrates or hydrates them on its next run, and only what it
+  has uploaded), and on other platforms answers with where the client's
+  own menu is; `move_in` moves a scanned folder into a sync folder, a
+  rename on the same device, else a copy, a byte-for-byte check of every
+  file, and the original into the quarantine, with a failed check
+  removing the copy instead.
 
 The command line's agent (`crates/cli/src/agent.rs`) reports disks hourly,
 scans its folders on a thread every `--every` hours, and long-polls the Hub
@@ -831,7 +840,16 @@ it scans as its user.
   shown, needs_approver, running, done, failed, denied, expired, cancelled.
   Undelivered work is sent again after 10 minutes and expires after a day.
   For a device without anyone at it, the request goes to the approver's
-  device and the signed decision back.
+  device and the signed decision back. The 0.13 actions: `online_only`
+  needs a Windows device whose sync report names the folder with virtual
+  files on (`wincfapi`), paths among its reported folders and big files,
+  and takes the bytes from the report; `move_in` needs the folder in the
+  device's newest scan and the sync folder in its report, with the target
+  cleaned to plain names, and once queued the Hub makes the folder on
+  Nextcloud (`MKCOL`, each level) when it is connected to that account;
+  `external_storage` needs the Unraid report to name the container, the
+  share and the share's path inside the container, and refuses a mount
+  point Nextcloud already has.
 - `dashboard.rs`, `reports.rs`: devices, scans, folders, groups and pairing
   codes; comparing scans (`snapshot::compare` from core), search across the
   newest scans, CSV/JSON exports, the HTML report (its own strict CSP) and
@@ -883,7 +901,9 @@ it scans as its user.
   hours and on request, one per account at a time, replacing the
   `nextcloud_files` rows in one transaction. Disconnecting asks Nextcloud
   to revoke the app password (`DELETE ocs/v2.php/core/apppassword`) and
-  drops the rows. The Hub reads only.
+  drops the rows. The Hub reads only, apart from 0.13's `mkcol`, and
+  since 0.13 reads the root's `d:quota-available-bytes` (`quota_free`, -1
+  when unlimited) for the move-in suggestions.
 - `copies.rs` (0.12): `join` puts the devices' sync reports (the `sync`
   table) together with the listings on (server, user, path): per folder
   two levels down, what the server holds and each device's stored bytes,
@@ -894,7 +914,16 @@ it scans as its user.
   the server holds, and the biggest depth-one folders of each device's
   latest scans (1 GB and over, outside system folders) that no synced
   folder covers. `GET /api/copies` runs it for the devices the person may
-  see.
+  see. `suggestions` (0.13) turns the join and the devices' other reports
+  into requests the dashboard sends as they stand: free a folder's local
+  copies (the server has it whole, and another device keeps it whole or
+  the disk is under 15% free; an `online_only` action on Windows with
+  virtual files, a pointer to the client elsewhere), camera files under a
+  phone's `DCIM` matched to the listing by name and size (a `delete` to
+  the phone's quarantine, the 500 biggest), the not-synced folders of a
+  device that syncs (a `move_in` to `Archive/<device>/<folder>`, skipped
+  when the account's free quota is known and too small), and shares an
+  Unraid Nextcloud container mounts that aren't external storage yet.
 - `web/`: the dashboard, plain JavaScript without a build step. All text
   goes in through `textContent`; the page's CSP allows scripts and styles
   from the Hub only, so styles are set through the CSSOM.
@@ -904,8 +933,9 @@ OpenID provider (`tests/common/idp.rs`) and pair real agents with it:
 sign-in, pairing, signatures and replays, scoped viewers, requests and
 approvals through an approver, comparing, search, exports, uploads, alerts
 to a local ntfy and webhook stand-in, metrics, and connecting a stand-in
-Nextcloud (the sign-in flow, PROPFIND listings, the Copies join and the
-risk report). `examples/demo.rs` runs
+Nextcloud (the sign-in flow, PROPFIND listings, the Copies join, the
+risk report, the suggestions and their requests, with MKCOL for a move).
+`examples/demo.rs` runs
 the same with made-up devices for trying the dashboard.
 
 ### Packaging
@@ -997,7 +1027,16 @@ server's root (`/`, or a folder laid out like a server in the tests).
   `appdata/<app>/data`), with `config.php` beside them or in the same
   appdata folder. The report sizes each user's `files`, `files_versions`,
   `files_trashbin`, `uploads` and `cache`, `appdata_*/preview` and the
-  rest of `appdata_*`, and group folders, from the scans; the retention
+  rest of `appdata_*`, and group folders, from the scans; since 0.13
+  `container_for` names the container binding the data folder (or one
+  above it; Nextcloud's image, then a running one, then the nearest
+  bind), `share_mounts` the shares it binds with their paths inside,
+  `external_storages` what `occ files_external:list` answers (run with
+  `docker exec`, as `www-data` with `php occ`, else the image's own `occ`;
+  only on the server itself), and `add_external_storage` runs
+  `files_external:create <mount> local null::null -c datadir=<inside>`
+  for an approved request, after the daemon has checked the bind against
+  Docker's inventory; the retention
   settings (`versions_retention_obligation`, `trashbin_retention_obligation`,
   `auto` by default) give a latest day where they name one, and the
   versions and trash older than it are counted as expired. Nothing is

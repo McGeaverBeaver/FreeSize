@@ -928,6 +928,34 @@ With both sides in, the page shows:
   a problem by itself; it is what a lost device or a failed server would
   take with it.
 
+- **Suggestions** (0.13): what could be done about it, each one request
+  away, and each still shown on the device and approved there:
+  - **Free space**: a synced folder Nextcloud has whole, which another
+    device also keeps whole or which sits on a disk under 15% free. On
+    Windows with the client's virtual files on, **Ask the device** marks
+    the folder online-only: the files stay listed and download when
+    opened, and the Nextcloud client frees them on its next run (it only
+    ever frees what it has uploaded). The Folders tab has the same per
+    device as **Free** and **Keep here**. On macOS and Linux the page
+    points to the client's own "Free up local space" instead, and on
+    Windows without virtual files, to turning them on.
+  - **Camera**: photos and videos under a phone's `DCIM` that the
+    connected account already has, by name and size (the Nextcloud app's
+    auto upload). The request moves them to the phone's quarantine, where
+    they can be put back for 30 days.
+  - **Move in**: a big folder outside any synced folder, on a device that
+    syncs. The request moves it into the sync folder as
+    `Archive/<device>/<folder>`, so the client uploads it: a rename on the
+    same drive, otherwise a copy checked byte for byte with the original
+    going to the quarantine, and nothing is removed before the copy
+    checks out. The Hub makes the folder on Nextcloud first, when it is
+    connected to the account, and says how much the account has left.
+  - **External storage**: on an Unraid server, a share the Nextcloud
+    container already mounts but Nextcloud doesn't offer. The request runs
+    `occ files_external:create` in the container (the `local` backend),
+    so every device reaches the share through Nextcloud where it is, with
+    no second copy.
+
 The device page's Nextcloud card shows the same device's folders on their
 own. `freesize nextcloud` on a desktop prints what that machine reports,
 for checking the counts by hand. A device whose account the Hub isn't
@@ -1012,7 +1040,11 @@ What it shows:
   allow, which Nextcloud's background job should have removed. Only
   reported: Nextcloud's database lists these files, so they're removed
   through Nextcloud (`occ versions:cleanup`, `occ trashbin:cleanup`, the
-  settings), never from the file system.
+  settings), never from the file system. Since 0.13 the report also names
+  the Docker container running the install and the shares it mounts, and
+  the Hub's Copies page can ask the server to add one of those shares to
+  Nextcloud as external storage (`occ files_external:create` in the
+  container, approved on the server like any request).
 
 Until its first look after starting is done, which takes a few minutes on
 a big array, the page says what it's looking at (which disk, of how many)

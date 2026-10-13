@@ -246,7 +246,18 @@ fn device_info(name: &str, state: Option<&AgentState>) -> DeviceInfo {
         os: os_name(),
         hostname: freesize_agent::hostname(),
         app: format!("FreeSize agent {}", env!("CARGO_PKG_VERSION")),
-        actions: vec![ActionKind::Delete, ActionKind::Restore, ActionKind::Empty],
+        actions: {
+            let mut actions = vec![
+                ActionKind::Delete,
+                ActionKind::Restore,
+                ActionKind::Empty,
+                ActionKind::MoveIn,
+            ];
+            if cfg!(windows) {
+                actions.push(ActionKind::OnlineOnly);
+            }
+            actions
+        },
         attended: false,
         approver: state.and_then(|s| s.approver.as_ref().map(|a| a.key.fingerprint())),
         grants: state.map(|s| s.grants.clone()).unwrap_or_default(),
@@ -496,12 +507,19 @@ fn run(path: &Path, scans: &[PathBuf], every: u64, once: bool) -> Result<(), Str
     let keep = vec![path.canonicalize().unwrap_or_else(|_| path.to_path_buf())];
     let policy = Policy {
         attended: false,
-        actions: vec![
-            ActionKind::Delete,
-            ActionKind::Clean,
-            ActionKind::Restore,
-            ActionKind::Empty,
-        ],
+        actions: {
+            let mut actions = vec![
+                ActionKind::Delete,
+                ActionKind::Clean,
+                ActionKind::Restore,
+                ActionKind::Empty,
+                ActionKind::MoveIn,
+            ];
+            if cfg!(windows) {
+                actions.push(ActionKind::OnlineOnly);
+            }
+            actions
+        },
         roots: roots.clone(),
         keep,
         guards: Guards(vec![Arc::new(OpenFiles::default())]),

@@ -61,7 +61,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.12.0)
+## Where things stand (0.13.0)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -117,7 +117,12 @@ compiling inside Docker.
   Nextcloud account through Login Flow v2 and lists it over WebDAV
   (`crates/hub/src/nextcloud.rs`), and the Copies page joins them
   (`copies.rs`): kept on N devices per folder and big file, and the "only
-  one copy" report. The Hub reads only.
+  one copy" report. The Hub reads only. 0.13: copies, actions: the
+  Suggestions tab and Free/Keep here buttons (online-only through the pin
+  attributes on Windows, camera files to the phone's quarantine, moving a
+  folder into the sync folder with a checked copy, external storage on
+  Unraid through `occ` in the container; MKCOL and the free quota on the
+  Hub).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
@@ -130,8 +135,10 @@ compiling inside Docker.
      works since the repository went public. Unraid's own CSS is in
      github.com/unraid/webgui (`emhttp/plugins/dynamix/styles`); render
      the page against it before changing its layout.
-  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.13 Nextcloud
-     actions, 0.14 the phone in the background. 0.12 leaves the owner the
+  3. Next on the roadmap (docs/ROADMAP.md, Next releases): 0.14 the phone
+     in the background. 0.13 leaves the owner the Suggestions checks in
+     TESTING.md (the 10 GB folder online-only and back, the camera files,
+     a move across drives, external storage). 0.12 leaves the owner the
      Copies checks in TESTING.md (20 files on three devices, a file kept
      on one device only). 0.11 leaves the owner
      the Nextcloud, sparse vdisk and peak memory checks in TESTING.md on
@@ -142,7 +149,7 @@ compiling inside Docker.
      machine and commit `release/public-key.txt`; register the package
      and the Android key with Google; try the updater and the phone's
      quarantine on real devices (TESTING.md).
-  4. 0.8.6 to 0.12.0 haven't been tried on real devices yet: the Unraid
+  4. 0.8.6 to 0.13.0 haven't been tried on real devices yet: the Unraid
      update through `disktree.plg`, the phone pairing again under the new
      package id, HTTPS pairing from the QR code, a 0.8.6 device moving
      over to https, and the administrator and root scans (UAC on Windows,

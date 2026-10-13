@@ -222,6 +222,24 @@ pub fn round(
             .iter()
             .filter_map(|instance| nextcloud::report(system, &array, &scans, instance, now))
             .collect();
+        // The container each runs in, and the shares it can reach (0.13).
+        // `occ` is only asked on the server itself.
+        if let Some(inventory) = &out.inventory {
+            let can_exec = system.file("/usr/bin/docker").exists();
+            for (report, instance) in out.report.nextcloud.iter_mut().zip(&instances) {
+                let Some(container) = nextcloud::container_for(instance, inventory) else {
+                    continue;
+                };
+                report.container = container.name.clone();
+                report.mounts = nextcloud::share_mounts(instance, container);
+                if can_exec && container.running && !report.mounts.is_empty() {
+                    match nextcloud::external_storages(&container.name) {
+                        Ok(mounts) => report.external = mounts,
+                        Err(err) => out.errors.push(format!("Nextcloud occ: {err}")),
+                    }
+                }
+            }
+        }
     }
 
     // Permissions, while the scan's details are still in memory.
