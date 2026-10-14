@@ -649,6 +649,58 @@ half ships even if an action stalls on a device nobody has.
   two weeks later, nothing of an installed program is, and a removed
   Flatpak's `~/.var/app` folder is listed on the first look.
 
+## After polish
+
+Decided with the owner on 2026-10-14. These wait until the polish is done
+(see Polish), in this order.
+
+- **0.18, changes as a chart.** On the desktop Changes tab, the phone and
+  the Hub's device page: a line of total used space over time, where
+  clicking a point compares with that scan; under it, bars for the
+  folders that grew or shrank most, and clicking a bar highlights that
+  folder in the tree. The desktop and phone apps keep a small record per
+  scan (the total and the top folders) for a year, like the Hub's scan
+  history. Done when a year of scans draws on all three, and a bar takes
+  you to its folder.
+- **0.19, review a folder.** Right-click a folder (long-press on a phone)
+  → "Review this folder": tabs for Photos (a grid of thumbnails),
+  Documents, Videos, Important and Everything else, each with Open, Show
+  in folder and Select. Important flags documents and spreadsheets,
+  password vaults (`.kdbx`), keys and certificates, crypto wallets, tax
+  and accounting files, email archives (`.pst`) and camera photos: "look
+  at these before deleting this folder". Keyword search inside files is
+  turned on per review and runs on the device that has the files (the
+  agent on Unraid); it starts with text, PDF and Office files and a
+  keyword list edited in Settings (tax, invoice, passport, bank, contract,
+  password to begin with). The Hub only learns the path and which keyword
+  matched, never the text. "Compare with my current files" says how much
+  of the folder you already have elsewhere ("92% of these photos are
+  already in Pictures") and lists the rest, by content, not name. Done
+  when an old PC backup of a few thousand files opens reviewed, the
+  compare is right for files checked by hand, and keywords are found in
+  each supported format.
+- **0.20, the FreeSize Nextcloud app, and cleanup in Nextcloud.** A real
+  Nextcloud app (PHP, from Nextcloud's app store or installed by hand),
+  so suggestions come from the real files: no downloading and no guessing.
+  It pairs with the Hub like any device (the Hub's code in Nextcloud's
+  admin settings), shows as a device "Nextcloud" and has its own approver,
+  so every delete is approved on the approver's phone. Deletes go through
+  Nextcloud, into its trash bin, so its database stays right and files can
+  be put back there. The admin picks which Nextcloud users it covers; on
+  the Hub each person sees only their own account, admins see all. The
+  Copies page gets Nextcloud suggestions: not changed in over a year,
+  biggest files, the same file twice inside Nextcloud (by real
+  fingerprint), the trash bin's and old versions' space, folders only in
+  the cloud and on no device, camera uploads already kept elsewhere. Folder
+  review (0.19) works on Nextcloud folders through the app, with
+  Nextcloud's own thumbnails and keyword search on the server. Without the
+  app, the Hub's current Nextcloud sign-in keeps only the suggestions that
+  need no guessing (not changed in a year, biggest files, trash and
+  versions); duplicates, keywords and reviews need the app. Done when the
+  app pairs, a duplicate it reports is byte-identical, a delete approved
+  on the phone lands in Nextcloud's trash and comes back from there, and
+  one user can't see another's files.
+
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 
 One small Rust server with a web UI and SQLite.
