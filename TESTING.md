@@ -16,6 +16,10 @@ what was tried in the release's draft notes, and say what wasn't.
 
 ## Desktop app (Windows and Linux; macOS when someone has a Mac)
 
+- [ ] Changes tab after a few scans of the same folder: the chart shows a
+      point per scan and this scan; clicking a point compares with it (the
+      picker follows), and each listed folder has a bar; on a phone the
+      chart fits and a tap compares.
 - [ ] Scans the home folder and a whole drive; totals look right; the
       status line says how many folders couldn't be read.
 - [ ] Clean up tab: Folders FreeSize couldn't read names them; Scan as
@@ -105,6 +109,8 @@ what was tried in the release's draft notes, and say what wasn't.
 
 ## Hub
 
+- [ ] A device's Changes tab: the chart has a point per kept scan, a click
+      compares that scan with the newest, and rows have bars.
 - [ ] Starts fresh: makes its key and certificate, the dashboard signs in
       through Authentik over HTTPS.
 - [ ] Upgrades from the previous version: devices, scans, alerts and the

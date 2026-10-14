@@ -433,13 +433,22 @@ tick every file it lists.
 ### Changes
 
 FreeSize keeps the sizes of the 10,000 biggest folders of every scan (not
-every file), the last 12 scans of each scanned folder, in FreeSize's data
-folder under `scans/`. When a folder has been scanned before, the
-**Changes** tab compares this scan with an earlier one (pick which): how much
+every file) in FreeSize's data folder under `scans/`: the last 12 scans of
+each scanned folder in full, and older ones, a year back, with their 300
+biggest folders (every scan of the last week, then one a day for three
+months and one a week after that). When a folder has been scanned before,
+the **Changes** tab starts with a chart of the folder's size at each kept
+scan; click a point (tap on a phone) to compare with that scan, or pick one
+from the list. It compares with the newest scan at least a month old at
+first. Below the chart: how much
 the whole folder grew, the folders that grew or are new, and the ones that
 shrank or went away. A folder is skipped when one folder inside it explains
 almost all of its change, so the list points at where the change is. Small
 changes (a thousandth of the folder, between 1 MB and 50 MB) aren't listed.
+Each listed folder has a bar for its change against the biggest one, orange
+for grew and green for shrank; click it to highlight it in the tree. Against
+an older scan, which kept only its bigger folders, a folder it didn't keep
+shows as "new, or under X then".
 In the bubble view, folders that grew or shrank noticeably show by how much,
 for example *12.4 GB · +2.1 GB*.
 
@@ -756,8 +765,9 @@ What it does:
   junk cleaner found there by category, how much is safe to clean, and a
   button to ask the device to clean a rule (desktops, phones and the
   command line's `freesize agent` report it every hour).
-- **Changes**: any two scans of a folder side by side: what grew, shrank,
-  appeared and went. The Hub keeps every scan for a week, then one a day
+- **Changes**: a chart of a folder's size at every kept scan (click a point
+  to compare it with the newest), and any two scans side by side: what
+  grew, shrank, appeared and went, with a bar per folder. The Hub keeps every scan for a week, then one a day
   for three months, one a week for a year and one a month after that.
 - **Search** across every device ("which device has that ISO?"): words in
   the path, `*.iso` for a file type, a size floor. Searches can be saved.

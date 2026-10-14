@@ -246,6 +246,8 @@ pub struct Controller {
     /// and the one the Changes tab compares with.
     earlier: Vec<Snapshot>,
     compare: Option<usize>,
+    /// The Changes chart's plot, in pixels.
+    chart_size: (f32, f32),
     /// Space no file accounts for, when a whole drive was scanned.
     hidden: Option<Hidden>,
     /// Items collected to delete or move at once, and what's being done
@@ -461,6 +463,7 @@ pub fn install(
             bins: RefCell::default(),
             earlier: Vec::new(),
             compare: None,
+            chart_size: (600.0, 120.0),
             hidden: None,
             basket: Vec::new(),
             pending_basket: false,
@@ -563,6 +566,10 @@ pub fn install(
     on!(ui, on_select_node, weak, |c, id, reveal| c
         .select(id, reveal));
     on!(ui, on_map_resized, weak, |c, w, h| c.map_resized(w, h));
+    on!(ui, on_change_chart_resized, weak, |c, w, h| {
+        c.chart_size = (w, h);
+        c.refresh_changes();
+    });
     on!(ui, on_bubbles_resized, weak, |c, w, h| c
         .bubbles_resized(w, h));
     on!(ui, on_map_view_changed, weak, |c| c.update_map());
@@ -1273,7 +1280,7 @@ impl Controller {
                 self.earlier = scanned.earlier;
                 self.hidden = scanned.hidden;
                 self.imported = scanned.imported;
-                self.compare = self.earlier.len().checked_sub(1);
+                self.compare = changes::default_compare(&self.earlier, apps::now() as i64);
                 scanned.result
             }
             Err(err) => {
@@ -2729,6 +2736,21 @@ impl Controller {
         if let Some(i) = self.compare {
             ui.set_change_scan_index((self.earlier.len() - 1 - i) as i32);
         }
+        let chart = changes::chart(
+            &self.earlier,
+            tree.node(tree.root()).size_in(self.mode),
+            now,
+            self.mode,
+            self.compare,
+            self.chart_size,
+        )
+        .unwrap_or_default();
+        ui.set_change_chart_line(chart.line.into());
+        ui.set_change_chart_points(ModelRc::new(VecModel::from(chart.points)));
+        ui.set_change_chart_high(chart.high.into());
+        ui.set_change_chart_low(chart.low.into());
+        ui.set_change_chart_start(chart.start.into());
+        ui.set_change_chart_end(chart.end.into());
         let rows = match self.compare.and_then(|i| self.earlier.get(i)) {
             Some(earlier) => changes::rows(tree, &self.root_label(tree), earlier, self.mode, now),
             None => vec![CleanRow {

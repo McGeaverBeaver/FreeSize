@@ -103,6 +103,19 @@ export struct CleanRow {
     /// or a group's title, in the warning color.
     badge: string,
     warn: bool,
+    /// Changes: a bar for the change against the biggest one, -1 to 1
+    /// (below 0 it shrank); 0 for none.
+    bar: float,
+}
+
+/// A scan on the Changes tab's chart, placed in a 0–1 box (y grows down).
+export struct ChartPoint {
+    x: float,
+    y: float,
+    label: string,
+    /// The scan's place in the picker, newest first; -1 for now.
+    index: int,
+    selected: bool,
 }
 
 /// A set of similar photos, shown side by side.
@@ -905,6 +918,22 @@ component CleanupPane inherits Rectangle {
                             }
                         }
 
+                        // Changes: how big against the biggest change.
+                        if row.bar != 0: Rectangle {
+                            width: 64px;
+                            Rectangle {
+                                y: (parent.height - self.height) / 2;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: Theme.track;
+                                Rectangle {
+                                    x: 0;
+                                    width: parent.width * max(0.04, abs(row.bar));
+                                    border-radius: 3px;
+                                    background: row.bar > 0 ? Theme.warn : Theme.rebuild;
+                                }
+                            }
+                        }
                         if row.detail != "": Text {
                             text: row.detail;
                             vertical-alignment: center;
@@ -2443,10 +2472,142 @@ component ChangesPane inherits VerticalLayout {
     in-out property <int> scan-index;
     in property <[CleanRow]> rows;
     in property <int> selected-id;
+    in property <bool> compact;
+    /// The chart: see `changes::Chart`.
+    in property <string> chart-line;
+    in property <[ChartPoint]> chart-points;
+    in property <string> chart-high;
+    in property <string> chart-low;
+    in property <string> chart-start;
+    in property <string> chart-end;
     callback select(int);
     callback compare(int);
+    callback chart-resized(length, length);
+    // The point under the pointer, else the one compared with.
+    property <string> hovered;
+
+    if root.chart-points.length > 1: VerticalLayout {
+        vertical-stretch: 0;
+        padding: 8px;
+        padding-bottom: 0;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: "Size over time";
+                font-size: 15px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: root.hovered != "" ? root.hovered : root.compact ? "Tap a point to compare" : "Click a point to compare with that scan";
+                font-size: 12px;
+                color: Theme.dim;
+                horizontal-stretch: 1;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        Rectangle {
+            height: root.compact ? 110px : 140px;
+            border-radius: 6px;
+            background: Palette.alternate-background;
+            Text {
+                x: 8px;
+                y: 6px;
+                text: root.chart-high;
+                font-size: 11px;
+                color: Theme.dim;
+            }
+
+            Text {
+                x: 8px;
+                y: parent.height - self.height - 6px;
+                text: root.chart-low;
+                font-size: 11px;
+                color: Theme.dim;
+            }
+
+            plot := Rectangle {
+                x: root.compact ? 64px : 76px;
+                y: 10px;
+                width: parent.width - self.x - 14px;
+                height: parent.height - 20px;
+                init => {
+                    root.chart-resized(self.width, self.height);
+                }
+                changed width => {
+                    root.chart-resized(self.width, self.height);
+                }
+                changed height => {
+                    root.chart-resized(self.width, self.height);
+                }
+                // The line comes in this plot's own pixels, so it isn't
+                // squeezed to keep a shape.
+                Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: plot.width / 1px;
+                    viewbox-height: plot.height / 1px;
+                    commands: root.chart-line;
+                    stroke: Palette.accent-background;
+                    stroke-width: 2px;
+                }
+
+                for p in root.chart-points: Rectangle {
+                    x: p.x * plot.width - self.width / 2;
+                    y: p.y * plot.height - self.height / 2;
+                    width: 22px;
+                    height: 22px;
+                    property <length> dot: p.selected || p.index < 0 ? 12px : dot-touch.has-hover ? 11px : 8px;
+                    Rectangle {
+                        width: parent.dot;
+                        height: parent.dot;
+                        border-radius: self.width / 2;
+                        background: p.selected ? Palette.accent-background : Palette.background;
+                        border-width: 2px;
+                        border-color: p.index < 0 ? Palette.foreground : Palette.accent-background;
+                    }
+
+                    dot-touch := TouchArea {
+                        mouse-cursor: p.index >= 0 ? pointer : default;
+                        changed has-hover => {
+                            root.hovered = self.has-hover ? p.label : "";
+                        }
+                        clicked => {
+                            if (p.index >= 0) {
+                                root.compare(p.index);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: root.compact ? 64px : 76px;
+            padding-right: 14px;
+            Text {
+                text: root.chart-start;
+                font-size: 11px;
+                color: Theme.dim;
+            }
+
+            Text {
+                text: root.chart-end;
+                font-size: 11px;
+                color: Theme.dim;
+                horizontal-stretch: 1;
+                horizontal-alignment: right;
+            }
+        }
+    }
 
     if root.scans.length > 0: HorizontalLayout {
+        vertical-stretch: 0;
         padding: 8px;
         padding-bottom: 0;
         spacing: 8px;
@@ -2466,6 +2627,7 @@ component ChangesPane inherits VerticalLayout {
         }
     }
     CleanupPane {
+        vertical-stretch: 1;
         rows: root.rows;
         selected-id: root.selected-id;
         select(id) => {
@@ -3397,6 +3559,12 @@ export component AppWindow inherits Window {
     in property <[string]> change-scans;
     in-out property <int> change-scan-index;
     in property <[CleanRow]> change-rows;
+    in property <string> change-chart-line;
+    in property <[ChartPoint]> change-chart-points;
+    in property <string> change-chart-high;
+    in property <string> change-chart-low;
+    in property <string> change-chart-start;
+    in property <string> change-chart-end;
     // The Clean junk screen.
     in property <bool> junk-open;
     in property <[JunkRow]> junk-rows;
@@ -3512,6 +3680,7 @@ export component AppWindow inherits Window {
     callback move-target(int);
     callback types-view-changed();
     callback compare-scan(int);
+    callback change-chart-resized(float, float);
     callback app-bubbles-resized(length, length);
     callback size-mode-changed();
     callback go-up();
@@ -3952,6 +4121,16 @@ export component AppWindow inherits Window {
                                 scans: root.change-scans;
                                 scan-index <=> root.change-scan-index;
                                 rows: root.change-rows;
+                                compact: root.compact;
+                                chart-line: root.change-chart-line;
+                                chart-points: root.change-chart-points;
+                                chart-high: root.change-chart-high;
+                                chart-low: root.change-chart-low;
+                                chart-start: root.change-chart-start;
+                                chart-end: root.change-chart-end;
+                                chart-resized(w, h) => {
+                                    root.change-chart-resized(w / 1px, h / 1px);
+                                }
                                 selected-id: root.selected-id;
                                 select(id) => {
                                     root.select-node(id, true);
@@ -4107,6 +4286,16 @@ export component AppWindow inherits Window {
                         scans: root.change-scans;
                         scan-index <=> root.change-scan-index;
                         rows: root.change-rows;
+                        compact: root.compact;
+                        chart-line: root.change-chart-line;
+                        chart-points: root.change-chart-points;
+                        chart-high: root.change-chart-high;
+                        chart-low: root.change-chart-low;
+                        chart-start: root.change-chart-start;
+                        chart-end: root.change-chart-end;
+                        chart-resized(w, h) => {
+                            root.change-chart-resized(w / 1px, h / 1px);
+                        }
                         selected-id: root.selected-id;
                         select(id) => {
                             root.select-node(id, true);

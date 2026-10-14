@@ -323,8 +323,11 @@ Interaction rules:
   scrolls to it.
 
 The scan thread does more than scan: it works out every node's kind, takes
-a snapshot and records it (`scans.rs`, the last 12 per scanned folder in
-`scans/<hash>.json` in the data folder, returning the earlier ones), and,
+a snapshot and records it (`scans.rs`, per scanned folder in
+`scans/<hash>.json` in the data folder, returning the earlier ones: the
+last 12 in full, older ones trimmed to their 300 biggest folders with
+`Snapshot::floor` saying how small a left-out folder was, thinned to a year
+like the Hub's history), and,
 when the scan covers a whole drive, asks the system about hidden space. A
 path ending in `.json` is read as a scan file instead (`imported`), which
 turns off Open, Delete, Select and the Clean up tab's tick boxes.

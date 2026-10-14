@@ -114,10 +114,12 @@ fn compare_scans(
     let old = Snapshot {
         taken: from.taken,
         folders: scan_folders(c, from.id)?,
+        ..Snapshot::default()
     };
     let new = Snapshot {
         taken: to.taken,
         folders: scan_folders(c, to.id)?,
+        ..Snapshot::default()
     };
     let total = old
         .total(SizeMode::Allocated)

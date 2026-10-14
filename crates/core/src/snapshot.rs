@@ -18,6 +18,14 @@ pub struct Snapshot {
     /// Folders by path below the scanned folder (`/` between names, `""` for
     /// the scanned folder itself), biggest first.
     pub folders: Vec<FolderSize>,
+    /// When smaller folders were left out, the size on disk of the smallest
+    /// one kept: a folder missing from the list was smaller than this.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub floor: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +53,21 @@ impl Snapshot {
             .map_or(0, |f| f.size_in(mode))
     }
 
+    /// The same snapshot with only its `max` biggest folders, for keeping
+    /// old scans small.
+    pub fn trimmed(&self, max: usize) -> Snapshot {
+        if self.folders.len() <= max {
+            return self.clone();
+        }
+        let folders: Vec<FolderSize> = self.folders.iter().take(max).cloned().collect();
+        let floor = folders.iter().map(|f| f.allocated).min().unwrap_or(0);
+        Snapshot {
+            taken: self.taken,
+            folders,
+            floor: floor.max(self.floor),
+        }
+    }
+
     /// Sizes by path, for looking items up.
     pub fn sizes(&self, mode: SizeMode) -> HashMap<&str, u64> {
         self.folders
@@ -68,9 +91,16 @@ pub fn take(tree: &Tree, taken: i64, max: usize) -> Snapshot {
             .cmp(&tree.node(a).allocated)
             .then(a.cmp(&b))
     });
+    let floor = if dirs.len() > max {
+        dirs.get(max.saturating_sub(1))
+            .map_or(0, |&id| tree.node(id).allocated)
+    } else {
+        0
+    };
     dirs.truncate(max);
     Snapshot {
         taken,
+        floor,
         folders: dirs
             .into_iter()
             .map(|id| FolderSize {
@@ -288,6 +318,9 @@ mod tests {
             .tree;
         let top = take(&tree, 1, 2);
         assert_eq!(top.folders.len(), 2);
+        assert_eq!(top.floor, tree.node(find(&tree, "a").unwrap()).allocated);
+        assert_eq!(snapshot.floor, 0);
+        assert_eq!(snapshot.trimmed(2), top);
         assert_eq!(top.folders[0].path, "");
         assert_eq!(top.folders[1].path, "a");
         assert_eq!(snapshot.folders.len(), 4);

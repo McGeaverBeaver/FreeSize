@@ -139,6 +139,24 @@ label.check input { margin-top: 4px; }
 details summary { cursor: pointer; padding: 6px 0; }
 .up { color: var(--warn); }
 .down { color: var(--ok); }
+.scan-chart { margin-bottom: 16px; }
+.chart-box { position: relative; height: 150px; margin-top: 8px; border-radius: 8px; background: var(--surface-2); }
+.chart-high { position: absolute; left: 8px; top: 6px; }
+.chart-low { position: absolute; left: 8px; bottom: 6px; }
+.chart-plot { position: absolute; left: 76px; right: 14px; top: 12px; bottom: 12px; }
+.chart-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.chart-dot {
+  position: absolute; width: 12px; height: 12px; padding: 0; margin: -6px 0 0 -6px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--surface);
+}
+.chart-dot:hover { transform: scale(1.3); background: var(--accent-soft); }
+.chart-dot.from { background: var(--accent); width: 14px; height: 14px; margin: -7px 0 0 -7px; }
+.chart-dot.to { border-color: var(--text); width: 14px; height: 14px; margin: -7px 0 0 -7px; }
+.chart-dates { padding: 4px 14px 0 76px; }
+.change-bar { display: block; height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.change-bar span { display: block; height: 100%; border-radius: 3px; }
+.up-bar { background: var(--warn); }
+.down-bar { background: var(--ok); }
 pre.command { background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0 0 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
 
 /* Forms */

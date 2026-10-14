@@ -536,6 +536,53 @@ function sparkline(samples, width = 280, height = 48) {
   return svg;
 }
 
+/**
+ * The size of a scanned folder at each kept scan, oldest to newest, with the
+ * two compared scans marked. Clicking a point compares it with the newest.
+ */
+function scanChart(scans, from, to, onPick) {
+  const ns = "http://www.w3.org/2000/svg";
+  const list = [...scans].sort((a, b) => a.taken - b.taken);
+  const values = list.map((s) => s.allocated);
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const first = list[0].taken;
+  const last = list[list.length - 1].taken;
+  const x = (s, i) => (last > first ? (s.taken - first) / (last - first) : i / (list.length - 1)) * 100;
+  const y = (v) => (hi > lo ? 92 - (84 * (v - lo)) / (hi - lo) : 50);
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("class", "chart-line");
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", list.map((s, i) => `${x(s, i).toFixed(2)},${y(s.allocated).toFixed(2)}`).join(" "));
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "var(--accent)");
+  line.setAttribute("stroke-width", "2");
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.append(line);
+  const caption = h("span", { class: "dim small grow", style: "text-align:right" }, "Click a point to compare it with the newest scan.");
+  const dots = list.map((s, i) => {
+    const label = `${date(s.taken)}: ${size(s.allocated)}`;
+    const dot = h("button", {
+      class: `chart-dot${s.id === from ? " from" : ""}${s.id === to ? " to" : ""}`,
+      title: label, "aria-label": label,
+      onclick: () => onPick(s.id),
+      onmouseenter: () => { caption.textContent = label; },
+    });
+    dot.style.left = `${x(s, i)}%`;
+    dot.style.top = `${y(s.allocated)}%`;
+    return dot;
+  });
+  return h("div", { class: "scan-chart" },
+    h("div", { class: "row" }, h("strong", { style: "white-space:nowrap" }, "Size over time"), caption),
+    h("div", { class: "chart-box" },
+      h("span", { class: "chart-high dim small" }, size(hi)),
+      h("span", { class: "chart-low dim small" }, size(lo)),
+      h("div", { class: "chart-plot" }, svg, dots)),
+    h("div", { class: "row dim small chart-dates" }, h("span", { class: "grow" }, day(first)), h("span", {}, day(last))));
+}
+
 async function deviceOverview(device) {
   const alerts = device.alerts ? (await api("/api/alerts").catch(() => ({ active: [] }))).active
     .filter((a) => a.device_id === device.id && a.kind !== "request") : [];
@@ -738,6 +785,8 @@ async function deviceChanges(device, toArg, fromArg) {
   const older = result.from;
   const newer = result.to;
   const total = newer.allocated - older.allocated;
+  // Bars against the biggest listed change, either way.
+  const biggest = Math.max(1, ...result.changes.map((c) => Math.abs(c.after - c.before)));
   let filter = "all";
   const tbody = h("tbody");
   const filters = h("div", { class: "filters" });
@@ -755,8 +804,9 @@ async function deviceChanges(device, toArg, fromArg) {
         h("td", {}, c.path || "(the folder itself)"),
         h("td", { class: "num hide-narrow dim" }, c.kind === "new" ? "–" : size(c.before)),
         h("td", { class: "num hide-narrow dim" }, c.kind === "gone" ? "–" : size(c.after)),
+        h("td", { class: "hide-narrow", style: "width:90px" }, changeBar(delta / biggest)),
         h("td", { class: `num ${delta > 0 ? "up" : "down"}` }, `${delta >= 0 ? "+" : "−"}${size(Math.abs(delta))}`));
-    }) : [h("tr", {}, h("td", { colspan: 5, class: "dim" }, "Nothing here."))]));
+    }) : [h("tr", {}, h("td", { colspan: 6, class: "dim" }, "Nothing here."))]));
     filters.replaceChildren(...["all", "grew", "shrank", "new", "gone"].map((kind) => {
       const n = kind === "all" ? result.changes.length : result.changes.filter((c) => c.kind === kind).length;
       return h("button", { class: `small ${filter === kind ? "on" : ""}`, onclick: () => { filter = kind; draw(); } },
@@ -764,7 +814,10 @@ async function deviceChanges(device, toArg, fromArg) {
     }));
   };
   draw();
+  const newest = root.scans.reduce((a, b) => (b.taken > a.taken ? b : a));
+  const chart = scanChart(root.scans, older.id, newer.id, (id) => { if (id !== newest.id) go(newest.id, id); });
   return h("div", { class: "card" },
+    chart,
     h("div", { class: "row", style: "margin-bottom:12px" },
       h("div", { class: "grow row" }, rootPick, h("span", { class: "dim" }, "from"),
         pick(older.id, (id) => go(newer.id, id)), h("span", { class: "dim" }, "to"), pick(newer.id, (id) => go(id, older.id))),
@@ -776,7 +829,7 @@ async function deviceChanges(device, toArg, fromArg) {
     filters,
     h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}), h("th", {}, "Folder"), h("th", { class: "num hide-narrow" }, "Before"),
-        h("th", { class: "num hide-narrow" }, "After"), h("th", { class: "num" }, "Change"))),
+        h("th", { class: "num hide-narrow" }, "After"), h("th", { class: "hide-narrow" }), h("th", { class: "num" }, "Change"))),
       tbody)));
 }
 
@@ -1737,6 +1790,13 @@ function cantAsk(device) {
     return "Nobody is at this device and it has no approver, so it can't be asked to put back or empty. Name one on the server: freesize approver set <key>.";
   }
   return "This device's FreeSize can't put back or empty when the Hub asks; update it to get the buttons.";
+}
+
+/** A small bar for a change against the biggest one: orange grew, green shrank. */
+function changeBar(fraction) {
+  const fill = h("span", { class: fraction > 0 ? "up-bar" : "down-bar" });
+  fill.style.width = `${Math.max(4, Math.abs(fraction) * 100)}%`;
+  return h("span", { class: "change-bar" }, fill);
 }
 
 /** A bar under a list for asking to delete the checked items. */

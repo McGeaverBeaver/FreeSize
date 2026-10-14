@@ -387,6 +387,15 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.18.0, changes as a chart (decided under After polish). The Changes
+  tab on desktops and phones starts with the folder's size at every kept
+  scan; a point compares with that scan, and the first comparison is the
+  newest scan at least a month old. The apps keep a year of scans per
+  folder (the last 12 in full, older ones with their 300 biggest folders,
+  thinned like the Hub's history), and a listed folder an older scan
+  didn't keep reads "new, or under X then". Each listed change has a bar
+  against the biggest one. The Hub's Changes tab gets the same chart above
+  its from/to pickers, and a bar per row.
 - 0.17.2, polish: layout. Next to the desktop's list of places the folder
   tree had room for one letter of each name; it drops the percent column
   when narrow. Treemap names are cut short with "…" instead of breaking
@@ -654,7 +663,7 @@ half ships even if an action stalls on a device nobody has.
 Decided with the owner on 2026-10-14. These wait until the polish is done
 (see Polish), in this order.
 
-- **0.18, changes as a chart.** On the desktop Changes tab, the phone and
+- **0.18, changes as a chart.** Under Done. On the desktop Changes tab, the phone and
   the Hub's device page: a line of total used space over time, where
   clicking a point compares with that scan; under it, bars for the
   folders that grew or shrank most, and clicking a bar highlights that
