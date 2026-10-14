@@ -4379,23 +4379,14 @@ impl Controller {
         let listed = largest_files_where(tree, self.focus, self.mode, MAX_OF_TYPE, |id| {
             filter.matches(tree, id, self.mode)
         });
-        let mut added = 0;
-        let mut bytes = 0;
         for id in listed {
             let covered = tree.ancestors(id).any(|a| self.basket.contains(&a));
             if !covered {
                 self.basket.push(id);
-                added += 1;
-                bytes += tree.node(id).size_in(self.mode);
             }
         }
+        // The selection bar says what's selected; no second message here.
         self.refresh_basket();
-        let text = format!(
-            "Selected {} ({}). Nothing is deleted until you review them and confirm.",
-            plural(added, "file", "files"),
-            format_size(bytes)
-        );
-        self.set_status(&text);
     }
 
     /// Puts several items in the basket (the Clean up tab's "select all"),
@@ -4407,8 +4398,6 @@ impl Controller {
         if self.imported {
             return;
         }
-        let mut added = 0;
-        let mut bytes = 0;
         for &id in ids {
             if id == tree.root() || tree.ancestors(id).any(|a| self.basket.contains(&a)) {
                 continue;
@@ -4417,16 +4406,9 @@ impl Controller {
             self.basket
                 .retain(|&b| !tree.ancestors(b).skip(1).any(|a| a == id));
             self.basket.push(id);
-            added += 1;
-            bytes += tree.node(id).size_in(self.mode);
         }
+        // The page and the selection bar say what's selected.
         self.refresh_basket();
-        let text = format!(
-            "Selected {} ({}). Nothing is deleted until you review them and confirm.",
-            plural(added, "item", "items"),
-            format_size(bytes)
-        );
-        self.set_status(&text);
     }
 
     fn remove_from_basket(&mut self, id: i32) {

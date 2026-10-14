@@ -126,6 +126,7 @@ button.small, .button.small { padding: 4px 10px; font-size: 13px; }
 .alert-row .badge { margin-top: 2px; min-width: 64px; text-align: center; }
 .rules p { margin: 0 0 12px; }
 .rules input.inline-number { width: 76px; display: inline-block; padding: 4px 8px; margin: 0 4px; }
+.rules select.inline-number { width: auto; display: inline-block; padding: 4px 8px; margin: 0 4px; }
 .alert-row .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 label.check { display: flex; gap: 8px; align-items: flex-start; font-weight: normal; margin: 0; }
 label.check input { margin-top: 4px; }
@@ -198,9 +199,9 @@ td .sub { font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
 .callout { padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); }
 .callout.warn { background: var(--warn-soft); }
 .callout.danger { background: var(--danger-soft); }
-.fingerprint { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: .04em; font-weight: 600; }
+.fingerprint { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; letter-spacing: .04em; font-weight: 600; white-space: nowrap; }
 .qr { width: 220px; height: 220px; background: #fff; padding: 10px; border-radius: 8px; }
-.code-big { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 26px; font-weight: 700; letter-spacing: .08em; }
+.code-big { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 26px; font-weight: 700; letter-spacing: .08em; white-space: nowrap; }
 
 /* Dialog */
 .backdrop {
@@ -241,6 +242,11 @@ body.plain main.notice { margin-top: 12vh; }
   main { padding: 16px 12px 48px; }
   .hide-narrow { display: none; }
   .show-narrow { display: inline; }
+  div.show-narrow { display: block; }
+  /* On a phone the menus wrap onto a second line rather than scroll out of sight. */
+  .nav, .tabs { flex-wrap: wrap; overflow-x: visible; }
+  .card { padding: 12px; overflow-x: auto; }
+  th, td { padding: 8px 6px; }
 }
 
 .warn { color: var(--warn); }

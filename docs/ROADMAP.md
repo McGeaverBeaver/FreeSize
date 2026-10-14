@@ -387,6 +387,24 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.17.2, polish: layout. Next to the desktop's list of places the folder
+  tree had room for one letter of each name; it drops the percent column
+  when narrow. Treemap names are cut short with "…" instead of breaking
+  mid-word, the Treemap/Bubbles switch sits above the map instead of over
+  it, and a bubble's label sits low on its rim, off the bubbles inside.
+  "Not changed in over a year" has its size, duplicate rows each show
+  theirs, and on a phone a card's size goes under its title instead of
+  disappearing. Selecting no longer also writes the same message in the
+  status line (the page and the selection bar say it). Quarantine rows are
+  titled by what's in them, with when and who below, sizes on a phone and
+  a gap between rows. The Hub at phone width: the menus wrap onto a second
+  line, Docker and VM finds put their badge under the name and the button
+  under the size, the Junk tab's per-rule Clean… gives way to tick and Ask
+  to clean, wide tables scroll inside their card, the pairing code sits
+  under the QR code with a Copy server command button, the request alert
+  is a field in its sentence like the others, the quarantine's Unraid
+  sentence shows only for Unraid and a device without buttons says why,
+  and the Unraid tab no longer fails on a server that hasn't reported yet.
 - 0.17.1, polish: words, against CONTEXT.md. Buttons that add to the
   selection say Select … and the ones that take back out Unselect …
   (a duplicate set's own button is Select extra copies, a photo set's

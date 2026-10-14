@@ -356,22 +356,24 @@ async function pairDialog() {
       body.replaceChildren(
         h("div", { class: "row", style: "align-items:flex-start;gap:18px" },
           h("img", { class: "qr", src: code.qr, alt: "QR code of the pairing link" }),
-          h("div", { class: "grow" },
+          // Wraps under the QR code on a phone rather than squeezing beside it.
+          h("div", { class: "grow", style: "min-width:220px" },
             h("div", { class: "dim small" }, "Code"),
             h("div", { class: "code-big" }, code.code),
             left,
             h("div", { class: "dim small", style: "margin-top:10px" }, "Hub"),
-            h("div", { class: "mono" }, code.hub_url),
+            h("div", { class: "mono", style: "overflow-wrap:anywhere" }, code.hub_url),
             h("div", { class: "dim small", style: "margin-top:10px" }, "Hub key"),
             h("div", { class: "fingerprint" }, code.fingerprint))),
         h("h3", { style: "margin-top:16px" }, "On the device"),
         h("ul", { class: "small" },
           h("li", {}, "Phone: in FreeSize, open Hub → Connect and scan this QR code with the camera, or type the Hub address and the code."),
           h("li", {}, "Computer: in FreeSize, open Hub → Connect and paste the link."),
-          h("li", {}, "Server: run ", h("code", {}, `freesize agent pair '${code.link}'`))),
+          h("li", {}, "Server: run ", h("code", {}, "freesize agent pair"), " with the link after it in quotes (Copy server command).")),
         h("div", { class: "row" },
-          h("input", { type: "text", value: code.link, readonly: true, class: "grow mono", onclick: (e) => e.target.select() }),
-          h("button", { onclick: () => copy(code.link) }, "Copy link")),
+          h("input", { type: "text", value: code.link, readonly: true, class: "grow mono", style: "min-width:160px", onclick: (e) => e.target.select() }),
+          h("button", { onclick: () => copy(code.link) }, "Copy link"),
+          h("button", { onclick: () => copy(`freesize agent pair '${code.link}'`) }, "Copy server command")),
         status);
       actions.replaceChildren(h("button", { onclick: closeAll }, "Done"));
       timer = setInterval(async () => {
@@ -786,13 +788,9 @@ const SAFETY = {
   protected: ["in use", ""],
 };
 const DISK_KINDS = { parity: "parity", pool: "pool", flash: "flash" };
-// A share's "use cache" setting in words.
-const CACHE_USE = {
-  yes: "new files on the cache, moved to the array",
-  prefer: "kept on the cache",
-  only: "cache only",
-  no: "array only",
-};
+// A share's raw "use cache" setting, should one arrive, in the words servers
+// send: where new files go → where the mover takes them.
+const CACHE_USE = { yes: "cache → array", prefer: "array → cache", only: "cache only", no: "array" };
 
 function bytesAgo(secs) {
   return secs ? ago(secs) : "never";
@@ -801,22 +799,30 @@ function bytesAgo(secs) {
 /** A finding's row, with what can be asked of it. */
 function findingRow(device, f) {
   const [label, tone] = SAFETY[f.safety] || ["", ""];
-  let ask = null;
-  if (canDo(device, "docker") && f.safety !== "protected" && ["image", "dangling_image", "build_cache"].includes(f.kind)) {
-    ask = h("button", { class: "small", onclick: () => requestDialog(device,
-      { type: "docker_cleanup", items: [f.id], labels: [f.label], bytes: f.bytes },
-      [`Remove ${f.label} from Docker (${size(f.bytes)})`, f.reason]) }, "Remove…");
-  } else if (canDo(device, "delete") && f.safety === "check" && f.path && f.path.startsWith("/mnt/user/")) {
-    ask = h("button", { class: "small", onclick: () => requestDialog(device,
-      { type: "delete", root: "/mnt/user", paths: [f.path.slice("/mnt/user/".length)], bytes: f.bytes },
-      [`Move to the quarantine: ${f.path} (${size(f.bytes)})`, f.reason,
-       "It can be put back until the quarantine is emptied."]) }, "Quarantine…");
-  }
+  // Made twice: once beside the size, once under it on a phone.
+  const button = () => {
+    let ask = null;
+    if (canDo(device, "docker") && f.safety !== "protected" && ["image", "dangling_image", "build_cache"].includes(f.kind)) {
+      ask = h("button", { class: "small", onclick: () => requestDialog(device,
+        { type: "docker_cleanup", items: [f.id], labels: [f.label], bytes: f.bytes },
+        [`Remove ${f.label} from Docker (${size(f.bytes)})`, f.reason]) }, "Remove…");
+    } else if (canDo(device, "delete") && f.safety === "check" && f.path && f.path.startsWith("/mnt/user/")) {
+      ask = h("button", { class: "small", onclick: () => requestDialog(device,
+        { type: "delete", root: "/mnt/user", paths: [f.path.slice("/mnt/user/".length)], bytes: f.bytes },
+        [`Move to the quarantine: ${f.path} (${size(f.bytes)})`, f.reason,
+         "It can be put back until the quarantine is emptied."]) }, "Quarantine…");
+    }
+    return ask;
+  };
+  const ask = button();
+  // On a phone the badge goes under the name and the button under the size.
   return h("tr", {},
-    h("td", { style: "width:110px" }, h("span", { class: `badge ${tone}` }, label)),
-    h("td", {}, f.label, h("div", { class: "sub" }, f.reason)),
-    h("td", { class: "num" }, f.bytes ? size(f.bytes) : "–"),
-    h("td", { class: "num", style: "width:110px" }, ask));
+    h("td", { class: "hide-narrow", style: "width:110px" }, h("span", { class: `badge ${tone}` }, label)),
+    h("td", {}, f.label, h("div", { class: "sub" }, f.reason),
+      h("div", { class: "show-narrow" }, h("span", { class: `badge ${tone}` }, label))),
+    h("td", { class: "num" }, f.bytes ? size(f.bytes) : "–",
+      ask ? h("div", { class: "show-narrow", style: "margin-top:4px" }, button()) : null),
+    h("td", { class: "num hide-narrow", style: "width:110px" }, ask));
 }
 
 function findingsTable(device, findings) {
@@ -826,6 +832,8 @@ function findingsTable(device, findings) {
 
 function deviceUnraid(device) {
   const u = device.unraid;
+  if (!u) return h("div", { class: "card empty" }, h("h2", {}, "No Unraid report yet"),
+    h("p", { class: "dim" }, "The server sends one after its next look at the array."));
   const diskIndex = new Map(u.disks.filter((d) => d.kind !== "parity").map((d, i) => [d.name, i % 8]));
   const array = h("div", { class: "card table-wrap" },
     h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Array"),
@@ -973,8 +981,8 @@ function deviceJunk(device) {
       : `Nothing found in the known places, ${ago(report.taken)}.`),
     canDo(device, "clean") && entries.some(askable) ? h("div", { class: "row" },
       safe.length ? h("button", { class: "primary", onclick: () => set(safe, true) }, `Tick the safe ones (${size(safe.reduce((a, e) => a + e.bytes, 0))})`) : null,
-      h("button", { onclick: () => set(entries, false) }, "Clear")) : null,
-    h("p", { class: "hint" }, "Tick what should go, then Ask to clean: the device shows the list and approves it. Safe items are deleted; \"check first\" items go to the device's quarantine, where Put back restores them; what the system should remove itself names its tool. An app that's running is skipped until it's closed."));
+      h("button", { onclick: () => set(entries, false) }, "Untick all")) : null,
+    h("p", { class: "hint" }, "Tick what should go, then Ask to clean: the device shows the list and approves it. Safe items are deleted; \"check first\" items go to the device's quarantine, where Put back returns them; what the system should remove itself names its tool. An app that's running is skipped until it's closed."));
   const cards = JUNK_CATEGORIES.map(([key, title]) => {
     const rows = entries.filter((e) => e.category === key);
     if (!rows.length) return null;
@@ -998,7 +1006,7 @@ function deviceJunk(device) {
           h("td", {}, e.label, " ", badge, e.refills ? h("span", { class: "badge", style: "margin-left:4px" }, "refills") : null,
             h("div", { class: "sub" }, e.blurb, e.safety === "use_tool" ? ` Tool: ${e.tool}` : "")),
           h("td", { class: "num" }, size(e.bytes), h("div", { class: "sub" }, count(e.items, "item", "items"))),
-          h("td", { class: "num" }, askable(e) ? h("button", { class: "small", onclick: () => askFor([e]) }, "Clean…") : null));
+          h("td", { class: "num hide-narrow" }, askable(e) ? h("button", { class: "small", onclick: () => askFor([e]) }, "Clean…") : null));
       }))));
   });
   return h("div", { class: "stack" }, head, cards, bar);
@@ -1017,7 +1025,11 @@ function deviceQuarantine(device) {
         { type: "empty_quarantine", batches: batches.map((b) => b.id), bytes: total },
         [`Empty the whole quarantine for good (${size(total)}):`, ...batches.flatMap((b) => b.items.slice(0, 20).map((i) => i.original))]) },
         "Empty all…") : null),
-    h("p", { class: "hint" }, "Nothing here is deleted until someone asks to empty it and the device's approver agrees. On Unraid each disk keeps its own; batches on a sleeping disk show again when it wakes."));
+    h("p", { class: "hint" }, [
+      "Nothing here is deleted until someone asks to empty it and the device agrees.",
+      device.unraid ? "Each disk keeps its own; batches on a sleeping disk show again when it wakes." : null,
+      batches.length && !canDo(device, "restore") && !canDo(device, "empty") ? cantAsk(device) : null,
+    ].filter(Boolean).join(" ")));
   const cards = batches.map((b) => h("div", { class: "card" },
     h("div", { class: "row" },
       h("div", { class: "grow" }, h("strong", {}, `${count(b.items.length, "item", "items")}, ${size(b.bytes)}`),
@@ -1271,11 +1283,14 @@ function rulesCard(rules) {
     offline_hours: number("offline_hours", 0, 720),
     junk_gb: number("junk_gb", 0, 100000),
   };
-  const requests = h("input", { type: "checkbox", id: "rule-requests", checked: rules.requests });
+  // An on/off rule, shown like the others: a field inside its sentence.
+  const requests = h("select", { class: "inline-number", "aria-label": "requests" },
+    h("option", { value: "on", selected: rules.requests }, "alert"),
+    h("option", { value: "off", selected: !rules.requests }, "off"));
   const editable = state.me.admin;
   for (const input of [...Object.values(fields), requests]) input.disabled = !editable;
   const save = async () => {
-    const body = { requests: requests.checked };
+    const body = { requests: requests.value === "on" };
     for (const [key, input] of Object.entries(fields)) body[key] = Number(input.value) || 0;
     try {
       await api("/api/alerts/rules", { method: "PUT", body });
@@ -1289,9 +1304,8 @@ function rulesCard(rules) {
     h("p", {}, "A disk will be full within ", fields.forecast_days, " days at the past month's rate."),
     h("p", {}, "A server (a device nobody is at) hasn't reported for ", fields.offline_hours, " hours."),
     h("p", {}, "A device's junk cleaner found at least ", fields.junk_gb, " GB to review."),
-    h("p", {}, h("label", { class: "check", for: "rule-requests" }, requests,
-      " A request has waited 2 minutes for its device or approver. The FreeSize app on a phone only hears from the Hub while it's open; this tells you to open it.")),
-    h("p", { class: "hint" }, "0 turns a rule off."),
+    h("p", {}, "A request has waited 2 minutes for its device or approver: ", requests, "."),
+    h("p", { class: "hint" }, "0 turns a rule off. The FreeSize app on a phone only hears from the Hub while it's open; the request alert tells you to open it."),
     editable ? h("button", { class: "primary", onclick: save }, "Save") : null);
 }
 
@@ -1713,6 +1727,16 @@ function canDo(device, kind) {
     || (kind === "docker" && actions.includes("clean") && !info.attended);
   // A device nobody is at, without an approver, can't be asked anything.
   return state.me.admin && can && (info.attended || Boolean(info.approver));
+}
+
+/** Why the request buttons are missing, in a sentence. */
+function cantAsk(device) {
+  const info = device.info || {};
+  if (!state.me.admin) return "Only admins can ask to put back or empty.";
+  if (!info.attended && !info.approver) {
+    return "Nobody is at this device and it has no approver, so it can't be asked to put back or empty. Name one on the server: freesize approver set <key>.";
+  }
+  return "This device's FreeSize can't put back or empty when the Hub asks; update it to get the buttons.";
 }
 
 /** A bar under a list for asking to delete the checked items. */

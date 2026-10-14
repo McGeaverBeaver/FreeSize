@@ -308,11 +308,7 @@ pub fn found_sections(
         note: if old.is_empty() {
             "No large files that old.".into()
         } else {
-            format!(
-                "{}, {}",
-                plural(old.len() as u64, "file", "files"),
-                format_size(old_bytes)
-            )
+            plural(old.len() as u64, "file", "files")
         },
         rows: old
             .iter()
@@ -334,6 +330,7 @@ pub fn found_sections(
                 }
             })
             .collect(),
+        bytes: old_bytes,
         picks: old.clone(),
         pick_label: "Select all",
         ..Default::default()
@@ -459,11 +456,8 @@ pub fn duplicate_section(
         1 => "1 set".to_string(),
         n => format!("{} sets", format_count(n as u64)),
     };
-    section.note = format!(
-        "{} of copies, {} to free",
-        sets(groups.len()),
-        format_size(section.bytes)
-    );
+    // The card shows the size beside it.
+    section.note = format!("{} of copies", sets(groups.len()));
 
     // The types worth choosing, most to free first.
     let mut types: Vec<(String, usize, u64)> = Vec::new();
@@ -551,6 +545,7 @@ pub fn duplicate_section(
                     date(tree.node(id).modified.max(0) as u64)
                 )
                 .into(),
+                detail: format_size(*size).into(),
                 checkable: true,
                 badge: if id == keep { "Keep" } else { "" }.into(),
                 ..Default::default()
@@ -619,10 +614,7 @@ pub fn similar_section(tree: &Tree, mode: SizeMode, similar: Similar) -> Section
         1 => "1 set".to_string(),
         n => format!("{} sets", format_count(n as u64)),
     };
-    section.note = format!(
-        "{sets} of look-alikes, up to {}",
-        format_size(section.bytes)
-    );
+    section.note = format!("{sets} of look-alikes");
     section.blurb = format!(
         "{sets} of photos that look alike. Keeping only the largest of each would free {}, \
          but similar isn't identical: look at the previews first. Double-click one, or select \

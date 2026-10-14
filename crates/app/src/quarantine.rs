@@ -679,20 +679,6 @@ pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
         ..Default::default()
     }];
     rows.extend(batches.iter().map(|batch| {
-        let names: Vec<String> = batch
-            .items
-            .iter()
-            .take(3)
-            .map(|i| {
-                Path::new(&i.original)
-                    .file_name()
-                    .map_or_else(|| i.original.clone(), |n| n.to_string_lossy().into_owned())
-            })
-            .collect();
-        let mut subtitle = names.join(", ");
-        if batch.items.len() > 3 {
-            subtitle.push_str(&format!(" and {} more", batch.items.len() - 3));
-        }
         let who = if batch.by.is_empty() {
             "deleted on this device".to_string()
         } else {
@@ -703,18 +689,16 @@ pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
         } else {
             format!(" · {}", batch.reason)
         };
+        // What's in it is the title; when and who come under it.
+        let when = if now - batch.when < 60 {
+            "Just now".to_string()
+        } else {
+            ago(now.max(0) as u64, batch.when.max(0) as u64)
+        };
         CleanRow {
             kind: BATCH,
-            title: format!(
-                "{} · {who}{reason}",
-                if now - batch.when < 60 {
-                    "Just now".to_string()
-                } else {
-                    ago(now.max(0) as u64, batch.when.max(0) as u64)
-                }
-            )
-            .into(),
-            subtitle: subtitle.into(),
+            title: batch_title(batch).into(),
+            subtitle: format!("{when} · {who}{reason}").into(),
             detail: format_size(batch.bytes).into(),
             action: batch.id.clone().into(),
             ..Default::default()
@@ -779,14 +763,13 @@ mod tests {
         assert_eq!(rows[1].kind, BATCH);
         assert_eq!(rows[1].action.as_str(), "a1-0");
         assert!(
-            rows[1].title.contains("deleted on this device"),
-            "{}",
-            rows[1].title
-        );
-        assert!(
-            rows[1].subtitle.contains("and 2 more"),
+            rows[1].subtitle.contains("deleted on this device"),
             "{}",
             rows[1].subtitle
+        );
+        assert_eq!(
+            rows[1].title.as_str(),
+            "file0.txt, file1.txt, file2.txt, 2 more"
         );
         let text = confirm_text(&batches);
         assert!(text.contains("these 5 items") && text.contains("/home/me/file4.txt"));

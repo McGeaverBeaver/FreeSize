@@ -325,6 +325,8 @@ component TreePane inherits Rectangle {
     in-out property <length> scroll-y;
     callback toggle(int);
     callback select(int);
+    // Next to the sidebar the pane can be narrow: the names keep the room.
+    property <bool> tight: root.compact || root.width < 400px;
 
     list := ListView {
         content-y <=> root.scroll-y;
@@ -380,7 +382,7 @@ component TreePane inherits Rectangle {
                     color: Theme.danger;
                 }
                 Rectangle {
-                    width: root.compact ? 44px : 64px;
+                    width: root.tight ? 44px : 64px;
                     SizeBar {
                         width: 100%;
                         fraction: row.fraction;
@@ -388,7 +390,7 @@ component TreePane inherits Rectangle {
                     }
                 }
 
-                if !root.compact: Text {
+                if !root.tight: Text {
                     text: row.percent;
                     width: 44px;
                     horizontal-alignment: right;
@@ -465,7 +467,8 @@ component TreemapPane inherits Rectangle {
             color: r.text-color;
             font-size: 11px;
             overflow: elide;
-            wrap: r.nested ? no-wrap : word-wrap;
+            // Names are cut short with "…", never broken in the middle.
+            wrap: no-wrap;
             vertical-alignment: top;
         }
         TouchArea {
@@ -546,8 +549,9 @@ component BubblePane inherits Rectangle {
         visible: b.label != "";
         opacity: self.shown;
         x: b.x - self.width / 2;
-        y: b.y - self.height / 2;
-        width: min(b.r * 1.7, max(name.preferred-width, detail.preferred-width, b.icon-size) + 16px);
+        // A label over bubbles inside sits low on the rim, leaving them to be seen.
+        y: b.pill ? b.y + b.r - self.height - 6px : b.y - self.height / 2;
+        width: min(b.r * 1.7, max(name.preferred-width, detail.preferred-width, b.pill ? 0 : b.icon-size) + 16px);
         height: label.preferred-height + 8px;
         border-radius: 8px;
         background: b.pill ? #000000a0 : transparent;
@@ -557,7 +561,7 @@ component BubblePane inherits Rectangle {
             padding-right: 8px;
             spacing: 2px;
             alignment: center;
-            if b.icon-size > 0: Image {
+            if b.icon-size > 0 && !b.pill: Image {
                 height: b.icon-size;
                 width: b.icon-size;
                 x: (parent.width - self.width) / 2;
@@ -641,59 +645,68 @@ component MapView inherits Rectangle {
     callback bubbles-resized(length, length);
     callback view-changed();
 
-    if !root.bubbles-view: TreemapPane {
-        rects: root.rects;
-        selected-id: root.selected-id;
-        select(id) => {
-            root.select(id);
-        }
-        resized(w, h) => {
-            root.map-resized(w, h);
-        }
-    }
-    if root.bubbles-view: BubblePane {
-        bubbles: root.bubbles;
-        selected-id: root.selected-id;
-        select(id, key) => {
-            root.select(id);
-        }
-        resized(w, h) => {
-            root.bubbles-resized(w, h);
-        }
-    }
+    VerticalLayout {
+        // The switch sits above the map, so it never covers a block.
+        HorizontalLayout {
+            alignment: end;
+            padding: 4px;
+            padding-right: 8px;
+            Rectangle {
+                width: switch.preferred-width;
+                height: 28px;
+                border-radius: 14px;
+                background: Palette.background;
+                border-width: 1px;
+                border-color: Palette.border;
+                switch := HorizontalLayout {
+                    padding: 3px;
+                    spacing: 2px;
+                    for option[i] in ["Treemap", "Bubbles"]: choice := Rectangle {
+                        property <bool> on: (i == 1) == root.bubbles-view;
+                        border-radius: 11px;
+                        background: self.on ? Palette.accent-background : transparent;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                text: option;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                color: choice.on ? Palette.accent-foreground : Palette.foreground;
+                            }
+                        }
 
-    Rectangle {
-        x: parent.width - self.width - 8px;
-        y: parent.height - self.height - 8px;
-        width: switch.preferred-width;
-        height: 30px;
-        border-radius: 15px;
-        background: Palette.background.transparentize(8%);
-        border-width: 1px;
-        border-color: Palette.border;
-        switch := HorizontalLayout {
-            padding: 3px;
-            spacing: 2px;
-            for option[i] in ["Treemap", "Bubbles"]: choice := Rectangle {
-                property <bool> on: (i == 1) == root.bubbles-view;
-                border-radius: 12px;
-                background: self.on ? Palette.accent-background : transparent;
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    Text {
-                        text: option;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                        color: choice.on ? Palette.accent-foreground : Palette.foreground;
+                        TouchArea {
+                            clicked => {
+                                root.bubbles-view = i == 1;
+                                root.view-changed();
+                            }
+                        }
                     }
                 }
+            }
+        }
 
-                TouchArea {
-                    clicked => {
-                        root.bubbles-view = i == 1;
-                        root.view-changed();
-                    }
+        Rectangle {
+            vertical-stretch: 1;
+            if !root.bubbles-view: TreemapPane {
+                rects: root.rects;
+                selected-id: root.selected-id;
+                select(id) => {
+                    root.select(id);
+                }
+                resized(w, h) => {
+                    root.map-resized(w, h);
+                }
+            }
+            if root.bubbles-view: BubblePane {
+                bubbles: root.bubbles;
+                selected-id: root.selected-id;
+                select(id, key) => {
+                    root.select(id);
+                }
+                resized(w, h) => {
+                    root.bubbles-resized(w, h);
                 }
             }
         }
@@ -1215,6 +1228,13 @@ component CleanupView inherits Rectangle {
                                 wrap: word-wrap;
                             }
 
+                            // No room beside it on a phone: the size goes under the title.
+                            if section.size != "" && root.compact: Text {
+                                text: section.size;
+                                font-size: 14px;
+                                font-weight: 600;
+                            }
+
                             if section.picked != "": Text {
                                 text: section.picked;
                                 font-size: 12px;
@@ -1531,14 +1551,20 @@ component CleanupView inherits Rectangle {
                         }
                     }
 
+                    // A batch: a gap below each, so they read as separate.
                     if row.kind == 3: Rectangle {
-                        height: batch.preferred-height + 12px;
-                        border-radius: 6px;
-                        background: Palette.alternate-background;
+                        height: batch.preferred-height + 18px;
+                        Rectangle {
+                            y: 0;
+                            height: parent.height - 6px;
+                            border-radius: 6px;
+                            background: Palette.alternate-background;
+                        }
                         batch := HorizontalLayout {
                             padding-left: 8px;
                             padding-right: 8px;
                             y: 6px;
+                            height: self.preferred-height;
                             spacing: 8px;
                             VerticalLayout {
                                 alignment: center;
@@ -1550,7 +1576,7 @@ component CleanupView inherits Rectangle {
                                 }
 
                                 Text {
-                                    text: row.subtitle;
+                                    text: root.compact ? row.detail + " · " + row.subtitle : row.subtitle;
                                     wrap: word-wrap;
                                     font-size: 11px;
                                     color: Theme.dim;
