@@ -24,6 +24,7 @@ pub mod ncdu;
 mod platform;
 mod reclaim;
 pub mod renamed;
+pub mod review;
 mod scan;
 pub mod snapshot;
 mod space;

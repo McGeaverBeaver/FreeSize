@@ -199,6 +199,15 @@ rules go to the quarantine on their disk, where `freesize agent` or the
 Hub can put them back), `--only RULE` limits the look, `-y` skips the
 question and `--json` prints the findings with every path.
 
+`freesize review FOLDER` is [Reviewing a folder](#reviewing-a-folder) on
+the command line, for a server where the files are: how many photos,
+documents, videos and other files it holds, the ones worth a look grouped by
+why, and the files containing the words looked for (only the words are
+printed). `--in BIGGER` compares it, by content, with the rest of a bigger
+folder such as the whole share and lists the files only here; `--words
+tax,bank` sets the words, `--no-words` skips looking inside files and
+`--json` prints everything. It reads only.
+
 `freesize nextcloud` prints what this machine keeps of its Nextcloud
 folders, as the agent reports it to the Hub (see
 [Copies](#copies-is-there-another-copy)): each account the desktop client
@@ -451,6 +460,43 @@ an older scan, which kept only its bigger folders, a folder it didn't keep
 shows as "new, or under X then".
 In the bubble view, folders that grew or shrank noticeably show by how much,
 for example *12.4 GB · +2.1 GB*.
+
+### Reviewing a folder
+
+Before deleting a folder you're unsure of, such as an old backup of a PC
+with hundreds of files, right-click it in the tree and pick **Review this
+folder** (on a phone, highlight it and tap **Review**, which takes Open's
+place for folders; on a desktop the button is there too). The Clean up tab
+opens on the folder's review page, and a **Review:** card stays on the tab
+until another scan. **Show** switches between:
+
+- **Photos**: previews of every photo, grouped by folder (the first 400).
+- **Documents**, **Videos** and **Everything else**, biggest first.
+- **Worth a look**: what people most often miss before deleting a backup.
+  Documents and spreadsheets, password vaults (`.kdbx` and others), keys
+  and certificates, crypto wallets, tax and accounting files, email
+  archives (`.pst`, `.mbox`) and camera photos, grouped by why.
+
+Highlight a row to Open it, show it in its folder or Select it; ticking a
+row adds it to the selection like anywhere on the Clean up tab, and nothing
+goes unless you do.
+
+**Compare with my current files** reads the folder's files against the rest
+of the scan, by content (not by name), and says how many are kept elsewhere
+too, such as *8 of these 12 photos (66%) are kept elsewhere too, most in
+Pictures/2019*. Files that aren't anywhere else are marked **Only here**,
+and **Select the ones kept elsewhere** ticks the rest. It compares with
+what was scanned, so scan the whole drive to compare with everything.
+
+**Look inside files** finds text, Office (Word, Excel, PowerPoint,
+OpenDocument) and PDF files that contain the words in **Settings → Words to
+look for inside files** (tax, invoice, passport, bank, contract and
+password at first). A word counts where it starts a word, so *tax* finds
+*taxes* but not *syntax*. Files with any of them are listed first under
+Worth a look, with the words they contain; the text around them is never
+shown. Both run on the device that has the files and send nothing
+anywhere, the Hub included. Files over 20 MB of text (100 MB for PDFs)
+aren't read.
 
 ### The selection
 

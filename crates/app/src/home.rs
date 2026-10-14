@@ -159,6 +159,7 @@ const CHART: i32 = 6;
 const BUBBLES: i32 = 7;
 const PAGE: i32 = 8;
 const CHOICE: i32 = 9;
+const TEXT: i32 = 10;
 
 /// Android keeps roughly this much usage history.
 const USAGE_HISTORY: u64 = 2 * 365 * 24 * 60 * 60;
@@ -338,6 +339,18 @@ pub(crate) fn choice(
         key: key.into(),
         choices: slint::ModelRc::new(slint::VecModel::from(choices)),
         chosen: chosen as i32,
+        ..Default::default()
+    }
+}
+
+/// A setting typed in a box, saved with Enter or its Save button.
+pub(crate) fn text_setting(title: &str, text: &str, key: &str, value: &str) -> HomeRow {
+    HomeRow {
+        kind: TEXT,
+        title: title.into(),
+        subtitle: text.into(),
+        key: key.into(),
+        detail: value.into(),
         ..Default::default()
     }
 }

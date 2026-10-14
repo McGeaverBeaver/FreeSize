@@ -62,6 +62,8 @@ pub const REBUILDABLE: &str = "rebuildable";
 pub const OLD: &str = "old";
 pub const DUPLICATES: &str = "duplicates";
 pub const SIMILAR: &str = "similar";
+/// A folder under review (see `review`).
+pub const REVIEW: &str = "review";
 
 /// Unreadable folders listed under their heading.
 const MAX_UNREADABLE: usize = 20;
@@ -97,6 +99,8 @@ pub struct Section {
     pub shown_bytes: Option<u64>,
     /// A button on the card and the page: search, stop, scan as admin, empty.
     pub action: String,
+    /// A second button on the page, sent as the key and ":2".
+    pub action2: String,
     /// Drawn in the warning color.
     pub warn: bool,
     /// The page's rows.
@@ -111,6 +115,8 @@ pub struct Section {
     pub groups: Vec<Vec<NodeId>>,
     /// Type choices for duplicates: (extension, label).
     pub filters: Vec<(String, String)>,
+    /// When the choices are tabs (no "Every type" first), the one shown.
+    pub filter_index: Option<usize>,
 }
 
 impl Section {

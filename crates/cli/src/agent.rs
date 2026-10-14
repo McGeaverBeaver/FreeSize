@@ -50,6 +50,10 @@ pub enum Command {
     /// Find junk in the known places (temporary files, caches, the trash,
     /// old downloads) and, if asked, clean what's safe.
     Junk(crate::junk::JunkArgs),
+    /// A folder at a glance before deleting it: its photos, documents and
+    /// videos, the files worth a look, words found inside files, and with
+    /// --in, which files are kept elsewhere too. Nothing is deleted.
+    Review(crate::review::ReviewArgs),
     /// What this machine keeps of its Nextcloud folders, as reported to
     /// the Hub.
     Nextcloud(crate::nextcloud::NextcloudArgs),
@@ -175,6 +179,7 @@ pub fn main(command: Command) -> ExitCode {
         Command::Release { action } => crate::release::main(action),
         Command::Update(args) => crate::update::main(args),
         Command::Junk(args) => crate::junk::main(args),
+        Command::Review(args) => crate::review::main(args),
         Command::Nextcloud(args) => crate::nextcloud::main(args),
         #[cfg(unix)]
         Command::Unraid { action, dirs } => crate::unraid::main(action, dirs),

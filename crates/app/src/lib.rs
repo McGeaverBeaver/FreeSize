@@ -26,6 +26,7 @@ mod moves;
 mod owners;
 mod quarantine;
 mod report;
+mod review;
 mod rows;
 mod scans;
 mod similar;

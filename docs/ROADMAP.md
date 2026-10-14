@@ -387,6 +387,19 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.19.0, review a folder (decided under After polish). Right-click a
+  folder in the tree, Review this folder (the Review button in the
+  selection bar on phones, where a long press would fight the list's
+  scrolling): a page of the Clean up tab with Photos (previews by folder),
+  Documents, Videos, Worth a look (documents, spreadsheets, password
+  vaults, keys, wallets, tax files, email, camera photos) and Everything
+  else, each row to open, show or select. Compare with my current files
+  checks by content against the rest of the scan, says how much is kept
+  elsewhere and where most of it is, and marks the rest Only here. Look
+  inside files finds the words set in Settings in text, Office and PDF
+  files, on the device, and shows only the words. `freesize review` does the
+  same on a server. Nothing goes to the Hub yet: it would get the path and
+  the word only, with the Nextcloud app (0.20).
 - 0.18.0, changes as a chart (decided under After polish). The Changes
   tab on desktops and phones starts with the folder's size at every kept
   scan; a point compares with that scan, and the first comparison is the
@@ -671,7 +684,7 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   scan (the total and the top folders) for a year, like the Hub's scan
   history. Done when a year of scans draws on all three, and a bar takes
   you to its folder.
-- **0.19, review a folder.** Right-click a folder (long-press on a phone)
+- **0.19, review a folder.** Under Done. Right-click a folder (long-press on a phone)
   → "Review this folder": tabs for Photos (a grid of thumbnails),
   Documents, Videos, Important and Everything else, each with Open, Show
   in folder and Select. Important flags documents and spreadsheets,

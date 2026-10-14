@@ -36,9 +36,10 @@ use crate::hub::{self, Hub};
 use crate::insights::{self, View};
 use crate::junk;
 use crate::moves;
-use crate::owners::Owners;
+use crate::owners::{self, Owners};
 use crate::quarantine;
 use crate::report;
+use crate::review;
 use crate::rows::{self, TreeRows};
 use crate::scans;
 use crate::similar;
@@ -183,6 +184,31 @@ enum DupeSearch {
     Done(Vec<DuplicateGroup>),
 }
 
+/// A search for a folder review on a worker thread: its progress (and way
+/// to stop it) and where its result lands.
+struct ReviewJob<T> {
+    progress: Arc<DuplicateProgress>,
+    result: Slot<T>,
+}
+
+impl<T> ReviewJob<T> {
+    fn running(&self) -> (u64, u64) {
+        (
+            self.progress.done.load(Ordering::Relaxed),
+            self.progress.files.load(Ordering::Relaxed),
+        )
+    }
+}
+
+impl<T> Drop for ReviewJob<T> {
+    fn drop(&mut self) {
+        self.progress.cancel();
+    }
+}
+
+/// Previews made of a reviewed folder's photos, not yet shown.
+type Previews = Vec<(NodeId, Option<owners::Pixels>)>;
+
 /// The search for similar photos in the scanned folder.
 enum PhotoSearch {
     Idle,
@@ -324,6 +350,14 @@ pub struct Controller {
     remeasure: bool,
     dupes: DupeSearch,
     photos: PhotoSearch,
+    /// The folder under review on the Clean up tab, and its searches:
+    /// words inside files, copies elsewhere, previews of its photos (handed
+    /// over as they're made).
+    review: Option<review::Review>,
+    review_settings: review::Settings,
+    review_words: Option<ReviewJob<HashMap<NodeId, Vec<String>>>>,
+    review_copies: Option<ReviewJob<(bool, HashMap<NodeId, NodeId>)>>,
+    review_previews: Option<ReviewJob<Previews>>,
     /// Past sizes of the drives on the start screen.
     drive_log: DriveLog,
     /// A file to open once Android has indexed it, and how many times that
@@ -446,6 +480,11 @@ pub fn install(
             cleanup_sections: Rc::new(VecModel::default()),
             cleanup_page: String::new(),
             dupe_filter: None,
+            review: None,
+            review_settings: review::Settings::load(),
+            review_words: None,
+            review_copies: None,
+            review_previews: None,
             mode: SizeMode::Allocated,
             selected: 0,
             focus: 0,
@@ -602,6 +641,8 @@ pub fn install(
     on!(ui, on_open_app, weak, |c, package| c
         .open_app(package.as_str()));
     on!(ui, on_home_action, weak, |c, id| c.home_action(id.as_str()));
+    on!(ui, on_home_text, weak, |c, key, text| c
+        .home_text(key.as_str(), text.as_str()));
     on!(ui, on_home_choice, weak, |c, key, index| c
         .home_choice(key.as_str(), index));
     on!(ui, on_section_picked, weak, |c, key| c
@@ -643,6 +684,7 @@ pub fn install(
     on!(ui, on_cleanup_group, weak, |c, index| c
         .cleanup_group(index));
     on!(ui, on_cleanup_pick, weak, |c, all| c.cleanup_pick(all));
+    on!(ui, on_review_folder, weak, |c, id| c.review_folder(id));
     on!(ui, on_cleanup_filter, weak, |c, index| c
         .cleanup_filter(index));
     on!(ui, on_junk_close, weak, |c| c.junk_open(false));
@@ -975,6 +1017,8 @@ impl Controller {
             }
         }
 
+        self.tick_review();
+
         if let PhotoSearch::Running { result, .. } = &self.photos {
             if let Some(groups) = take(result) {
                 let previews = groups
@@ -1094,6 +1138,9 @@ impl Controller {
             || self.updater.busy()
             || matches!(self.dupes, DupeSearch::Running { .. })
             || matches!(self.photos, PhotoSearch::Running { .. })
+            || self.review_words.is_some()
+            || self.review_copies.is_some()
+            || self.review_previews.is_some()
             || self.pending_open.is_some()
             || self.basket_job.is_some()
             || self.put_back_job.is_some()
@@ -1306,6 +1353,7 @@ impl Controller {
         self.basket.clear();
         self.cleanup_page.clear();
         self.dupe_filter = None;
+        self.close_review();
         let tree = self.tree.insert(result.tree);
         self.rebuildable = rebuildable(tree, tree.root())
             .into_iter()
@@ -1344,6 +1392,7 @@ impl Controller {
         self.cleanup_sections.clear();
         self.cleanup_page.clear();
         self.dupe_filter = None;
+        self.close_review();
         self.change_rows.clear();
         self.basket.clear();
         self.refresh_basket();
@@ -1407,6 +1456,15 @@ impl Controller {
                     rows.insert(0, home::heading("Clean junk", "", None));
                     rows.insert(1, self.junk.settings_row());
                 }
+                rows.push(home::heading("Review a folder", "", None));
+                rows.push(home::text_setting(
+                    "Words to look for inside files",
+                    "Look inside files, on a folder's review page, finds text, Office and PDF \
+                     files containing these words, separated by commas. It runs on this device \
+                     and only says which word a file contains, never the text.",
+                    review::WORDS_KEY,
+                    &self.review_settings.words.join(", "),
+                ));
                 rows.extend(self.updater.rows(now));
             }
         }
@@ -1485,6 +1543,21 @@ impl Controller {
                 self.ensure_ticking();
             }
             _ => return,
+        }
+        self.refresh_home();
+    }
+
+    /// A setting typed in Settings.
+    fn home_text(&mut self, key: &str, text: &str) {
+        if key == review::WORDS_KEY {
+            let words = freesize_agent::review::parse_words(text);
+            self.review_settings = if words.is_empty() {
+                review::Settings::default()
+            } else {
+                review::Settings { words }
+            };
+            self.review_settings.save();
+            self.set_status("Saved the words to look for.");
         }
         self.refresh_home();
     }
@@ -2696,6 +2769,7 @@ impl Controller {
         // Android has no file manager to open a folder in.
         ui.set_can_open(!self.imported && !(cfg!(target_os = "android") && node.is_dir()));
         ui.set_in_basket(self.basket.contains(&id));
+        ui.set_can_review(node.is_dir() && node.files > 0);
         ui.set_can_go_up(self.focus != tree.root());
     }
 
@@ -2840,6 +2914,28 @@ impl Controller {
         )
         .into_iter()
         .collect();
+        if let Some(review) = &mut self.review {
+            if tree.node(review.folder).has(freesize_core::flags::DELETED)
+                || tree
+                    .ancestors(review.folder)
+                    .any(|a| tree.node(a).has(freesize_core::flags::DELETED))
+            {
+                self.review = None;
+                self.review_words = None;
+                self.review_copies = None;
+                self.review_previews = None;
+            } else {
+                let mut page = review.page(tree, self.mode, &tree.path(tree.root()));
+                review::show_running(
+                    &mut page,
+                    review::Running {
+                        words: self.review_words.as_ref().map(ReviewJob::running),
+                        copies: self.review_copies.as_ref().map(ReviewJob::running),
+                    },
+                );
+                sections.insert(0, page);
+            }
+        }
         sections.extend(self.cleanup_found.iter().cloned());
         let mut dupes = filecleanup::duplicate_section(
             tree,
@@ -2933,6 +3029,7 @@ impl Controller {
                 "".into()
             });
             ui.set_cleanup_page_action(page.action.as_str().into());
+            ui.set_cleanup_page_action_2(page.action2.as_str().into());
             ui.set_cleanup_page_warn(page.warn);
             ui.set_cleanup_pick_label(if page.picks.is_empty() {
                 "".into()
@@ -2940,15 +3037,16 @@ impl Controller {
                 page.pick_label.into()
             });
             let mut filters: Vec<SharedString> = Vec::new();
-            if !page.filters.is_empty() {
+            if !page.filters.is_empty() && page.filter_index.is_none() {
                 filters.push("Every type".into());
-                filters.extend(page.filters.iter().map(|(_, label)| label.as_str().into()));
             }
-            let index = self
-                .dupe_filter
-                .as_ref()
-                .and_then(|f| page.filters.iter().position(|(ext, _)| ext == f))
-                .map_or(0, |i| i + 1);
+            filters.extend(page.filters.iter().map(|(_, label)| label.as_str().into()));
+            let index = page.filter_index.unwrap_or_else(|| {
+                self.dupe_filter
+                    .as_ref()
+                    .and_then(|f| page.filters.iter().position(|(ext, _)| ext == f))
+                    .map_or(0, |i| i + 1)
+            });
             ui.set_cleanup_filters(ModelRc::new(VecModel::from(filters)));
             ui.set_cleanup_filter_index(index as i32);
         }
@@ -3093,7 +3191,12 @@ impl Controller {
 
         // Similar photos are shown as sets of tiles.
         let mut sets: Vec<PhotoSet> = Vec::new();
-        if self.cleanup_page == filecleanup::SIMILAR {
+        let review_photos = self.cleanup_page == filecleanup::REVIEW
+            && self
+                .review
+                .as_ref()
+                .is_some_and(|r| r.tab == review::PHOTOS);
+        if self.cleanup_page == filecleanup::SIMILAR || review_photos {
             let mut photos: Vec<CleanRow> = Vec::new();
             let flush = |sets: &mut Vec<PhotoSet>, photos: &mut Vec<CleanRow>| {
                 if let Some(set) = sets.last_mut() {
@@ -3128,7 +3231,11 @@ impl Controller {
     /// A Clean up button, by section key; a quarantine batch's buttons
     /// carry its id.
     fn cleanup_action(&mut self, key: &str) {
-        if key == filecleanup::SIMILAR {
+        if key == filecleanup::REVIEW {
+            self.review_compare();
+        } else if key == "review:2" {
+            self.review_look_inside();
+        } else if key == filecleanup::SIMILAR {
             self.photo_action();
         } else if key == filecleanup::DUPLICATES {
             self.duplicate_action();
@@ -3220,6 +3327,15 @@ impl Controller {
     }
 
     fn cleanup_filter(&mut self, index: i32) {
+        if self.cleanup_page == filecleanup::REVIEW {
+            if let Some(review) = &mut self.review {
+                review.tab = usize::try_from(index)
+                    .unwrap_or(0)
+                    .min(review::TABS.len() - 1);
+            }
+            self.show_cleanup();
+            return;
+        }
         let filter = usize::try_from(index - 1).ok().and_then(|i| {
             self.cleanup_section()
                 .and_then(|s| s.filters.get(i))
@@ -3227,6 +3343,200 @@ impl Controller {
         });
         self.dupe_filter = filter;
         self.show_cleanup();
+    }
+
+    // ----- Reviewing a folder ---------------------------------------------
+
+    /// "Review this folder": opens its page on the Clean up tab, and starts
+    /// making previews of its photos.
+    fn review_folder(&mut self, id: i32) {
+        let Some(tree) = &self.tree else {
+            return;
+        };
+        let Ok(id) = NodeId::try_from(id) else {
+            return;
+        };
+        if (id as usize) >= tree.len() || !tree.node(id).is_dir() {
+            return;
+        }
+        if self.review.as_ref().is_none_or(|r| r.folder != id) {
+            self.review_words = None;
+            self.review_copies = None;
+            self.review_previews = None;
+            self.review = Some(review::Review::new(id));
+            let photos: Vec<(NodeId, PathBuf)> = review::photos(tree, id, self.mode)
+                .into_iter()
+                .filter(|&p| !tree.node(p).has(freesize_core::flags::CLOUD))
+                .take(review::MAX_PHOTOS)
+                .map(|p| (p, tree.path(p)))
+                .collect();
+            if !photos.is_empty() {
+                let job = ReviewJob {
+                    progress: Arc::new(DuplicateProgress::new()),
+                    result: Arc::default(),
+                };
+                job.progress
+                    .files
+                    .store(photos.len() as u64, Ordering::Relaxed);
+                let (progress, result) = (job.progress.clone(), job.result.clone());
+                let spawned = std::thread::Builder::new()
+                    .name("freesize-previews".into())
+                    .spawn(move || {
+                        for (id, path) in photos {
+                            if progress.is_cancelled() {
+                                break;
+                            }
+                            let preview = similar::preview(&path);
+                            result
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get_or_insert_with(Vec::new)
+                                .push((id, preview));
+                            progress.done.fetch_add(1, Ordering::Relaxed);
+                        }
+                    });
+                if spawned.is_ok() {
+                    self.review_previews = Some(job);
+                }
+            }
+        }
+        self.cleanup_page = filecleanup::REVIEW.into();
+        if let Some(ui) = self.ui() {
+            // The Clean up tab.
+            ui.set_wide_tab(3);
+            ui.set_compact_tab(4);
+        }
+        self.show_cleanup();
+        self.ensure_ticking();
+    }
+
+    /// Stops the review's searches and forgets it.
+    fn close_review(&mut self) {
+        self.review_words = None;
+        self.review_copies = None;
+        self.review_previews = None;
+        self.review = None;
+    }
+
+    /// "Compare with my current files": the folder's files by content
+    /// against the rest of the scan; or stops it.
+    fn review_compare(&mut self) {
+        if self.review_copies.take().is_some() {
+            self.show_cleanup();
+            return;
+        }
+        let (Some(tree), Some(review)) = (&self.tree, &self.review) else {
+            return;
+        };
+        let candidates = freesize_core::review::copy_candidates(tree, review.folder);
+        let job = ReviewJob {
+            progress: Arc::new(DuplicateProgress::new()),
+            result: Arc::default(),
+        };
+        let (progress, result) = (job.progress.clone(), job.result.clone());
+        let spawned = std::thread::Builder::new()
+            .name("freesize-compare".into())
+            .spawn(move || {
+                let any = candidates.files() > 0;
+                put(&result, (any, candidates.find(&progress)));
+            });
+        match spawned {
+            Ok(_) => self.review_copies = Some(job),
+            Err(err) => self.set_status(&format!("Could not start comparing: {err}")),
+        }
+        self.show_cleanup();
+        self.ensure_ticking();
+    }
+
+    /// "Look inside files": the words from Settings in the folder's text,
+    /// Office and PDF files; or stops it.
+    fn review_look_inside(&mut self) {
+        if self.review_words.take().is_some() {
+            self.show_cleanup();
+            return;
+        }
+        let (Some(tree), Some(review)) = (&self.tree, &mut self.review) else {
+            return;
+        };
+        let files = review::searchable(tree, review.folder, self.mode);
+        let words = self.review_settings.words.clone();
+        review.looked_for = words.clone();
+        let job = ReviewJob {
+            progress: Arc::new(DuplicateProgress::new()),
+            result: Arc::default(),
+        };
+        job.progress
+            .files
+            .store(files.len() as u64, Ordering::Relaxed);
+        let (progress, result) = (job.progress.clone(), job.result.clone());
+        let spawned = std::thread::Builder::new()
+            .name("freesize-words".into())
+            .spawn(move || {
+                let mut found = HashMap::new();
+                for (id, path) in files {
+                    if progress.is_cancelled() {
+                        return;
+                    }
+                    let words = freesize_agent::review::words_in(&path, &words);
+                    if !words.is_empty() {
+                        found.insert(id, words);
+                    }
+                    progress.done.fetch_add(1, Ordering::Relaxed);
+                }
+                put(&result, found);
+            });
+        match spawned {
+            Ok(_) => self.review_words = Some(job),
+            Err(err) => self.set_status(&format!("Could not start looking inside files: {err}")),
+        }
+        self.show_cleanup();
+        self.ensure_ticking();
+    }
+
+    /// Picks up the review's results and previews.
+    fn tick_review(&mut self) {
+        let mut changed = false;
+        if let Some(job) = &self.review_words
+            && let Some(found) = take(&job.result)
+        {
+            self.review_words = None;
+            if let Some(review) = &mut self.review {
+                review.words = Some(found);
+            }
+            changed = true;
+        }
+        if let Some(job) = &self.review_copies
+            && let Some((any, copies)) = take(&job.result)
+        {
+            self.review_copies = None;
+            if let Some(review) = &mut self.review {
+                review.copies = Some(copies);
+                review.compared_any = any;
+            }
+            changed = true;
+        }
+        if let Some(job) = &self.review_previews {
+            let (done, of) = job.running();
+            let made = take(&job.result).unwrap_or_default();
+            if done >= of || job.progress.is_cancelled() {
+                self.review_previews = None;
+            }
+            if let Some(review) = &mut self.review {
+                for (id, pixels) in made {
+                    if let Some(pixels) = pixels {
+                        review.previews.insert(id, pixels.image());
+                    }
+                }
+            }
+            // Previews show in batches, not one by one.
+            if self.review_previews.is_none() || self.ticks.is_multiple_of(10) {
+                changed |= self.cleanup_page == filecleanup::REVIEW;
+            }
+        }
+        let searching = self.review_words.is_some() || self.review_copies.is_some();
+        if changed || (searching && self.ticks.is_multiple_of(5)) {
+            self.show_cleanup();
+        }
     }
 
     // ----- Clean junk -----------------------------------------------------

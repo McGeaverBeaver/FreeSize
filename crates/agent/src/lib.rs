@@ -11,6 +11,8 @@ pub mod junk;
 pub mod nextcloud;
 pub mod quarantine;
 pub mod report;
+#[cfg(feature = "review")]
+pub mod review;
 pub mod state;
 pub mod transport;
 pub mod update;

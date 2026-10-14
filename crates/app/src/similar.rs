@@ -291,7 +291,7 @@ fn load(path: &Path) -> Option<(DynamicImage, u16)> {
 }
 
 /// A small version of the photo, the right way up.
-fn preview(path: &Path) -> Option<Pixels> {
+pub fn preview(path: &Path) -> Option<Pixels> {
     let (image, orientation) = load(path)?;
     let image = image.thumbnail(PREVIEW, PREVIEW);
     let image = match orientation {

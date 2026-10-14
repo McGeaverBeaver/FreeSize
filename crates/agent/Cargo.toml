@@ -12,12 +12,16 @@ license.workspace = true
 ureq = ["dep:ureq"]
 # Unpacking a downloaded release (desktops; Android installs the APK).
 install = ["dep:flate2", "dep:tar", "dep:zip"]
+# Looking for words inside text, Office and PDF files (folder review).
+review = ["dep:zip", "dep:pdf-extract"]
 
 [dependencies]
 base64 = "0.23.1"
 flate2 = { version = "1.1.10", optional = true }
 freesize-core.workspace = true
 freesize-proto.workspace = true
+# Pure Rust, so it builds for Android and Windows without a C compiler.
+pdf-extract = { version = "0.12.1", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tar = { version = "0.4.46", optional = true }

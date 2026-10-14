@@ -352,7 +352,7 @@ pub fn find_duplicates(
 }
 
 /// Hash of the first and last [`SAMPLE`] bytes (the whole file if small).
-fn sample_hash(path: &Path, size: u64) -> Option<u128> {
+pub(crate) fn sample_hash(path: &Path, size: u64) -> Option<u128> {
     let mut file = File::open(path).ok()?;
     if size <= 2 * SAMPLE {
         let mut data = Vec::with_capacity(size as usize);
@@ -369,7 +369,7 @@ fn sample_hash(path: &Path, size: u64) -> Option<u128> {
     Some(hasher.digest128())
 }
 
-fn full_hash(path: &Path) -> Option<u128> {
+pub(crate) fn full_hash(path: &Path) -> Option<u128> {
     let mut file = File::open(path).ok()?;
     let mut hasher = Xxh3::new();
     let mut buf = vec![0u8; 1024 * 1024];

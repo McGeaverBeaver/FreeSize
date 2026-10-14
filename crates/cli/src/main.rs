@@ -14,6 +14,7 @@ mod agent;
 mod junk;
 mod nextcloud;
 mod release;
+mod review;
 #[cfg(unix)]
 mod unraid;
 mod update;

@@ -65,6 +65,13 @@ A set of photos that look alike but aren't identical, such as bursts and
 resized copies.
 _Avoid_: duplicate photos
 
+**Review** (of a folder):
+A page listing one folder's files by kind (Photos, Documents, Videos, Worth
+a look, Everything else), to look through before deleting it. **Worth a
+look** files are the ones people most often miss; **Only here** marks a
+file not found elsewhere in the scan by content.
+_Avoid_: inspect, audit, folder report
+
 **Junk**:
 Space the system or apps can do without that sits in known places, found
 without a scan.

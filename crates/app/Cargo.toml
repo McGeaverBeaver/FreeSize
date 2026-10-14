@@ -17,7 +17,7 @@ name = "freesize-gui"
 path = "src/main.rs"
 
 [dependencies]
-freesize-agent.workspace = true
+freesize-agent = { workspace = true, features = ["review"] }
 freesize-core.workspace = true
 freesize-proto.workspace = true
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -27,7 +27,7 @@ slint = "1.18.1"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 # The Hub is reached with ureq on desktops; Android uses Java's HTTP client.
-freesize-agent = { workspace = true, features = ["ureq", "install"] }
+freesize-agent = { workspace = true, features = ["ureq", "install", "review"] }
 rfd = "0.17.2"
 
 [target.'cfg(target_os = "android")'.dependencies]

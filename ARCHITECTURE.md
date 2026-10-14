@@ -235,6 +235,19 @@ minimum. A folder is skipped when one of its children accounts for 80% of
 its change, so the list names where the change happened rather than every
 folder above it. `find` maps a snapshot path back to a node.
 
+### Folder review (`review.rs`)
+
+Sorts a folder's files for a review: `group_of` by extension through
+`Kind` (photos, documents, videos, the rest) and `important` for the ones
+worth a look, by extension and name (password vaults, keys and
+certificates, wallets, tax and accounting files, email archives, documents
+and spreadsheets, and camera photos by name, such as `IMG_1234` and
+`PXL_…`, or a `DCIM` folder). `copy_candidates` pairs each file of the
+folder with the files of its size elsewhere in the tree, owning the paths so
+the reading can run on another thread, and `CopyCandidates::find` confirms
+copies by a hash of both ends, then the whole file (`reclaim.rs`'s
+hashes), keeping one other copy per file.
+
 ### Scan files (`ncdu.rs`)
 
 `export` writes a tree in ncdu's JSON export format (version 1.2): a
@@ -364,6 +377,16 @@ data is measured through Usage access instead.
 
 ### Scan view extras
 
+- `review.rs` makes a folder review's page of the Clean up tab: a
+  `filecleanup::Section` with the key `review`, whose type choices are the
+  tabs (`filter_index`, with no "Every type"), cached until the tab, the
+  results, the previews or the counts of files change. The controller runs
+  the previews (`similar::preview`, the first 400 photos, handed over as
+  they're made), Compare and Look inside on threads it polls on its timer;
+  Photos is drawn as tiles like similar photos. The words are kept in
+  `review.json` in the data folder. The tree's rows have a context menu on
+  desktops (not on phones, where a long press would fight the list's
+  scrolling), and the selection bar a Review button.
 - `changes.rs` turns `snapshot::compare` into the Changes tab's rows. The
   bubble view looks up each folder in the compared snapshot and adds the
   difference to its label when it's at least 5% (and 10 MB).
@@ -838,6 +861,14 @@ the 500 biggest files and the 100 biggest file types: under a megabyte for a
 whole array, rather than every file.
 
 ### Device side (`crates/agent`)
+
+- `review.rs` (feature `review`, which the app and the command line turn
+  on): `words_in`, which of a list of words a file contains, for a folder
+  review. Plain text as UTF-8 (HTML and XML without their tags), Office and
+  OpenDocument files by unzipping their XML parts (64 MB at most),
+  PDFs through `pdf-extract`, inside `catch_unwind` because it panics on
+  some broken files. A word counts where it starts a word. It only returns
+  the words, so nothing of the text can be sent on.
 
 - `state.rs`: the pairing, saved as JSON with mode 0600: Hub address, name
   and key, this device's id and private key, the approver's device and key,

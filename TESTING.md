@@ -20,6 +20,16 @@ what was tried in the release's draft notes, and say what wasn't.
       point per scan and this scan; clicking a point compares with it (the
       picker follows), and each listed folder has a bar; on a phone the
       chart fits and a tap compares.
+- [ ] Review a folder: right-click an old backup folder of a few thousand
+      files in the tree, Review this folder; the tabs' counts add up, Photos
+      shows previews, Worth a look lists a `.kdbx`, a `.pst` and a tax
+      file put there; Compare with my current files (after scanning the
+      whole drive) matches files checked by hand, a file changed by one
+      byte is Only here; Look inside files finds a word in a `.txt`, a
+      `.docx`, an `.xlsx` and a PDF, and a word changed in Settings is used
+      the next time. On a phone, highlight the folder and tap Review.
+- [ ] `freesize review` on the Unraid server, on a share's old backup
+      folder with `--in` the share: same counts as the app would show.
 - [ ] Scans the home folder and a whole drive; totals look right; the
       status line says how many folders couldn't be read.
 - [ ] Clean up tab: Folders FreeSize couldn't read names them; Scan as
