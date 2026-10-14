@@ -241,7 +241,7 @@ background and opens the result as a saved scan.
 
 ### Clean up tab
 
-After a scan, the **Clean up** tab (**Clean** on phones) opens on a card
+After a scan, the **Clean up** tab opens on a card
 for each kind of thing it found, with how much it could free and how many
 of its items are ticked. **Review** opens a card as its own page (**‹ All**
 goes back), where every row has a tick box and the page has buttons to
@@ -255,16 +255,17 @@ tick many at once:
   folders, not named like a copy (`photo (1).jpg`, `x - Copy.doc`), and the
   oldest. **Show** lists one type only (*EXE files · 12 sets, 1.2 GB*), and
   the button then ticks the extra copies of that type only. Each set also
-  has its own **Select extras**.
+  has its own **Select extra copies**.
 - **Select all but the largest** for similar photos, which are shown side by
   side as big previews so they can be compared; each set has its own button
   too.
-- **Clear** unticks what the page lists.
+- **Unselect all** unticks what the page lists; a set's own button turns
+  into **Unselect** once its extras are ticked.
 
 When every copy of a duplicate (or every photo of a set) is ticked, the set
 says so in orange, and so does the confirmation. Ticked items go into the
 selection (see [The selection](#the-selection)): its bar shows what's ticked
-everywhere, and **Review…** lists each item once more, with **Keep** to
+everywhere, and **Review selection…** lists each item once more, with **Keep** to
 take one off, before anything is moved to the quarantine. Double-click a
 row, or highlight it and use Open, to look at a file first. A scan opened
 from a file is read-only, so it has no tick boxes.
@@ -447,7 +448,8 @@ for example *12.4 GB · +2.1 GB*.
 Highlight a file or folder anywhere and press **Select** (or tick it on the
 Clean up tab) to add it to the selection; a bar shows how many items and
 how much space it holds. When a files list is filtered (a type, an age, a
-size, old screenshots), **Select all** adds every listed file. **Review…**
+size, old screenshots), **Select all** adds every listed file. **Review
+selection…**
 lists everything selected, each with **Keep** to take it off the list, with
 two ways to act on all of it:
 

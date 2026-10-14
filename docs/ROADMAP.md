@@ -387,6 +387,21 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.17.1, polish: words, against CONTEXT.md. Buttons that add to the
+  selection say Select … and the ones that take back out Unselect …
+  (a duplicate set's own button is Select extra copies, a photo set's
+  Select all but the largest, both turning into Unselect; the page's Clear
+  is Unselect all); the selection bar's Review… is Review selection…, so it
+  isn't read as a card's Review. The phone's scan tabs are Largest, Types
+  and Clean up (Clean was also the name of a place). Put back "returns"
+  instead of "restores"; the quarantine no longer says "set aside by
+  deleting" or "deleted here". The Hub sheet in the app shows the
+  connection as a plain line rather than a yellow warning, spells out the
+  approver command without backticks and says "Every request from the Hub
+  asks you first" instead of "No grants". The Hub's Unraid tab no longer
+  shows "parity parity" and puts a share's cache setting in words. Delete
+  keeps its name (the owner's call) and the Hub keeps "batches" (a
+  glossary word).
 - 0.17.0, polish: Clean junk and the quarantine, on desktops and phones
   together (the owner's review, 2026-10-13: "Show command" showed nothing,
   rules that can't be cleaned had tick boxes, and Clean went to a page

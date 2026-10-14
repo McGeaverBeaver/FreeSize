@@ -24,10 +24,10 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] Clean up tab: the cards show sizes; Find duplicates, then Review:
       Show EXE files and Select extra copies ticks all but the Keep copy of
       each EXE set and nothing else; ticking the Keep copy too flags the
-      set and the confirmation; Review… lists exactly what's ticked, Keep
+      set and the confirmation; Review selection… lists exactly what's ticked, Keep
       takes one off, and Delete all moves the rest to the quarantine. Find
       similar photos shows the sets side by side; Select all but the
-      largest, then Clear. On a phone the same, with the tiles two across
+      largest, then Unselect all. On a phone the same, with the tiles two across
       and the tick boxes easy to hit.
 - [ ] Delete moves to the quarantine; Put back restores the file byte for
       byte (compare the size and a checksum); Empty frees the space.

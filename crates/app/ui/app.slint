@@ -1315,7 +1315,7 @@ component CleanupView inherits Rectangle {
                         }
                     }
                     if root.pick-label != "": Button {
-                        text: "Clear";
+                        text: "Unselect all";
                         enabled: root.any-picked;
                         clicked => {
                             root.pick-none();
@@ -2011,7 +2011,7 @@ component JunkPane inherits Rectangle {
                             }
 
                             Text {
-                                text: "Ticked caches and temporary files are deleted; \"check first\" rules go to the quarantine, where Put back restores them. Nothing happens until you confirm.";
+                                text: "Ticked caches and temporary files are deleted; \"check first\" rules go to the quarantine, where Put back returns them. Nothing happens until you confirm.";
                                 font-size: 11px;
                                 color: Theme.dim;
                                 wrap: word-wrap;
@@ -3991,7 +3991,7 @@ export component AppWindow inherits Window {
                 }
 
                 Tab {
-                    title: "Files";
+                    title: "Largest";
                     LargestPane {
                         files: root.largest-files;
                         selected-id: root.selected-id;
@@ -4023,7 +4023,7 @@ export component AppWindow inherits Window {
                 }
 
                 Tab {
-                    title: "Clean";
+                    title: "Clean up";
                     CleanupView {
                         sections: root.cleanup-sections;
                         summary: root.cleanup-summary;
@@ -4108,7 +4108,7 @@ export component AppWindow inherits Window {
                     }
 
                     if root.basket-count > 0: Button {
-                        text: "Review…";
+                        text: "Review selection…";
                         primary: true;
                         clicked => {
                             root.basket-review();
@@ -4426,7 +4426,7 @@ export component AppWindow inherits Window {
                 }
 
                 Text {
-                    text: root.basket-count > 0 ? root.basket-summary + ". Look them over: Keep takes one off the list. Nothing is deleted until you confirm, and then it goes to the quarantine, where Put back restores it." : "Nothing is selected.";
+                    text: root.basket-count > 0 ? root.basket-summary + ". Look them over: Keep takes one off the list. Nothing is deleted until you confirm, and then it goes to the quarantine, where Put back returns it." : "Nothing is selected.";
                     color: Theme.dim;
                     wrap: word-wrap;
                 }

@@ -66,6 +66,13 @@ pub const SIMILAR: &str = "similar";
 /// Unreadable folders listed under their heading.
 const MAX_UNREADABLE: usize = 20;
 
+/// What selects the extra copies of a duplicate set, on the page and per set.
+pub const SELECT_COPIES: &str = "Select extra copies";
+/// What selects all but the largest of a set of similar photos.
+pub const SELECT_SMALLER: &str = "Select all but the largest";
+/// What takes a set's ticked items out of the selection again.
+pub const UNSELECT: &str = "Unselect";
+
 /// Space no file accounts for on a scanned drive: the drive's used space
 /// when it was scanned, and what the system said about it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -392,7 +399,7 @@ pub fn duplicate_section(
     let mut section = Section {
         key: DUPLICATES,
         title: "Duplicate files".into(),
-        pick_label: "Select extra copies",
+        pick_label: SELECT_COPIES,
         ..Default::default()
     };
     let groups = match duplicates {
@@ -530,7 +537,7 @@ pub fn duplicate_section(
             kind: GROUP,
             id: index as i32,
             title: format!("{} copies · {} each", nodes.len(), format_size(*size)).into(),
-            action: "Select extras".into(),
+            action: SELECT_COPIES.into(),
             ..Default::default()
         });
         section.rows.extend(nodes.iter().map(|&id| {
@@ -559,7 +566,7 @@ pub fn similar_section(tree: &Tree, mode: SizeMode, similar: Similar) -> Section
     let mut section = Section {
         key: SIMILAR,
         title: "Similar photos".into(),
-        pick_label: "Select all but the largest",
+        pick_label: SELECT_SMALLER,
         ..Default::default()
     };
     let (groups, preview) = match similar {
@@ -632,7 +639,7 @@ pub fn similar_section(tree: &Tree, mode: SizeMode, similar: Similar) -> Section
             kind: GROUP,
             id: index as i32,
             title: format!("{} photos · {}", photos.len(), format_size(total)).into(),
-            action: "Select extras".into(),
+            action: SELECT_SMALLER.into(),
             ..Default::default()
         });
         section

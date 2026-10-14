@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.17.0)
+## Where things stand (0.17.1)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -180,6 +180,8 @@ compiling inside Docker.
   one "Clean junk" batch grouped by rule, and batches that open like a
   file explorer with per-item Put back (Keep both, Replace, Skip) and
   Delete for good; one Clean junk card on the phone.
+  0.17.1: the wording group of the polish findings (Select/Unselect,
+  Review selection…, phone tabs, Put back returns, the Hub sheet).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

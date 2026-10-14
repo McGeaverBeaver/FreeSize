@@ -705,13 +705,18 @@ pub fn hub_sheet(state: &freesize_agent::AgentState, status: &str, now: i64) -> 
     let mut facts = vec![
         format!("This device's key: {fingerprint}"),
         format!(
-            "A server or NAS can name this device as its approver with `freesize approver set \
-             {fingerprint}`; its requests then come here to approve."
+            "A server or NAS can make this device its approver: on the server, run \
+             freesize approver set {fingerprint}. Its requests then come here to approve."
         ),
     ];
+    // Good news is a plain line; only trouble goes in the highlighted note.
+    let fine = status.starts_with("Connected");
+    if fine {
+        facts.insert(0, format!("{status}."));
+    }
     let grants: Vec<_> = state.grants.iter().filter(|g| g.expires > now).collect();
     if grants.is_empty() {
-        facts.push("No grants: every request asks first.".into());
+        facts.push("Every request from the Hub asks you first.".into());
     }
     for grant in &grants {
         facts.push(format!(
@@ -731,7 +736,11 @@ pub fn hub_sheet(state: &freesize_agent::AgentState, status: &str, now: i64) -> 
         title: state.hub_name.clone(),
         subtitle: format!("{} · Hub key {}", state.hub, state.hub_key.fingerprint()),
         facts,
-        note: status.to_string(),
+        note: if fine {
+            String::new()
+        } else {
+            status.to_string()
+        },
         actions,
     }
 }
@@ -887,7 +896,7 @@ pub fn junk_confirm(junk: &Junk) -> String {
     let n = junk.paths.len();
     match junk.kind {
         JunkKind::Trash => format!(
-            "Move {} from the trash to the quarantine ({size})? Put back restores them; the \
+            "Move {} from the trash to the quarantine ({size})? Put back returns them; the \
              space is freed when you empty the quarantine.",
             count(n, "item", "items")
         ),
@@ -902,21 +911,21 @@ pub fn junk_confirm(junk: &Junk) -> String {
             )
         }
         JunkKind::Leftovers => format!(
-            "Move {} left by removed apps ({size}) to the quarantine? Put back restores them if \
+            "Move {} left by removed apps ({size}) to the quarantine? Put back returns them if \
              an app turns out to need them.",
             count(n, "folder", "folders")
         ),
         JunkKind::OldDownloads => format!(
-            "Move {} from Download to the quarantine ({size})? Put back restores them; the \
+            "Move {} from Download to the quarantine ({size})? Put back returns them; the \
              space is freed when you empty the quarantine.",
             count(n, "old file", "old files")
         ),
         JunkKind::ScreenRecordings => format!(
-            "Move {} to the quarantine ({size})? Put back restores them.",
+            "Move {} to the quarantine ({size})? Put back returns them.",
             count(n, "screen recording", "screen recordings")
         ),
         JunkKind::EmptyFolders => format!(
-            "Move {} to the quarantine? They hold nothing; Put back restores them.",
+            "Move {} to the quarantine? They hold nothing; Put back returns them.",
             count(n, "empty folder", "empty folders")
         ),
     }
@@ -1802,7 +1811,7 @@ mod tests {
         assert!(findings[0].ticked() && !findings[1].ticked() && !findings[2].ticked());
         assert_eq!(
             junk_confirm(&report.junk[2]),
-            "Move 1 folder left by removed apps (2.00 MB) to the quarantine? Put back restores \
+            "Move 1 folder left by removed apps (2.00 MB) to the quarantine? Put back returns \
              them if an app turns out to need them."
         );
         let mut no_access = clean();

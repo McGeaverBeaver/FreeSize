@@ -786,6 +786,13 @@ const SAFETY = {
   protected: ["in use", ""],
 };
 const DISK_KINDS = { parity: "parity", pool: "pool", flash: "flash" };
+// A share's "use cache" setting in words.
+const CACHE_USE = {
+  yes: "new files on the cache, moved to the array",
+  prefer: "kept on the cache",
+  only: "cache only",
+  no: "array only",
+};
 
 function bytesAgo(secs) {
   return secs ? ago(secs) : "never";
@@ -831,7 +838,7 @@ function deviceUnraid(device) {
         const fraction = d.size ? (d.size - d.free) / d.size : 0;
         return h("tr", {},
           h("td", {}, diskIndex.has(d.name) && d.kind !== "flash" ? h("span", { class: `swatch seg-${diskIndex.get(d.name)}` }) : h("span", { class: "swatch" }), d.name,
-            DISK_KINDS[d.kind] ? h("span", { class: "badge", style: "margin-left:6px" }, DISK_KINDS[d.kind]) : null,
+            DISK_KINDS[d.kind] && DISK_KINDS[d.kind] !== d.name ? h("span", { class: "badge", style: "margin-left:6px" }, DISK_KINDS[d.kind]) : null,
             d.asleep ? h("span", { class: "badge accent", style: "margin-left:6px" }, "asleep") : null,
             h("div", { class: "sub" }, [d.device, d.fs, d.pool ? `in ${d.pool}` : null].filter(Boolean).join(" · "))),
           h("td", { class: "hide-narrow", style: "width:30%" }, d.kind === "parity" ? h("span", { class: "dim small" }, size(d.size)) : bar(fraction, usageLevel(fraction))),
@@ -844,7 +851,7 @@ function deviceUnraid(device) {
   const largest = Math.max(1, ...u.shares.map((sh) => sh.total));
   const shares = h("div", { class: "card table-wrap" }, h("h2", {}, "Shares and their disks"),
     h("table", {}, h("tbody", {}, u.shares.map((sh) => h("tr", {},
-      h("td", { style: "width:22%" }, sh.name, h("div", { class: "sub" }, [sh.comment, sh.cache].filter(Boolean).join(" · "))),
+      h("td", { style: "width:22%" }, sh.name, h("div", { class: "sub" }, [sh.comment, CACHE_USE[sh.cache] || (sh.cache ? `cache: ${sh.cache}` : "")].filter(Boolean).join(" · "))),
       h("td", {},
         h("div", { class: "stack-bar", style: `width:${Math.max(2, (sh.total / largest) * 100).toFixed(1)}%` },
           sh.placements.map((p) => h("div", {

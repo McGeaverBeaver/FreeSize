@@ -1292,7 +1292,7 @@ impl Controller {
         self.file_filter = None;
         if let Some(filter) = self.pending_files.take() {
             self.file_filter = filter;
-            // The "Largest files" tab, or "Files" on phones.
+            // The "Largest files" tab, or "Largest" on phones.
             ui.set_wide_tab(1);
             ui.set_compact_tab(2);
         }
@@ -2897,7 +2897,7 @@ impl Controller {
             } else {
                 "Open a card to look through what was found and tick what should go. Ticked \
                  items are listed once more before anything happens; then they're moved to the \
-                 quarantine, where Put back restores them until you empty it."
+                 quarantine, where Put back returns them until you empty it."
             }
             .into(),
         );
@@ -3029,7 +3029,14 @@ impl Controller {
             }
             .into();
             if !row.action.is_empty() {
-                changed.action = if extras { "Unselect" } else { "Select extras" }.into();
+                changed.action = if extras {
+                    filecleanup::UNSELECT
+                } else if similar {
+                    filecleanup::SELECT_SMALLER
+                } else {
+                    filecleanup::SELECT_COPIES
+                }
+                .into();
             }
             if changed != row {
                 row = changed;
@@ -4315,7 +4322,7 @@ impl Controller {
         };
         self.update_lists();
         if let Some(ui) = self.ui() {
-            // Show the files: the "Largest files" tab, or "Files" on phones.
+            // Show the files: the "Largest files" tab, or "Largest" on phones.
             ui.set_wide_tab(1);
             ui.set_compact_tab(2);
         }
@@ -4522,7 +4529,7 @@ impl Controller {
             format_size(bytes)
         );
         let mut text = format!(
-            "Move {what} to the quarantine? Put back restores it; the space is freed when you \
+            "Move {what} to the quarantine? Put back returns it; the space is freed when you \
              empty the quarantine."
         );
         // Sets of copies where none would be left.
@@ -4784,7 +4791,7 @@ impl Controller {
             format!("“{name}” ({size})")
         };
         let text = format!(
-            "Move {what} to the quarantine? Put back restores it; the space is freed when you \
+            "Move {what} to the quarantine? Put back returns it; the space is freed when you \
              empty the quarantine."
         );
         ui.set_confirm_text(text.into());

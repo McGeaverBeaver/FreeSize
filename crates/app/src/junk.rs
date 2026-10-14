@@ -387,7 +387,7 @@ impl State {
                 text.push(' ');
             }
             text.push_str(&format!(
-                "{} goes to the quarantine, where Put back restores it.",
+                "{} goes to the quarantine, where Put back returns it.",
                 format_size(aside)
             ));
         }

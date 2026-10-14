@@ -665,8 +665,8 @@ pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
         kind: 0,
         title: HEADING.into(),
         subtitle: format!(
-            "{} set aside by deleting, in {}. Put back restores a batch where it was; Empty \
-             frees its space for good. Nothing here is emptied on its own.",
+            "{} deleted, in {}. Put back returns a batch to where it was; Empty frees its \
+             space for good. Nothing here is emptied on its own.",
             format_size(total(batches)),
             if batches.len() == 1 {
                 "one batch".to_string()
@@ -694,7 +694,7 @@ pub fn rows(batches: &[QuarantineBatch], now: i64) -> Vec<CleanRow> {
             subtitle.push_str(&format!(" and {} more", batch.items.len() - 3));
         }
         let who = if batch.by.is_empty() {
-            "deleted here".to_string()
+            "deleted on this device".to_string()
         } else {
             format!("asked by {} from the Hub", batch.by)
         };
@@ -778,7 +778,11 @@ mod tests {
         assert_eq!(rows[0].action.as_str(), EMPTY_ALL);
         assert_eq!(rows[1].kind, BATCH);
         assert_eq!(rows[1].action.as_str(), "a1-0");
-        assert!(rows[1].title.contains("deleted here"), "{}", rows[1].title);
+        assert!(
+            rows[1].title.contains("deleted on this device"),
+            "{}",
+            rows[1].title
+        );
         assert!(
             rows[1].subtitle.contains("and 2 more"),
             "{}",

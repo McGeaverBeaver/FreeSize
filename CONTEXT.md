@@ -106,7 +106,8 @@ _Avoid_: check, mark
 
 **Selection**:
 Everything added to it, by ticking or with the Select button, anywhere, reviewed in one list before it is
-deleted or moved together.
+deleted or moved together. Buttons that add say **Select …**, the ones that
+take back out **Unselect …**, and the list opens with **Review selection…**.
 _Avoid_: basket, collection, cart
 
 **Quarantine**:
