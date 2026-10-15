@@ -1118,6 +1118,57 @@ risk report, the suggestions and their requests, with MKCOL for a move).
 `examples/demo.rs` runs
 the same with made-up devices for trying the dashboard.
 
+### The Nextcloud app (`nextcloud/freesize`)
+
+A Nextcloud app in PHP (0.20, AGPL-3.0-or-later like Nextcloud), with no
+build step: the admin page is a template and plain JavaScript on
+Nextcloud's own globals. It is a device like the agent, speaking the same
+protocol, so the Hub needed only a platform (`nextcloud`) and a report
+section (`freesize_proto::cloud`):
+
+- `lib/Hub/`: `Keys` makes the keys, fingerprints, request signatures and
+  envelopes exactly as `freesize_proto` does (`tests/run.php` checks it
+  against vectors from the Rust side); `HubClient` pairs (asking a Hub
+  with its own authority over plain http first, then trusting that
+  authority for its address only, as the agent does) and sends signed
+  requests through Nextcloud's HTTP client; `State` keeps the pairing,
+  approver, grants, requests waiting for the approver and the users
+  covered in the app's config, the key encrypted with Nextcloud's secret.
+- `lib/Service/Scanner.php`: per covered user, one pass over the file
+  cache rows of their home storage under `files/` (not shares, not
+  external storage): sizes, folders two levels down, the biggest and the
+  old files, and same-size groups of 1 MB and over. `Hasher.php` reads
+  those files through the storage (decrypted if encryption is on) for a
+  SHA-256, two minutes a run, kept in `freesize_hashes` by file id until
+  the size or mtime changes. Totals of `files_trashbin/files/` and
+  `files_versions/` come from the cache too. The etags of the three
+  folders skip the pass while nothing changed.
+- `lib/Service/Agent.php`: what `freesize agent run` does, once per run of
+  the background job (every five minutes): report when something changed,
+  poll, refuse or run under a grant or wait for the approver's signed
+  decision (checked against the approver's key and the command's hash),
+  and listen for the answer for two minutes while one is waiting.
+  Nobody sits at a server, so the device is unattended and refuses
+  everything without an approver. Only `delete` is offered.
+- `lib/Service/Deleter.php`: the delete's `root` is the user's id and its
+  paths are relative to their files. It sets Nextcloud's files up for that
+  user alone first (the trash bin decides whose trash a file goes to from
+  that setup; set up for someone else it deletes for good), refuses the
+  whole folder, mount points (shares, external storage), and files bigger
+  than the trash bin's size limit, deletes through the node API, and then
+  checks the trash bin took it (`files_trash`), stopping the request if
+  another app kept a file out.
+- `Command/` (`occ freesize:*`), `Settings/` and `Controller/` (the admin
+  page; every route needs an admin, pairing and the approver a fresh
+  password), `BackgroundJob/Run.php`, and the migration for the table.
+
+On the Hub, `cloud.rs` keeps the newest report per device (`cloud` table),
+cuts it to the accounts the person may see (admins all, everyone else the
+account with their email, also in the request list), turns it into
+suggestions for the Copies page, and sizes a delete from it: only paths
+the report listed. Without the app, the WebDAV listing gives the
+suggestions that need no guessing (old big files, the trash bin).
+
 ### Packaging
 
 - `Dockerfile`: builds on the build machine's architecture and
@@ -1281,6 +1332,10 @@ its `.plg`.
   tests (each against a made-up server folder: disks, shares, Docker over
   a fake socket, VMs, protection, quarantine, moves), and the Hub's
   end-to-end tests.
+- `php nextcloud/freesize/tests/run.php` checks the Nextcloud app's keys,
+  signatures, envelopes, pairing links and path checks against the Rust
+  side's vectors; a test in `freesize_proto` checks the app's version is
+  the workspace's.
 - `php unraid/tests/page_test.php` runs the plugin page's `action.php` as
   Unraid does, behind a copy of Unraid's token check and with a stand-in
   `freesize` command: pairing, saving, a wrong token, a refused pairing.

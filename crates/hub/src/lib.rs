@@ -6,6 +6,7 @@ pub mod alerts;
 pub mod api;
 pub mod audit;
 pub mod auth;
+pub mod cloud;
 pub mod commands;
 pub mod config;
 pub mod copies;

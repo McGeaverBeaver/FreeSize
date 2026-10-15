@@ -216,6 +216,7 @@ pub fn platform_id(platform: Platform) -> &'static str {
         Platform::Windows => "windows",
         Platform::Macos => "macos",
         Platform::Linux => "linux",
+        Platform::Nextcloud => "nextcloud",
         Platform::Other => "other",
     }
 }
@@ -451,6 +452,16 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
                 device.id,
                 sync.taken,
                 serde_json::to_string(&sync).unwrap_or_default()
+            ],
+        )?;
+    }
+    if let Some(cloud) = report.cloud {
+        tx.execute(
+            "INSERT OR REPLACE INTO cloud (device_id, taken, report) VALUES (?1, ?2, ?3)",
+            params![
+                device.id,
+                cloud.taken,
+                serde_json::to_string(&cloud).unwrap_or_default()
             ],
         )?;
     }

@@ -380,6 +380,9 @@ pub struct DeviceDetail {
     pub junk_report: Option<Value>,
     /// What it keeps of its Nextcloud folders.
     pub sync: Option<Value>,
+    /// The FreeSize Nextcloud app's report, with only the accounts the
+    /// person may see (0.20).
+    pub cloud: Option<Value>,
 }
 
 /// `GET /api/devices/{id}`.
@@ -441,6 +444,7 @@ pub async fn detail(
             let quarantine = stored("SELECT batches FROM quarantine WHERE device_id = ?1")?;
             let junk_report = stored("SELECT report FROM junk WHERE device_id = ?1")?;
             let sync = stored("SELECT report FROM sync WHERE device_id = ?1")?;
+            let cloud = crate::cloud::for_device(c, &summary, &user)?;
             Ok(DeviceDetail {
                 summary,
                 history,
@@ -450,6 +454,7 @@ pub async fn detail(
                 quarantine,
                 junk_report,
                 sync,
+                cloud,
             })
         })
         .await?;
@@ -536,6 +541,7 @@ pub async fn remove(
             tx.execute("DELETE FROM disk_samples WHERE device_id = ?1", [&id])?;
             tx.execute("DELETE FROM apps WHERE device_id = ?1", [&id])?;
             tx.execute("DELETE FROM junk WHERE device_id = ?1", [&id])?;
+            tx.execute("DELETE FROM cloud WHERE device_id = ?1", [&id])?;
             // Its alerts end quietly.
             tx.execute(
                 "UPDATE alerts SET resolved = ?1 WHERE device_id = ?2 AND resolved IS NULL",

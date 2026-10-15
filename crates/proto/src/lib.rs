@@ -7,6 +7,7 @@
 //! approver's decisions) is signed by whoever made it ([`signing`]). The
 //! messages themselves are in [`messages`].
 
+pub mod cloud;
 pub mod keys;
 pub mod messages;
 pub mod pairing;

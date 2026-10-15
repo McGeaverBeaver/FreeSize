@@ -51,7 +51,24 @@ cargo run -p freesize-hub --example demo
 
 starts a Hub on http://127.0.0.1:9090 with a stand-in sign-in (it signs you
 straight in as an admin) and a few made-up devices, scans, requests and
-alerts.
+alerts, a Nextcloud with the app among them. `DEMO_TLS=auto` serves it over
+HTTPS with the Hub's own authority, as a real Hub does.
+
+## The Nextcloud app
+
+`nextcloud/freesize` is a Nextcloud app with no build step. To work on it,
+run a Nextcloud from its git repository (`git clone --depth 1 -b stable34
+https://github.com/nextcloud/server` and `git submodule update --init
+3rdparty`; `occ maintenance:install --database sqlite` sets it up), link
+the folder into its `apps/`, and `occ app:enable freesize`. `php -S` on
+the server's folder serves it for the admin page. Pair it with the demo
+Hub through a link from **Pair a device**; `occ freesize:run` does a run
+at once and `occ freesize:report` prints the report.
+
+`php nextcloud/freesize/tests/run.php` runs its checks without Nextcloud.
+`scripts/nextcloud-app.sh DIST` packs it (the release script does), after
+checking its version is the workspace's: bump `appinfo/info.xml` and
+`Application::VERSION` with `Cargo.toml`.
 
 ## Releases
 
@@ -258,6 +275,7 @@ unraid/       the Hub's Unraid template, ca/ (the Community Applications
               profile and the plugin's entry), and plugin/: the .plg and
               the package (page, start script)
 packaging/    the Hub's Docker entrypoint, systemd units
+nextcloud/    the FreeSize Nextcloud app (PHP)
 ```
 
 `docs/agents/` tells coding agents using Matt Pocock's engineering skills

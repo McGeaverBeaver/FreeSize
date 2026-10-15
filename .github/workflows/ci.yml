@@ -34,6 +34,12 @@ jobs:
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
+      - name: Check the Nextcloud app
+        if: runner.os == 'Linux'
+        run: |
+          for f in $(find nextcloud/freesize -name '*.php'); do php -l "$f" >/dev/null; done
+          node --check nextcloud/freesize/js/admin.js
+          php nextcloud/freesize/tests/run.php
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test

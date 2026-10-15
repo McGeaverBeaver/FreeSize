@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.19.0)
+## Where things stand (0.20.0)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -190,6 +190,16 @@ compiling inside Docker.
   0.19.0: reviewing a folder (`freesize_core::review`, the agent's
   `review` feature for words inside files, the app's `review.rs` page on
   the Clean up tab, `freesize review`); the words in Settings.
+  0.20.0: the FreeSize Nextcloud app (`nextcloud/freesize`, PHP, AGPL
+  like Nextcloud, packed by `scripts/nextcloud-app.sh`): a device with
+  platform `nextcloud` reporting `freesize_proto::cloud` for the users
+  the admin covers (biggest, old, SHA-256 duplicates, trash and
+  versions), deleting into the user's trash bin once its approver allows
+  it; the Hub's `cloud.rs` (each person sees the account with their
+  email; admins all), the device's Nextcloud tab and Copies' In
+  Nextcloud. Bump the app's version with `Cargo.toml` (a test checks).
+  0.21 has what it left (folders only in the cloud, camera uploads,
+  review on Nextcloud).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

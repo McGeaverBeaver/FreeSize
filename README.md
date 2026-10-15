@@ -1330,6 +1330,67 @@ pairing on the flash drive; pairing there is picked up by the plugin
 straight away. The plugin's log is `/var/log/freesize.log`, with every
 pairing attempt from the page.
 
+### Cleaning up Nextcloud: the FreeSize Nextcloud app
+
+The **FreeSize Nextcloud app** (0.20) runs inside Nextcloud and pairs with
+the Hub like any other device, showing as "Nextcloud". Because it runs on
+the server, it sees the real files and reads them there: nothing is
+downloaded, and nothing is guessed from names or sizes.
+
+For each Nextcloud user the admin chooses, it reports:
+
+- the **biggest files**, and the files **nobody changed in over a year**
+  (old isn't the same as unwanted: they're listed to look through);
+- **extra copies**: files whose contents are the same, byte for byte,
+  checked by a SHA-256 the app computes on the server for every file of
+  1 MB and over that has another file of the same size. It reads a little
+  more every five minutes and keeps each fingerprint until the file
+  changes, so on a big account the list fills in over a few runs. The
+  oldest copy of each is the one to keep;
+- what the **trash bin** and the **old versions** of files take.
+
+On the Hub the device's **Nextcloud** tab, and **In Nextcloud** on the
+Copies page, show each account with these lists and tick boxes, and the
+Suggestions tab adds the extra copies, the old files and the trash bin.
+**Move to the trash bin…** sends a request like any delete: the app has no
+one sitting at it, so the request goes to its approver's phone, and only
+once it's allowed there does the app move the files, through Nextcloud,
+into that user's trash bin. They come back from **Deleted files** in
+Nextcloud until the trash bin is emptied. The app refuses to delete at all
+while the trash bin (the Deleted files app) is off, never touches a user's
+whole folder or what others share with them or external storage, and
+refuses a file bigger than the trash bin is set to take. Each person
+signed in to the Hub sees only the Nextcloud account with their email
+address, and the requests about it; Hub admins see every account, and
+only admins send requests.
+
+To set it up:
+
+1. Download `freesize-nextcloud-<version>.tar.gz` from the release and
+   unpack it into Nextcloud's `custom_apps` (or `apps`) folder, then
+   enable it: `occ app:enable freesize`, or under Apps.
+2. In Nextcloud, **Administration settings → FreeSize**: paste the link
+   from the Hub's **Pair a device** and choose **Pair**.
+3. Under **Approver**, enter the fingerprint of the phone that approves
+   (in the phone's Settings, Hub). Only here, never from the Hub, as with
+   every device.
+4. Under **Users it covers**, add the users whose files the Hub may see.
+
+Nextcloud should run background jobs with Cron (Basic settings), so the
+app reports and carries out approved requests every five minutes; the
+page says so when it doesn't. The same is there from the command line:
+`occ freesize:pair LINK`, `occ freesize:approver FINGERPRINT`,
+`occ freesize:users --add USER`, `occ freesize:run` (now, rather than in
+five minutes), `occ freesize:status`, and `occ freesize:report`, which
+prints exactly what goes to the Hub without sending it.
+
+Without the app, a Nextcloud account connected on the Copies page still
+gets the suggestions that need no guessing: big files nobody changed in a
+year, and the trash bin.
+
+The app is under the GNU Affero General Public License, version 3 or
+later, like Nextcloud itself.
+
 ## Licensing
 
 FreeSize is free software: you can redistribute it and modify it under the

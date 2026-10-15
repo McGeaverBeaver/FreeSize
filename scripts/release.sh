@@ -12,6 +12,9 @@
 #                                      the command line, the page under
 #                                      Tools); Unraid installs it from the
 #                                      .plg in the latest release
+#   freesize-nextcloud-<version>.tar.gz
+#                                      the FreeSize Nextcloud app, to unpack
+#                                      into Nextcloud's custom_apps folder
 #   freesize-*-linux-aarch64.tar.gz    Hub and command line for ARM boards, when
 #                                      the aarch64 cross-compiler is installed
 #   SHA256SUMS.txt
@@ -304,6 +307,9 @@ rustup target add x86_64-pc-windows-gnu >/dev/null 2>&1
 cargo build --release --quiet --target x86_64-pc-windows-gnu -p freesize-app -p freesize-cli
 win="$target/x86_64-pc-windows-gnu/release"
 package freesize-windows-x86_64.zip "$win" "$win/freesize-gui.exe" "$win/freesize.exe"
+
+echo "==> Nextcloud app"
+scripts/nextcloud-app.sh "$dist"
 
 (cd "$dist" && sha256sum -- * >SHA256SUMS.txt)
 # The release key signs the sums, so apps can check an update came from

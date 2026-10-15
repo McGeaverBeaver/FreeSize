@@ -387,6 +387,26 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
+  Nextcloud app in PHP (`nextcloud/freesize`, packed as
+  `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the
+  Hub from Nextcloud's admin settings or `occ freesize:pair`, shows as
+  "Nextcloud", and has its own approver. For the users the admin picks it
+  reports the biggest files, files not changed in a year, the same file
+  twice by a SHA-256 read on the server, and the trash bin's and old
+  versions' space. On the Hub, the device's Nextcloud tab and Copies' In
+  Nextcloud list them with tick boxes, and Suggestions adds them; Move to
+  the trash bin… is a request the approver allows on their phone, and the
+  app moves the files through Nextcloud into the user's trash bin
+  (refusing without a trash bin, for shares and external storage, and
+  for files over the trash bin's size limit, and checking the trash bin
+  took each one). Each person sees only the account with their email;
+  admins see all. Without the app, a connected account gets old big files
+  and the trash bin as suggestions. Checked here against a real Nextcloud
+  34: pairing over HTTPS, a reported duplicate byte-identical, an approved
+  delete in the trash bin and restored from it, a grant, and one person
+  not seeing another's account. Left for 0.21: folders only in the cloud,
+  camera uploads kept elsewhere, and folder review on Nextcloud.
 - 0.19.0, review a folder (decided under After polish). Right-click a
   folder in the tree, Review this folder (the Review button in the
   selection bar on phones, where a long press would fight the list's
@@ -701,7 +721,8 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   when an old PC backup of a few thousand files opens reviewed, the
   compare is right for files checked by hand, and keywords are found in
   each supported format.
-- **0.20, the FreeSize Nextcloud app, and cleanup in Nextcloud.** A real
+- **0.20, the FreeSize Nextcloud app, and cleanup in Nextcloud.** Under
+  Done, apart from what moved to 0.21 below. A real
   Nextcloud app (PHP, from Nextcloud's app store or installed by hand),
   so suggestions come from the real files: no downloading and no guessing.
   It pairs with the Hub like any device (the Hub's code in Nextcloud's
@@ -722,6 +743,17 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   app pairs, a duplicate it reports is byte-identical, a delete approved
   on the phone lands in Nextcloud's trash and comes back from there, and
   one user can't see another's files.
+- **0.21, Nextcloud, second half.** What 0.20 left: the app's folders
+  joined with the devices' reports for folders only in the cloud and on no
+  device; camera uploads the app sees that a device or another folder
+  already keeps, by fingerprint; folder review (0.19) on a Nextcloud
+  folder through the app, with Nextcloud's own thumbnails and the keyword
+  search run on the server (the Hub gets the path and the word only).
+  Publishing the app in Nextcloud's app store needs a certificate from
+  Nextcloud for the owner's account, so it waits with the other
+  publishing steps. Done when a folder only on Nextcloud shows as such, a
+  camera upload kept on the PC is suggested and the PC's copy checks out
+  byte for byte, and a Nextcloud folder opens reviewed on the Hub.
 
 ## Phase 3: DiskTree Hub (dashboard for all devices)
 

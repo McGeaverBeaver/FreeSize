@@ -143,6 +143,9 @@ pub struct Copies {
     pub suggestions: Vec<Suggestion>,
     /// Devices that reported their Nextcloud folders.
     pub reported: usize,
+    /// What the FreeSize Nextcloud app reports (0.20), with only the
+    /// accounts the person may see.
+    pub cloud: Vec<crate::cloud::CloudView>,
 }
 
 /// One thing to do, as a request the dashboard can send as it stands.
@@ -1177,6 +1180,15 @@ pub async fn copies(State(state): State<AppState>, user: User) -> ApiResult<Json
             let servers = unraid_servers(c, &devices)?;
             let mut copies = join(&syncs, &listings, &scans);
             copies.suggestions = suggestions(&copies, &syncs, &listings, &scans, &phones, &servers);
+            copies.cloud = crate::cloud::views(c, &devices, &user)?;
+            copies
+                .suggestions
+                .extend(crate::cloud::suggestions(&copies.cloud));
+            copies.suggestions.extend(crate::cloud::listing_suggestions(
+                &listings,
+                &copies.cloud,
+                crate::db::now(),
+            ));
             Ok(copies)
         })
         .await?;

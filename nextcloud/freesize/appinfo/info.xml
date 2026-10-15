@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<!--
+ - SPDX-License-Identifier: AGPL-3.0-or-later
+ -->
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	  xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+	<id>freesize</id>
+	<name>FreeSize</name>
+	<summary>Find what takes space in Nextcloud and clean it up, approved on your phone</summary>
+	<description><![CDATA[The FreeSize app pairs Nextcloud with a FreeSize Hub, like any other device.
+For the users the admin chooses, it tells the Hub what could be cleaned up,
+from the real files on the server: files nobody changed in a year, the
+biggest files, the same file twice (by a SHA-256 of its contents), and what
+the trash bin and old versions take.
+
+Nothing is ever deleted by itself. A delete asked for on the Hub has to be
+approved on the approver's phone, and the files go into Nextcloud's trash
+bin, where their owner can restore them.]]></description>
+	<version>0.20.0</version>
+	<licence>agpl</licence>
+	<author>FreeSize</author>
+	<namespace>FreeSize</namespace>
+	<category>files</category>
+	<category>tools</category>
+	<website>https://github.com/McGeaverBeaver/freesize</website>
+	<bugs>https://github.com/McGeaverBeaver/freesize/issues</bugs>
+	<repository>https://github.com/McGeaverBeaver/freesize</repository>
+	<dependencies>
+		<php min-version="8.1"/>
+		<lib>sodium</lib>
+		<nextcloud min-version="30" max-version="35"/>
+	</dependencies>
+	<background-jobs>
+		<job>OCA\FreeSize\BackgroundJob\Run</job>
+	</background-jobs>
+	<commands>
+		<command>OCA\FreeSize\Command\Pair</command>
+		<command>OCA\FreeSize\Command\Approver</command>
+		<command>OCA\FreeSize\Command\Users</command>
+		<command>OCA\FreeSize\Command\RunNow</command>
+		<command>OCA\FreeSize\Command\Status</command>
+		<command>OCA\FreeSize\Command\Report</command>
+		<command>OCA\FreeSize\Command\Unpair</command>
+	</commands>
+	<settings>
+		<admin>OCA\FreeSize\Settings\Admin</admin>
+		<admin-section>OCA\FreeSize\Settings\Section</admin-section>
+	</settings>
+</info>

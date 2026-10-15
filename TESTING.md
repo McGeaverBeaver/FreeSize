@@ -151,6 +151,25 @@ what was tried in the release's draft notes, and say what wasn't.
       the folder appears on Nextcloud; on Unraid, External storage adds a
       mounted share and it shows in Nextcloud's files.
 
+## Nextcloud app (0.20)
+
+- [ ] Unpacked into `custom_apps` and enabled, Administration settings →
+      FreeSize pairs with the Hub's link (over HTTPS with the Hub's own
+      authority), and "Nextcloud" shows on the dashboard.
+- [ ] Approver: the phone's fingerprint is accepted, the device page names
+      the phone; a request without an approver is refused.
+- [ ] With two users added (each with an email), the Hub's Nextcloud tab
+      lists both for an admin; signed in to the Hub as one of them, only
+      their own account and requests show.
+- [ ] A file copied to a second folder shows under Extra copies once the
+      app has fingerprinted it; `cmp` on the server says the two are the
+      same.
+- [ ] Move to the trash bin… on the extra copy: the phone asks, and once
+      allowed the file is in that user's Deleted files, not deleted for
+      good; Restore brings it back where it was.
+- [ ] With the Deleted files app off, the page warns and the request is
+      refused.
+
 ## Unraid plugin
 
 - [ ] Installs from the release's `freesize.plg` and updates from the

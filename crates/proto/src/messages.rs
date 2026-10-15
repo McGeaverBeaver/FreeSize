@@ -58,6 +58,8 @@ pub enum Platform {
     Windows,
     Macos,
     Linux,
+    /// The FreeSize Nextcloud app (0.20). Older Hubs read it as Other.
+    Nextcloud,
     #[default]
     #[serde(other)]
     Other,
@@ -85,6 +87,7 @@ impl Platform {
             Platform::Windows => "Windows",
             Platform::Macos => "macOS",
             Platform::Linux => "Linux",
+            Platform::Nextcloud => "Nextcloud",
             Platform::Other => "Other",
         }
     }
@@ -232,6 +235,9 @@ pub struct Report {
     /// What the device keeps of its Nextcloud folders (0.12).
     #[serde(default)]
     pub sync: Option<crate::sync::SyncReport>,
+    /// The FreeSize Nextcloud app's look at its users' files (0.20).
+    #[serde(default)]
+    pub cloud: Option<crate::cloud::CloudReport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

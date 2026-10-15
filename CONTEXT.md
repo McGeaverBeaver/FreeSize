@@ -246,3 +246,19 @@ _Avoid_: unbacked, at risk
 A request the Copies page proposes to free or protect space (free a stored
 copy, move a folder into a synced folder, add a share as external storage).
 _Avoid_: recommendation, action
+
+**Nextcloud app**:
+The FreeSize app inside Nextcloud (0.20), paired with the Hub as the device
+"Nextcloud": it reads the covered users' real files on the server and moves
+what is approved into their trash bin.
+_Avoid_: plugin, Nextcloud integration, connector
+
+**Extra copy**:
+A file whose contents are the same, byte for byte, as an older file's (by a
+SHA-256 of the whole file). The oldest of the set is kept; the rest are the
+extra copies.
+_Avoid_: duplicate (alone), similar file
+
+**Covered user**:
+A Nextcloud user the admin chose for the Nextcloud app to report on.
+_Avoid_: monitored user, tracked account

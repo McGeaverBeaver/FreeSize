@@ -94,16 +94,20 @@ async fn main() {
         format!("http://{idp_addr}/application/o/freesize/"),
     )
     .await;
+    // DEMO_TLS=auto serves HTTPS with the Hub's own authority, as a real
+    // Hub does by default.
+    let tls = std::env::var("DEMO_TLS").unwrap_or_else(|_| "off".into());
+    let scheme = if tls == "off" { "http" } else { "https" };
     let config = Config::parse_from([
         "freesize-hub",
         "--data",
         data.to_str().unwrap(),
         "--url",
-        &format!("http://{hub_addr}"),
+        &format!("{scheme}://{hub_addr}"),
         "--name",
         "Home Hub",
         "--tls",
-        "off",
+        &tls,
         "--oidc-issuer",
         &idp.issuer,
         "--oidc-client-id",
@@ -114,7 +118,7 @@ async fn main() {
     let state = AppState::open(config).unwrap();
     let listener = tokio::net::TcpListener::bind(&hub_addr).await.unwrap();
     tokio::spawn(freesize_hub::serve(listener, state.clone()));
-    let url = format!("http://{hub_addr}");
+    let url = format!("{scheme}://{hub_addr}");
     let seed_state = state.clone();
     tokio::task::spawn_blocking(move || seed(&url, &seed_state))
         .await
@@ -122,11 +126,111 @@ async fn main() {
     // Alerts for what was just seeded, rather than in a minute.
     freesize_hub::alerts::check_now(&state).await.unwrap();
     println!(
-        "FreeSize Hub demo on http://{hub_addr} (data in {})",
+        "FreeSize Hub demo on {scheme}://{hub_addr} (data in {})",
         data.display()
     );
     tokio::signal::ctrl_c().await.ok();
     let _ = std::fs::remove_dir_all(&data);
+}
+
+/// What the FreeSize Nextcloud app reports: two accounts, one of them
+/// the demo's admin (by email).
+fn cloud() -> freesize_proto::cloud::CloudReport {
+    use freesize_proto::cloud::{CloudFile, CloudFolder, CloudReport, CloudUser, DuplicateSet};
+    let now = freesize_hub::db::now();
+    let file = |path: &str, mb: u64, days: i64, fileid: i64| CloudFile {
+        path: path.into(),
+        size: mb * MB,
+        modified: now - days * 86_400,
+        fileid,
+    };
+    let folder = |path: &str, mb: u64, files: u64| CloudFolder {
+        path: path.into(),
+        size: mb * MB,
+        files,
+    };
+    let robert = CloudUser {
+        id: "robert".into(),
+        name: "Robert".into(),
+        email: "u-admin@example.lan".into(),
+        quota: (500 * GB) as i64,
+        used: 113_000 * MB,
+        files: 18_400,
+        trash: 6_100 * MB,
+        trash_files: 212,
+        versions: 2_300 * MB,
+        versions_files: 940,
+        folders: vec![
+            folder("Photos", 61_000, 12_000),
+            folder("Photos/2019", 18_000, 3_900),
+            folder("Photos/2024", 22_000, 4_100),
+            folder("Videos", 48_000, 160),
+            folder("Videos/Drone", 31_000, 70),
+            folder("Documents", 4_200, 2_100),
+        ],
+        biggest: vec![
+            file("Videos/wedding-raw.mov", 9_800, 900, 11),
+            file("Videos/Drone/DJI_0412.MP4", 3_900, 400, 12),
+            file("Videos/Drone/DJI_0398.MP4", 3_100, 410, 13),
+            file("Backup/Phone/DJI_0412.MP4", 3_900, 30, 14),
+            file("Photos/2024/Iceland.zip", 2_400, 200, 15),
+        ],
+        old: vec![
+            file("Videos/wedding-raw.mov", 9_800, 900, 11),
+            file("Videos/Drone/DJI_0412.MP4", 3_900, 400, 12),
+            file("Videos/Drone/DJI_0398.MP4", 3_100, 410, 13),
+        ],
+        old_files: 6_200,
+        old_bytes: 41_000 * MB,
+        duplicates: vec![
+            DuplicateSet {
+                size: 3_900 * MB,
+                sha256: "9f2c4e8a1b7d3f6e0a5c9b2d4f8e1a3c7b6d0e9f2a4c8b1d5e7f3a6c0b9d2e4f".into(),
+                files: vec![
+                    file("Videos/Drone/DJI_0412.MP4", 3_900, 400, 12),
+                    file("Backup/Phone/DJI_0412.MP4", 3_900, 30, 14),
+                ],
+            },
+            DuplicateSet {
+                size: 640 * MB,
+                sha256: "1a3c7b6d0e9f2a4c8b1d5e7f3a6c0b9d2e4f9f2c4e8a1b7d3f6e0a5c9b2d4f8e".into(),
+                files: vec![
+                    file("Documents/Taxes/2023-scans.pdf", 640, 700, 21),
+                    file("Downloads/2023-scans.pdf", 640, 690, 22),
+                    file("Desktop/2023-scans (1).pdf", 640, 680, 23),
+                ],
+            },
+        ],
+        hashed: 340,
+        to_hash: 410,
+    };
+    let anna = CloudUser {
+        id: "anna".into(),
+        name: "Anna".into(),
+        email: "anna@example.lan".into(),
+        quota: -3,
+        used: 21_000 * MB,
+        files: 5_100,
+        trash: 120 * MB,
+        trash_files: 14,
+        versions: 40 * MB,
+        versions_files: 33,
+        folders: vec![folder("Music", 14_000, 3_000), folder("School", 2_100, 900)],
+        biggest: vec![file("Music/live-set.flac", 900, 60, 31)],
+        old: vec![],
+        old_files: 0,
+        old_bytes: 0,
+        duplicates: vec![],
+        hashed: 12,
+        to_hash: 12,
+    };
+    CloudReport {
+        taken: now - 600,
+        server: "https://cloud.example.lan".into(),
+        version: "34.0.5".into(),
+        trash_bin: true,
+        users: vec![robert, anna],
+    }
 }
 
 fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo {
@@ -492,6 +596,19 @@ fn seed(url: &str, state: &AppState) {
             },
             vec![("/", 494, 306)],
         ),
+        (
+            {
+                let mut nc = info("Nextcloud", Platform::Nextcloud, "Nextcloud 34.0.5", false);
+                nc.app = format!("FreeSize Nextcloud app {}", env!("CARGO_PKG_VERSION"));
+                nc.rights = String::new();
+                nc
+            },
+            Report {
+                cloud: Some(cloud()),
+                ..Report::default()
+            },
+            vec![],
+        ),
     ];
 
     let group = 1;
@@ -651,15 +768,18 @@ fn approvals_and_requests(state: &AppState, agents: &[(DeviceInfo, freesize_agen
     let transport = UreqTransport::new();
     let find = |name: &str| agents.iter().find(|(i, _)| i.name.contains(name)).unwrap();
     let (phone_info, phone) = find("Pixel");
-    let (tower_info, tower) = find("Tower");
-    let mut info = tower_info.clone();
-    info.approver = Some(phone.fingerprint());
-    Client::new(tower, &transport)
-        .report(&Report {
-            info: Some(info),
-            ..Report::default()
-        })
-        .unwrap();
+    for name in ["Tower", "Nextcloud"] {
+        let (device_info, device) = find(name);
+        let mut info = device_info.clone();
+        info.approver = Some(phone.fingerprint());
+        Client::new(device, &transport)
+            .report(&Report {
+                info: Some(info),
+                ..Report::default()
+            })
+            .unwrap();
+    }
+    let (_, tower) = find("Tower");
     let now = freesize_hub::db::now();
     let requests = [
         (

@@ -295,6 +295,15 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE nextcloud ADD COLUMN dav_user TEXT;
     ",
+    // 10: what the FreeSize Nextcloud app reports about the users it
+    // covers (0.20).
+    "
+    CREATE TABLE cloud (
+        device_id TEXT PRIMARY KEY,
+        taken INTEGER NOT NULL,
+        report TEXT NOT NULL
+    );
+    ",
 ];
 
 impl Db {

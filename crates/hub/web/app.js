@@ -216,7 +216,7 @@ function signInPage() {
 
 const PAGES = {};
 
-const PLATFORMS = { android: "Android", windows: "Windows", macos: "macOS", linux: "Linux", other: "Other" };
+const PLATFORMS = { android: "Android", windows: "Windows", macos: "macOS", linux: "Linux", nextcloud: "Nextcloud", other: "Other" };
 
 function diskRow(disk) {
   const used = disk.total - disk.free;
@@ -461,7 +461,7 @@ function uploadDialog(device) {
 const DEVICE_TABS = [
   ["overview", "Overview"], ["unraid", "Unraid"], ["folders", "Folders"], ["files", "Largest files"],
   ["changes", "Changes"], ["apps", "Apps"], ["junk", "Junk"], ["quarantine", "Quarantine"],
-  ["requests", "Requests"], ["activity", "Activity"],
+  ["cloud", "Nextcloud"], ["requests", "Requests"], ["activity", "Activity"],
 ];
 
 PAGES.device = async (id, tab = "overview", ...rest) => {
@@ -471,7 +471,10 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
     && (key !== "requests" || !device.agentless)
     && (key !== "unraid" || device.unraid)
     && (key !== "junk" || device.junk_report)
-    && (key !== "quarantine" || device.quarantine));
+    && (key !== "quarantine" || device.quarantine)
+    && (key !== "cloud" || device.cloud)
+    // A Nextcloud with the app has no scans of its own.
+    && !(device.platform === "nextcloud" && ["folders", "files", "changes"].includes(key)));
   const link = (key) => `#/device/${encodeURIComponent(id)}/${key}`;
   const header = h("div", { class: "page-head" },
     h("div", { class: "grow" },
@@ -503,7 +506,7 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
   const views = {
     overview: deviceOverview, unraid: deviceUnraid, quarantine: deviceQuarantine,
     folders: deviceFolders, files: deviceFiles, changes: deviceChanges, apps: deviceApps, junk: deviceJunk,
-    requests: deviceRequests, activity: deviceActivity,
+    requests: deviceRequests, activity: deviceActivity, cloud: deviceCloud,
   };
   const view = await (views[tab] || deviceOverview)(device, ...rest);
   return [header, nav, view];
@@ -1001,6 +1004,95 @@ const JUNK_CATEGORIES = [
 
 /** What the device's junk cleaner found, by category. Rules are ticked
  * (or "Clean…" asked for one at a time) and asked for in one go. */
+/** The FreeSize Nextcloud app's accounts on a Nextcloud device (0.20). */
+function deviceCloud(device) {
+  return cloudView(device.cloud, device);
+}
+
+function cloudView(view, device) {
+  if (!view || !view.users.length) {
+    return h("div", { class: "card empty" }, h("h2", {}, "No accounts to show"),
+      h("p", {}, state.me.admin
+        ? "Choose which Nextcloud users the app covers in Nextcloud's admin settings, under FreeSize."
+        : "The app shows each person the Nextcloud account with their email address, and none has yours."));
+  }
+  const notes = [];
+  if (!view.trash_bin) notes.push(h("p", { class: "callout warn small" }, "Nextcloud's trash bin (the Deleted files app) is off, so the app deletes nothing: a delete couldn't be undone."));
+  else if (state.me.admin && !view.can_delete) notes.push(h("p", { class: "callout small" }, "Choose the approver in Nextcloud's admin settings, under FreeSize, to ask for deletes from here."));
+  return h("div", { class: "stack" }, notes,
+    h("p", { class: "dim small" }, `Reported ${ago(view.taken)} by the FreeSize app in Nextcloud ${view.version}${view.server ? ` at ${view.server}` : ""}. It reads the real files on the server: copies are the same byte for byte, by a SHA-256 of their contents.`),
+    view.users.map((user) => cloudAccount(view, device, user)));
+}
+
+function cloudAccount(view, device, user) {
+  const pick = view.can_delete && device && canDo(device, "delete")
+    ? deleteBar(device, user.id, `${user.name}'s files`, {
+      button: "Move to the trash bin…",
+      lines: (paths, total) => [`Move ${count(paths.length, "item", "items")} (${size(total)}) to ${user.name}'s trash bin in Nextcloud:`,
+        ...paths, `${user.name} can restore them from Deleted files until the trash bin is emptied.`],
+      // The warning when every copy of a file is ticked.
+      changed: () => { if (section === "copies" && drawn) draw(); },
+    })
+    : null;
+  const quota = user.quota >= 0 ? ` of ${size(user.quota)}` : "";
+  const extra = user.duplicates.reduce((n, d) => n + d.files.length - 1, 0);
+  const sections = [["copies", `Extra copies (${extra})`], ["biggest", "Biggest files"], ["old", `Not changed in a year (${user.old_files.toLocaleString()})`], ["folders", "Folders"]];
+  let section = extra ? "copies" : "biggest";
+  let drawn = false;
+  const body = h("div");
+  const nav = h("div", { class: "filters" });
+  const fileRow = (f, note) => h("tr", {},
+    pick ? h("td", { style: "width:28px" }, pick.box(f.path, f.size)) : null,
+    h("td", {}, f.path.slice(f.path.lastIndexOf("/") + 1), h("div", { class: "sub" }, f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "Top folder", note ? [" · ", note] : null)),
+    h("td", { class: "hide-narrow small" }, day(f.modified)),
+    h("td", { class: "num" }, size(f.size)));
+  const table = (rows, head = true) => h("div", { class: "table-wrap" }, h("table", {},
+    head ? h("thead", {}, h("tr", {}, pick ? h("th", {}, "") : null, h("th", {}, "File"), h("th", { class: "hide-narrow" }, "Changed"), h("th", { class: "num" }, "Size"))) : null,
+    h("tbody", {}, rows)));
+  const draw = () => {
+    nav.replaceChildren(...sections.map(([key, label]) =>
+      h("button", { class: `small ${section === key ? "on" : ""}`, onclick: () => { section = key; draw(); } }, label)));
+    let view;
+    if (section === "copies") {
+      view = user.duplicates.length ? [
+        pick ? h("div", { class: "row", style: "margin:8px 0" },
+          h("button", { class: "small", onclick: () => { pick.set(user.duplicates.flatMap((d) => d.files.slice(1).map((f) => [f.path, f.size])), true); draw(); } }, "Select all extra copies"),
+          h("span", { class: "dim small" }, "The oldest copy of each stays.")) : null,
+        user.duplicates.map((d) => {
+          const all = pick && d.files.every((f) => pick.has(f.path));
+          return h("div", { class: "dup-set" },
+            h("div", { class: "small" }, h("strong", {}, `${d.files.length} copies of ${size(d.size)}`), h("span", { class: "dim mono" }, ` · SHA-256 ${d.sha256.slice(0, 12)}…`)),
+            all ? h("p", { class: "callout warn small" }, "Every copy is ticked: nothing of this file would be left outside the trash bin.") : null,
+            table(d.files.map((f, i) => fileRow(f, i === 0 ? "oldest" : null)), false));
+        })]
+        : h("p", { class: "dim" }, user.to_hash ? "No two files are the same so far." : "No two files of 1 MB or more are the same size, so none can be the same file.");
+      if (user.hashed < user.to_hash) {
+        view = [h("p", { class: "dim small" }, `Still checking: ${user.hashed} of ${user.to_hash} files of the same size so far. The app reads a little more every five minutes.`), view];
+      }
+    } else if (section === "biggest") {
+      view = table(user.biggest.map((f) => fileRow(f)));
+    } else if (section === "old") {
+      view = user.old.length ? [h("p", { class: "dim small" }, `${count(user.old_files, "file", "files")} (${size(user.old_bytes)}) not changed in over a year; the biggest of them:`), table(user.old.map((f) => fileRow(f)))]
+        : h("p", { class: "dim" }, "Every file was changed in the past year.");
+    } else {
+      view = h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {}, user.folders.map((f) => h("tr", {},
+        pick ? h("td", { style: "width:28px" }, pick.box(f.path, f.size)) : null,
+        h("td", {}, f.path, h("div", { class: "sub" }, count(f.files, "file", "files"))),
+        h("td", { class: "num" }, size(f.size)))))));
+    }
+    body.replaceChildren(...[view].flat(Infinity).filter(Boolean));
+  };
+  draw();
+  drawn = true;
+  return h("div", { class: "card" },
+    h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, user.name),
+      h("span", { class: "dim small" }, `${user.id}${user.email ? ` · ${user.email}` : ""}`)),
+    h("p", { class: "small" }, h("strong", {}, size(user.used)), `${quota} in ${count(user.files, "file", "files")}`,
+      ` · trash bin ${size(user.trash)} (${count(user.trash_files, "file", "files")})`,
+      ` · old versions ${size(user.versions)} (${count(user.versions_files, "file", "files")})`),
+    nav, body, pick ? pick.bar : null);
+}
+
 function deviceJunk(device) {
   const report = device.junk_report;
   if (!report) return h("div", { class: "card empty" }, h("h2", {}, "No junk report"));
@@ -1432,7 +1524,8 @@ function keptOn(row) {
 PAGES.copies = async (section = "folders") => {
   const [copies, deviceList] = await Promise.all([api("/api/copies"), api("/api/devices").catch(() => [])]);
   const deviceById = new Map(deviceList.map((d) => [d.id, d]));
-  const KINDS = { online_only: "free space", camera_uploads: "camera", move_in: "move in", external_storage: "external storage" };
+  const KINDS = { online_only: "free space", camera_uploads: "camera", move_in: "move in", external_storage: "external storage",
+    cloud_duplicates: "same file", cloud_old: "old files", cloud_trash: "trash bin" };
   const askDialog = (s) => {
     const device = deviceById.get(s.device_id);
     if (!device) { toast("That device isn't in your groups", true); return; }
@@ -1474,14 +1567,18 @@ PAGES.copies = async (section = "folders") => {
 
   const suggestions = copies.suggestions || [];
   const tabs = h("nav", { class: "tabs" }, [["folders", "Folders"], ["files", "Big files"], ["risks", `Only one copy${copies.risks.length ? ` (${copies.risks.length})` : ""}`],
-    ["suggestions", `Suggestions${suggestions.length ? ` (${suggestions.length})` : ""}`]].map(([key, label]) =>
+    ["suggestions", `Suggestions${suggestions.length ? ` (${suggestions.length})` : ""}`],
+    ...(copies.cloud && copies.cloud.length ? [["cloud", "In Nextcloud"]] : [])].map(([key, label]) =>
     h("a", { href: `#/copies/${key}`, class: key === section ? "active" : "" }, label)));
 
   let view;
-  if (section === "suggestions") {
+  if (section === "cloud") {
+    view = h("div", { class: "stack" }, (copies.cloud || []).map((v) => [
+      copies.cloud.length > 1 ? h("h2", {}, v.device_name) : null, cloudView(v, deviceById.get(v.device_id))]));
+  } else if (section === "suggestions") {
     view = suggestions.length
       ? h("div", { class: "card" }, h("h2", {}, "What could be done"),
-          h("p", { class: "dim small" }, "Each is one request: the device shows it and asks before doing anything, and what's freed can be put back from the quarantine. Nothing here is done on its own."),
+          h("p", { class: "dim small" }, "Each is one request: the device shows it and asks before doing anything, and what's freed can be put back from the quarantine, or from Nextcloud's trash bin. Nothing here is done on its own."),
           suggestions.map((s) => {
             const device = deviceById.get(s.device_id);
             const kind = s.action ? s.action.type === "delete" ? "delete" : s.action.type === "online_only" ? "online_only" : s.action.type === "move_in" ? "move_in" : "mount" : null;
@@ -1489,9 +1586,9 @@ PAGES.copies = async (section = "folders") => {
             return h("div", { class: "alert-row" },
               h("span", { class: "badge accent" }, KINDS[s.kind] || s.kind),
               h("div", { class: "grow" }, h("strong", {}, s.title), h("div", { class: "dim small" }, s.detail),
-                s.pointer ? h("div", { class: "small", style: "margin-top:4px" }, "On the device: ", s.pointer) : null),
+                s.pointer ? h("div", { class: "small", style: "margin-top:4px" }, s.kind.startsWith("cloud") ? "" : "On the device: ", s.pointer) : null),
               h("span", { class: "num" }, size(s.bytes)),
-              can ? h("button", { class: "small primary", onclick: () => askDialog(s) }, "Ask the device")
+              can ? h("button", { class: "small primary", onclick: () => askDialog(s) }, s.kind.startsWith("cloud") ? "Move to the trash bin…" : "Ask the device")
                 : s.action && state.me.admin ? h("span", { class: "dim small" }, "needs an approver") : null);
           }))
       : h("div", { class: "card empty" }, h("h2", {}, "Nothing to suggest"),
@@ -1800,22 +1897,24 @@ function changeBar(fraction) {
 }
 
 /** A bar under a list for asking to delete the checked items. */
-function deleteBar(device, root, label) {
+function deleteBar(device, root, label, opts = {}) {
   const chosen = new Map();
   const summary = h("span", { class: "grow small" });
-  const button = h("button", { class: "danger small", disabled: true }, "Ask to delete…");
+  const button = h("button", { class: "danger small", disabled: true }, opts.button || "Ask to delete…");
   const bar = h("div", { class: "row callout pick-bar", style: "margin-top:12px;display:none" }, summary, button);
   const refresh = () => {
     const total = [...chosen.values()].reduce((a, b) => a + b, 0);
     summary.textContent = `${count(chosen.size, "item", "items")} chosen, ${size(total)}`;
     button.disabled = !chosen.size;
     bar.style.display = chosen.size ? "flex" : "none";
+    if (opts.changed) opts.changed();
   };
   button.addEventListener("click", () => {
     const paths = [...chosen.keys()];
     const total = [...chosen.values()].reduce((a, b) => a + b, 0);
-    requestDialog(device, { type: "delete", root, paths, bytes: total },
-      [`Delete ${count(paths.length, "item", "items")} (${size(total)}) in ${label}:`, ...paths.map((p) => `${root}/${p}`)]);
+    requestDialog(device, { type: "delete", root, paths, bytes: total }, opts.lines
+      ? opts.lines(paths, total)
+      : [`Delete ${count(paths.length, "item", "items")} (${size(total)}) in ${label}:`, ...paths.map((p) => `${root}/${p}`)]);
   });
   const boxes = new Map();
   const box = (path, bytes) => {

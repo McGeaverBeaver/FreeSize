@@ -270,3 +270,8 @@ body.plain main.notice { margin-top: 12vh; }
 .warn { color: var(--warn); }
 td .sub.danger { color: var(--danger); }
 .pick-bar { position: sticky; bottom: 12px; z-index: 5; box-shadow: 0 4px 18px rgba(0,0,0,.18); }
+.dup-set { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.dup-set table { table-layout: fixed; }
+.dup-set td:nth-last-child(2) { width: 140px; }
+.dup-set td:last-child { width: 110px; }
+.dup-set td:first-child:has(input) { width: 28px; }

@@ -179,7 +179,10 @@ fn check_action(
                     "paths must be below the scanned folder",
                 ));
             }
-            *bytes = if root == "/mnt/user" {
+            *bytes = if target.info.platform == freesize_proto::Platform::Nextcloud {
+                // The Nextcloud app: `root` names the user.
+                crate::cloud::delete_size(c, device, root, paths)?
+            } else if root == "/mnt/user" {
                 // On Unraid, only what the server itself listed as not in
                 // use (old appdata, ISOs, VM files) can be named by share.
                 findings_size(c, device, paths)?
@@ -720,7 +723,7 @@ pub async fn list(
             let mut stmt = c.prepare(&format!(
                 "SELECT m.id, m.device_id, d.name, m.kind, m.summary, m.admin_name, m.created,
                         m.expires, m.state, m.detail, m.approval, m.freed, m.failed, m.updated,
-                        d.group_id, m.signed
+                        d.group_id, m.signed, d.platform
                  FROM commands m JOIN devices d ON d.id = m.device_id
                  WHERE (?1 IS NULL OR m.device_id = ?1)
                  ORDER BY m.state IN {OPEN} DESC, m.created DESC LIMIT 300"
@@ -733,6 +736,7 @@ pub async fn list(
                     .and_then(|cmd| serde_json::to_value(cmd.action).ok());
                 Ok((
                     r.get::<_, i64>(14)?,
+                    r.get::<_, String>(16)? == "nextcloud",
                     CommandRow {
                         id: r.get(0)?,
                         device_id: r.get(1)?,
@@ -754,11 +758,41 @@ pub async fn list(
                     },
                 ))
             })?;
-            Ok(rows
+            let rows: Vec<(i64, bool, CommandRow)> = rows
                 .filter_map(Result::ok)
-                .filter(|(group, _)| visible.contains(group))
-                .map(|(_, row)| row)
-                .collect())
+                .filter(|(group, _, _)| visible.contains(group))
+                .collect();
+            // On a Nextcloud with the app, each person sees only the
+            // requests about their own account.
+            let mut reports = std::collections::HashMap::new();
+            let mut out = Vec::new();
+            for (_, cloud, row) in rows {
+                if cloud && !user.admin {
+                    let report = match reports.get(&row.device_id) {
+                        Some(report) => report,
+                        None => {
+                            let report = crate::cloud::report(c, &row.device_id)?;
+                            reports.entry(row.device_id.clone()).or_insert(report)
+                        }
+                    };
+                    let root = row
+                        .action
+                        .as_ref()
+                        .and_then(|a| a.get("root"))
+                        .and_then(|r| r.as_str())
+                        .unwrap_or_default();
+                    let mine = report.as_ref().is_some_and(|r| {
+                        r.users
+                            .iter()
+                            .any(|u| u.id == root && crate::cloud::sees(&user, u))
+                    });
+                    if !mine {
+                        continue;
+                    }
+                }
+                out.push(row);
+            }
+            Ok(out)
         })
         .await?;
     Ok(Json(rows))

@@ -1,0 +1,24 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+#freesize-admin { max-width: 760px; }
+#freesize-admin .freesize-card {
+	border: 1px solid var(--color-border);
+	border-radius: var(--border-radius-large, 12px);
+	padding: 16px 20px;
+	margin: 16px 0;
+	background: var(--color-main-background);
+}
+#freesize-admin h3 { margin-top: 0; font-weight: bold; }
+#freesize-admin label { display: block; margin: 12px 0; color: var(--color-text-maxcontrast); }
+#freesize-admin label > input, #freesize-admin label > textarea, #freesize-admin label > form { display: block; width: 100%; margin-top: 4px; color: var(--color-main-text); }
+#freesize-admin .freesize-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#freesize-admin .freesize-inline input { flex: 1; min-width: 200px; width: auto; display: inline-block; }
+#freesize-admin .freesize-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+#freesize-admin .freesize-users { list-style: none; padding: 0; }
+#freesize-admin .freesize-users li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--color-border); }
+#freesize-admin .freesize-hint { color: var(--color-text-maxcontrast); }
+#freesize-admin .freesize-message { padding: 10px 14px; border-radius: var(--border-radius, 6px); background: var(--color-success-hover, #e6f4ea); color: var(--color-main-text); margin: 12px 0; }
+#freesize-admin .freesize-error, #freesize-admin .freesize-warning { background: var(--color-warning-hover, #fff4e5); }
+#freesize-admin .freesize-warning { padding: 10px 14px; border-radius: var(--border-radius, 6px); }
+#freesize-admin .freesize-error-text { color: var(--color-error-text, var(--color-error)); }
+#freesize-admin .freesize-danger { color: var(--color-error-text, var(--color-error)); }
+#freesize-admin code { user-select: all; }
