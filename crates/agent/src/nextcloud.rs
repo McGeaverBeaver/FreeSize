@@ -179,8 +179,9 @@ pub fn parse_config(text: &str) -> Vec<Account> {
                 .find_map(|k| keys.get(*k))
                 .cloned()
                 .unwrap_or_default();
-            // folder number -> (local, remote, mode)
-            let mut folders: BTreeMap<(bool, u32), Folder> = BTreeMap::new();
+            // group, folder alias (a number, or a name in old configs)
+            // -> (local, remote, mode)
+            let mut folders: BTreeMap<(bool, String), Folder> = BTreeMap::new();
             for (key, value) in &keys {
                 let mut parts = key.split('\\');
                 let group = parts.next().unwrap_or_default();
@@ -189,13 +190,13 @@ pub fn parse_config(text: &str) -> Vec<Account> {
                     "FoldersWithPlaceholders" => true,
                     _ => continue,
                 };
-                let Some(number) = parts.next().and_then(|n| n.parse::<u32>().ok()) else {
+                let Some(alias) = parts.next().filter(|a| !a.is_empty()) else {
                     continue;
                 };
                 let Some(field) = parts.next() else {
                     continue;
                 };
-                let folder = folders.entry((old, number)).or_default();
+                let folder = folders.entry((old, alias.to_string())).or_default();
                 match field {
                     "localPath" => folder.local = local_path(value),
                     "targetPath" => folder.remote = value.to_string(),
@@ -878,6 +879,70 @@ optionalServerNotifications=true
 1\user=alice
 version=2
 "#;
+
+    /// The 35.0 Windows client: one classic folder under `Folders` and
+    /// the virtual-files ones under `FoldersWithPlaceholders`, lines
+    /// grouped by field rather than by folder, binary values quoted, and
+    /// an old folder named rather than numbered.
+    const WINDOWS_CONFIG: &str = r#"[General]
+clientVersion=35.0.0 (build 20261012)
+
+[Accounts]
+0\version=13
+version=13
+0\url=https://cloud.example.com
+0\dav_user=bob@example.com
+0\serverColor=@Variant(\0\0\0\x43\x1\xff\xff\0\0gg\x9e\x9e\0\0)
+0\webflow_user=bob@example.com
+0\authType=webflow
+0\Folders\5\localPath=C:/Program Files (x86)/Steam/userdata/
+0\FoldersWithPlaceholders\1\localPath=C:/Users/bob/Documents/
+0\FoldersWithPlaceholders\2\localPath=C:/Users/bob/Pictures/
+0\FoldersWithPlaceholders\6\localPath=D:/DEV/
+0\Folders\Nextcloud\localPath=C:/Users/bob/Nextcloud/
+0\Folders\5\journalPath=.sync_35cde03cff48.db
+0\Folders\5\targetPath=/Steam User Configs
+0\FoldersWithPlaceholders\1\targetPath=/Documents
+0\FoldersWithPlaceholders\2\targetPath=/Desktop Media/RIG2 Photos
+0\FoldersWithPlaceholders\6\targetPath=/DEV
+0\Folders\Nextcloud\targetPath=/
+0\Folders\5\paused=false
+0\Folders\5\virtualFilesMode=off
+0\FoldersWithPlaceholders\1\virtualFilesMode=wincfapi
+0\FoldersWithPlaceholders\2\virtualFilesMode=wincfapi
+0\FoldersWithPlaceholders\6\virtualFilesMode=wincfapi
+0\Folders\5\version=2
+0\FoldersWithPlaceholders\1\version=3
+0\Folders\5\navigationPaneClsid="@Variant(\0\0\0\x7f\0\0\0\x6QUuid\0=\x9a\xc1\xf7\xda\x13\x42\xfa\xbd\x96\x32g|\\\xdbZ)"
+0\FoldersWithPlaceholders\1\navigationPaneClsid=@Variant(\0\0\0\x7f\0\0\0\x6QUuid\0\xd2\x3\x81\x61\xeb\xcf\x41\xd5\x88\xfcw\xb7\x81\xbf\x98*)
+0\account_uuid=@Variant(\0\0\0\x7f\0\0\0\x6QUuid\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0)
+"#;
+
+    #[test]
+    fn reads_the_windows_clients_config() {
+        let accounts = parse_config(WINDOWS_CONFIG);
+        assert_eq!(accounts.len(), 1);
+        let bob = &accounts[0];
+        assert_eq!(bob.user, "bob@example.com");
+        let remotes: Vec<(&str, &str)> = bob
+            .folders
+            .iter()
+            .map(|f| (f.remote.as_str(), f.virtual_files.as_str()))
+            .collect();
+        assert_eq!(
+            remotes,
+            vec![
+                ("/Steam User Configs", "off"),
+                ("/", ""),
+                ("/Documents", "wincfapi"),
+                ("/Desktop Media/RIG2 Photos", "wincfapi"),
+                ("/DEV", "wincfapi"),
+            ]
+        );
+        let steam = bob.folders[0].local.to_string_lossy().into_owned();
+        assert!(steam.ends_with("userdata"), "{steam}");
+        assert!(!steam.ends_with(['/', '\\']), "{steam}");
+    }
 
     #[test]
     fn reads_the_desktop_config() {
