@@ -201,17 +201,10 @@ pub fn listing_suggestions(
     views: &[CloudView],
     now: i64,
 ) -> Vec<Suggestion> {
-    let same_server = |a: &str, b: &str| {
-        a.trim_end_matches('/')
-            .eq_ignore_ascii_case(b.trim_end_matches('/'))
-    };
     let mut out = Vec::new();
     for listing in listings {
         let account = &listing.account;
-        let covered = views.iter().any(|v| {
-            same_server(&v.server, &account.server) && v.users.iter().any(|u| u.id == account.user)
-        });
-        if covered {
+        if covered_by(views, &account.server, &account.user).is_some() {
             continue;
         }
         let whose = format!("{} on {}", account.user, account.server);
@@ -254,6 +247,51 @@ pub fn listing_suggestions(
     out
 }
 
+/// Whether two addresses name the same Nextcloud: the Hub signs in through
+/// the public address, the app reports what Nextcloud has for itself, which
+/// may differ in scheme or case. An app that reports no address matches any.
+fn same_server(a: &str, b: &str) -> bool {
+    let host = |s: &str| {
+        s.trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
+    };
+    let (a, b) = (host(a), host(b));
+    a.is_empty() || b.is_empty() || a == b
+}
+
+/// The covered user behind a Nextcloud account the Hub is signed in to:
+/// the account's name is the user's id, or their email.
+pub fn account_for<'a>(
+    server: &str,
+    users: &'a [CloudUser],
+    account_server: &str,
+    account_user: &str,
+) -> Option<&'a CloudUser> {
+    if !same_server(server, account_server) {
+        return None;
+    }
+    let account_user = account_user.trim();
+    users.iter().find(|u| {
+        u.id == account_user
+            || (!u.email.trim().is_empty() && u.email.trim().eq_ignore_ascii_case(account_user))
+    })
+}
+
+/// The app device and user id that cover a Hub-connected account, if the
+/// person may ask it for deletes.
+pub fn covered_by<'a>(
+    views: &'a [CloudView],
+    account_server: &str,
+    account_user: &str,
+) -> Option<(&'a CloudView, &'a CloudUser)> {
+    views.iter().find_map(|v| {
+        account_for(&v.server, &v.users, account_server, account_user).map(|u| (v, u))
+    })
+}
+
 fn pointer(view: &CloudView) -> String {
     if !view.trash_bin {
         "Turn on Nextcloud's trash bin (the Deleted files app) first.".into()
@@ -281,7 +319,9 @@ fn thousands(n: u64) -> String {
 
 /// The size of a delete the dashboard asks of a Nextcloud with the app:
 /// every path must be a file or folder its newest report listed for that
-/// user. The app checks each one again before anyone is asked.
+/// user, or one the Hub's own listing of that user's account holds (the
+/// Copies page's big files). The app checks each one again before anyone
+/// is asked.
 pub fn delete_size(c: &Connection, device: &str, user: &str, paths: &[String]) -> ApiResult<u64> {
     let report = report(c, device)?
         .ok_or_else(|| ApiError::bad_request("the Nextcloud app hasn't reported yet"))?;
@@ -294,6 +334,23 @@ pub fn delete_size(c: &Connection, device: &str, user: &str, paths: &[String]) -
             "Nextcloud's trash bin is off, so the app deletes nothing",
         ));
     }
+    // The Hub's listings of this user's account, by WebDAV.
+    let listed_ids: Vec<i64> = crate::nextcloud::accounts(c)?
+        .iter()
+        .filter(|a| {
+            account_for(
+                &report.server,
+                std::slice::from_ref(account),
+                &a.server,
+                &a.user,
+            )
+            .is_some()
+        })
+        .map(|a| a.id)
+        .collect();
+    let mut from_listing = c.prepare(
+        "SELECT size FROM nextcloud_files WHERE account_id = ?1 AND path = ?2 AND size >= 0",
+    )?;
     let mut seen = HashSet::new();
     let mut total = 0;
     for path in paths {
@@ -310,6 +367,16 @@ pub fn delete_size(c: &Connection, device: &str, user: &str, paths: &[String]) -
                     .iter()
                     .find(|f| &f.path == path)
                     .map(|f| f.size)
+            })
+            .or_else(|| {
+                listed_ids.iter().find_map(|id| {
+                    from_listing
+                        .query_row((id, format!("/{path}")), |r| r.get::<_, i64>(0))
+                        .optional()
+                        .ok()
+                        .flatten()
+                        .map(|s| s as u64)
+                })
             })
             .ok_or_else(|| {
                 ApiError::bad_request(format!(
@@ -404,6 +471,35 @@ mod tests {
             1_800_000_000,
         );
         assert!(found.is_empty());
+    }
+
+    #[test]
+    fn the_account_names_the_user_or_their_email() {
+        let users = vec![
+            freesize_proto::cloud::CloudUser {
+                id: "bob".into(),
+                email: "Bob@Example.lan".into(),
+                ..Default::default()
+            },
+            freesize_proto::cloud::CloudUser {
+                id: "carol".into(),
+                ..Default::default()
+            },
+        ];
+        let found = |server: &str, user: &str| {
+            super::account_for("https://cloud.example.lan", &users, server, user)
+                .map(|u| u.id.as_str())
+        };
+        assert_eq!(found("https://cloud.example.lan", "bob"), Some("bob"));
+        assert_eq!(
+            found("http://CLOUD.example.lan/", "bob@example.lan"),
+            Some("bob")
+        );
+        assert_eq!(found("", "carol"), Some("carol"));
+        assert_eq!(found("https://other.example.lan", "bob"), None);
+        assert_eq!(found("https://cloud.example.lan", "dave"), None);
+        // A user without an email isn't matched by an empty name.
+        assert_eq!(found("https://cloud.example.lan", ""), None);
     }
 
     #[test]

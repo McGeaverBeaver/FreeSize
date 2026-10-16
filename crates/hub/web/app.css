@@ -178,6 +178,16 @@ th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacin
 th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 td.num, th.num { text-align: right; white-space: nowrap; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--text); }
+th.sortable.on { color: var(--accent); }
+th.sortable.on[aria-sort=descending]::after { content: " \25BE"; }
+th.sortable.on[aria-sort=ascending]::after { content: " \25B4"; }
+td.pick, th.pick { width: 28px; padding-right: 0; }
+/* Wide tables scroll sideways on a phone rather than squeezing every cell. */
+table.wide { min-width: 760px; }
+td.places { min-width: 170px; }
+input.find { width: 220px; max-width: 100%; padding: 6px 10px; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface-2); }
 td .sub { font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }

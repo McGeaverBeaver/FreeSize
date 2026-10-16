@@ -16,7 +16,7 @@ the trash bin and old versions take.
 Nothing is ever deleted by itself. A delete asked for on the Hub has to be
 approved on the approver's phone, and the files go into Nextcloud's trash
 bin, where their owner can restore them.]]></description>
-	<version>0.20.0</version>
+	<version>0.20.1</version>
 	<licence>agpl</licence>
 	<author>FreeSize</author>
 	<namespace>FreeSize</namespace>

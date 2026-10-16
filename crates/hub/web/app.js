@@ -1515,11 +1515,94 @@ async function disconnectNextcloud(account) {
   }
 }
 
-function keptOn(row) {
-  const names = row.devices.filter((d) => d.on_disk > 0 || d.on_disk === true).map((d) => d.name);
-  if (!names.length) return h("span", { class: "dim" }, "no device");
-  return names.join(", ");
+/** Sort choices per table, kept while the dashboard is open. */
+const SORTS = {};
+
+/**
+ * A table whose column headers sort it. `columns` are `{key, label, class,
+ * by}`: `by(row)` gives what to sort by (a header without `by` doesn't
+ * sort). Returns the table and `draw(rows)`, which the caller runs with
+ * the rows to show, filtered as it likes.
+ */
+function sortedTable(name, columns, drawRow, initial) {
+  const sort = SORTS[name] || (SORTS[name] = { ...initial });
+  const tbody = h("tbody");
+  let rows = [];
+  const heads = columns.map((c) => {
+    const th = h("th", { class: c.class || "" }, c.label);
+    if (c.by) {
+      th.classList.add("sortable");
+      th.title = "Sort by this column";
+      th.onclick = () => {
+        if (sort.key === c.key) sort.desc = !sort.desc;
+        else { sort.key = c.key; sort.desc = c.descFirst !== false; }
+        draw(rows);
+      };
+    }
+    return th;
+  });
+  const draw = (list) => {
+    rows = list;
+    const column = columns.find((c) => c.key === sort.key && c.by) || columns.find((c) => c.by);
+    const shown = [...rows].sort((a, b) => {
+      const [x, y] = [column.by(a), column.by(b)];
+      let order = 0;
+      if (typeof x === "string" || typeof y === "string") order = String(x ?? "").localeCompare(String(y ?? ""), undefined, { numeric: true, sensitivity: "base" });
+      else order = (x ?? -Infinity) - (y ?? -Infinity);
+      return sort.desc ? -order : order;
+    });
+    heads.forEach((th, i) => {
+      th.classList.toggle("on", columns[i].key === column.key);
+      th.setAttribute("aria-sort", columns[i].key === column.key ? (sort.desc ? "descending" : "ascending") : "none");
+    });
+    tbody.replaceChildren(...shown.map(drawRow));
+  };
+  return { table: h("table", { class: "wide" }, h("thead", {}, h("tr", {}, heads)), tbody), draw };
 }
+
+/** A link that opens a file or folder in Nextcloud's own Files app. */
+function openInNextcloud(server, fileid) {
+  if (!server || !fileid) return null;
+  return h("a", { class: "button small", href: `${server.replace(/\/+$/, "")}/index.php/f/${fileid}`, target: "_blank", rel: "noopener",
+    title: "Open in Nextcloud, in a new tab" }, "Open");
+}
+
+/** "the server and RIG3", "RIG3 only", "nowhere FreeSize knows of". */
+function placesText(onServer, names) {
+  const parts = [];
+  if (onServer) parts.push("the server");
+  parts.push(...names);
+  if (!parts.length) return "nowhere FreeSize knows of";
+  if (parts.length === 1) return `${parts[0]} only`;
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/** The "Copies" cell: how many places keep it, and which. */
+function placesCell(onServer, names) {
+  const n = (onServer ? 1 : 0) + names.length;
+  return h("td", { class: "places" }, h("strong", { class: n <= 1 ? "warn" : "" }, n === 1 ? "1 copy" : `${n} copies`),
+    h("div", { class: "sub" }, placesText(onServer, names)));
+}
+
+/** A search box and filter buttons above a table; `apply` is run on any change. */
+function tableFilters(choices, apply) {
+  const search = h("input", { type: "search", placeholder: "Find by name", "aria-label": "Find by name", class: "find" });
+  let picked = choices[0].key;
+  const buttons = h("div", { class: "filters", style: "margin-bottom:0" });
+  const draw = () => buttons.replaceChildren(...choices.map((c) => h("button", { class: `small ${picked === c.key ? "on" : ""}`, title: c.title || "",
+    onclick: () => { picked = c.key; draw(); apply(); } }, c.label)));
+  search.oninput = apply;
+  draw();
+  const keep = (row) => {
+    const choice = choices.find((c) => c.key === picked);
+    if (choice.test && !choice.test(row)) return false;
+    const text = search.value.trim().toLowerCase();
+    return !text || row.path.toLowerCase().includes(text);
+  };
+  return { bar: h("div", { class: "row", style: "margin-bottom:10px;gap:10px;flex-wrap:wrap" }, search, buttons), keep };
+}
+
+const YEAR = 365 * 86400;
 
 PAGES.copies = async (section = "folders") => {
   const [copies, deviceList] = await Promise.all([api("/api/copies"), api("/api/devices").catch(() => [])]);
@@ -1538,8 +1621,8 @@ PAGES.copies = async (section = "folders") => {
     const ask = (keep) => requestDialog(device, { type: "online_only", root: d.local, paths: [], bytes: keep ? d.size - d.on_disk : d.on_disk, keep },
       [keep ? `Keep ${f.path} on ${d.name} (${size(d.size - d.on_disk)} to fetch)` : `Free ${size(d.on_disk)} on ${d.name}: ${f.path}`,
         keep ? "The Nextcloud client downloads the files on its next run." : "The files stay listed on the device and download when opened; the Nextcloud client frees them on its next run."]);
-    return [" ", d.on_disk ? h("button", { class: "small", onclick: () => ask(false) }, "Free") : null,
-      d.on_disk_files < d.files ? h("button", { class: "small", onclick: () => ask(true) }, "Keep here") : null];
+    return [" ", d.on_disk ? h("button", { class: "small", title: `Make ${f.path} online-only on ${d.name}: frees ${size(d.on_disk)} there; the files stay in Nextcloud`, onclick: () => ask(false) }, `Free on ${d.name}`) : null,
+      d.on_disk_files < d.files ? [" ", h("button", { class: "small", title: `Download all of ${f.path} to ${d.name} (${size(d.size - d.on_disk)} to fetch)`, onclick: () => ask(true) }, `Keep on ${d.name}`)] : null];
   };
   const accounts = h("div", { class: "card" },
     h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Nextcloud accounts"),
@@ -1596,17 +1679,68 @@ PAGES.copies = async (section = "folders") => {
             ? "Suggestions come from what the devices and the server report: a folder kept whole in three places on a nearly full disk, camera files a phone still holds after they uploaded, big folders outside any synced folder, and shares an Unraid Nextcloud container could offer as external storage."
             : "Connect a Nextcloud account for the Hub to know what the server holds."));
   } else if (section === "files") {
-    view = copies.files.length
-      ? h("div", { class: "card table-wrap" }, h("h2", {}, "Files of 100 MB and over"),
-          h("p", { class: "dim small" }, "The devices report these one by one; the server's file id is the same on every client."),
-          h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "File"), h("th", { class: "num" }, "Size"), h("th", {}, "On the server"), h("th", {}, "Kept on"))),
-            h("tbody", {}, copies.files.map((f) => h("tr", {},
-              h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`, f.fileid ? ` · id ${f.fileid}` : "", f.checksums ? ` · ${f.checksums}` : "")),
-              h("td", { class: "num" }, size(f.size)),
-              h("td", {}, f.on_server === null ? h("span", { class: "dim" }, "not listed") : f.on_server ? "yes" : h("span", { class: "warn" }, "no")),
-              h("td", {}, h("strong", {}, count(f.kept_on, "device", "devices")), h("div", { class: "sub" },
-                f.devices.map((d) => `${d.name}: ${d.on_disk ? d.local : "online-only"}`).join(" · "))))))))
-      : h("div", { class: "card empty" }, h("h2", {}, "No big files reported"), h("p", {}, "Devices list files of 100 MB and over in their synced folders."));
+    if (copies.files.length) {
+      // Deletes go to the FreeSize Nextcloud app covering the account,
+      // one request per account.
+      const chosen = new Map();
+      const summary = h("span", { class: "grow small" });
+      const ask = h("button", { class: "danger small", disabled: true }, "Move to the trash bin…");
+      const bar = h("div", { class: "row callout pick-bar", style: "margin-top:12px;display:none" }, summary, ask);
+      const refresh = () => {
+        const total = [...chosen.values()].reduce((a, f) => a + f.size, 0);
+        summary.textContent = `${count(chosen.size, "file", "files")} chosen, ${size(total)}`;
+        ask.disabled = !chosen.size;
+        bar.style.display = chosen.size ? "flex" : "none";
+      };
+      ask.onclick = () => {
+        const files = [...chosen.values()];
+        const targets = new Set(files.map((f) => `${f.cloud.device_id}/${f.cloud.user}`));
+        if (targets.size > 1) { toast("Choose files of one Nextcloud account at a time.", true); return; }
+        const device = deviceById.get(files[0].cloud.device_id);
+        if (!device) { toast("That Nextcloud isn't in your groups", true); return; }
+        const total = files.reduce((a, f) => a + f.size, 0);
+        requestDialog(device, { type: "delete", root: files[0].cloud.user, paths: files.map((f) => f.path.replace(/^\/+/, "")), bytes: total },
+          [`Move ${count(files.length, "file", "files")} (${size(total)}) to ${files[0].user}'s trash bin in Nextcloud:`, ...files.map((f) => f.path),
+            "They can be restored from Deleted files in Nextcloud until the trash bin is emptied."]);
+      };
+      const deletable = copies.files.some((f) => f.cloud);
+      const filters = tableFilters([
+        { key: "all", label: "All" },
+        { key: "one", label: "One copy", title: "The server only, or one device only", test: (f) => (f.on_server ? 1 : 0) + f.kept_on <= 1 },
+        { key: "server", label: "Server only", title: "No device keeps a copy", test: (f) => f.on_server && f.kept_on === 0 },
+        { key: "devices", label: "Not on the server", test: (f) => f.on_server === false },
+        { key: "old", label: "Not changed in a year", title: "By the date the server has", test: (f) => f.modified && f.modified < Date.now() / 1000 - YEAR },
+        ...(deletable ? [{ key: "deletable", label: "Can be moved to the trash bin", test: (f) => Boolean(f.cloud) }] : []),
+      ], () => draw());
+      const { table, draw: drawTable } = sortedTable("copies-files", [
+        ...(deletable ? [{ key: "pick", label: "", class: "pick" }] : []),
+        { key: "path", label: "File", by: (f) => f.path, descFirst: false },
+        { key: "size", label: "Size", class: "num", by: (f) => f.size },
+        { key: "copies", label: "Copies", by: (f) => (f.on_server ? 1 : 0) + f.kept_on, descFirst: false },
+        { key: "changed", label: "Last changed", class: "hide-narrow", by: (f) => f.modified || 0 },
+        { key: "open", label: "", class: "num" },
+      ], (f) => {
+        const kept = f.devices.filter((d) => d.on_disk).map((d) => d.name);
+        return h("tr", {},
+          deletable ? h("td", { class: "pick" }, f.cloud ? h("input", { type: "checkbox", "aria-label": `Choose ${f.path}`,
+            checked: chosen.has(f.path), onchange: (e) => { if (e.target.checked) chosen.set(f.path, f); else chosen.delete(f.path); refresh(); } }) : null) : null,
+          h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`, f.fileid ? ` · id ${f.fileid}` : "", f.checksums ? ` · ${f.checksums}` : "")),
+          h("td", { class: "num" }, size(f.size)),
+          f.on_server === null
+            ? h("td", {}, h("strong", {}, count(f.kept_on, "device", "devices")), h("div", { class: "sub" }, "the server isn't listed"))
+            : placesCell(f.on_server, kept),
+          h("td", { class: "hide-narrow small" }, f.modified ? day(f.modified) : h("span", { class: "dim" }, f.on_server ? "–" : "not on the server")),
+          h("td", { class: "num" }, openInNextcloud(f.server, f.fileid)));
+      }, { key: "size", desc: true });
+      const draw = () => drawTable(copies.files.filter(filters.keep));
+      draw();
+      view = h("div", { class: "card" }, h("h2", {}, "Files of 100 MB and over"),
+        h("p", { class: "dim small" }, "What the devices report from their synced folders, matched with the server's listing. Copies counts the server and each device that stores the file; a device with it online-only doesn't count. Last changed is the date Nextcloud has; it doesn't record when a file was last opened.",
+          deletable ? " Ticked files go to that user's trash bin in Nextcloud once the approver allows it." : ""),
+        filters.bar, h("div", { class: "table-wrap" }, table), bar);
+    } else {
+      view = h("div", { class: "card empty" }, h("h2", {}, "No big files reported"), h("p", {}, "Devices list files of 100 MB and over in their synced folders."));
+    }
   } else if (section === "risks") {
     view = copies.risks.length
       ? h("div", { class: "card" }, h("h2", {}, "What's kept in one place only"),
@@ -1617,19 +1751,47 @@ PAGES.copies = async (section = "folders") => {
             h("span", { class: "num" }, size(r.size)))))
       : h("div", { class: "card empty" }, h("h2", {}, "Nothing is kept in one place only"),
           h("p", {}, copies.accounts.length ? "Every synced folder and big file the devices report is on the server or on another device too." : "Connect a Nextcloud account for the Hub to know what the server holds."));
+  } else if (copies.folders.length) {
+    const filters = tableFilters([
+      { key: "all", label: "All" },
+      { key: "one", label: "One copy", title: "The server only, or one device only", test: (f) => (f.on_server ? 1 : 0) + f.kept_on <= 1 },
+      { key: "server", label: "Server only", title: "No device keeps any of it", test: (f) => f.on_server && f.kept_on === 0 },
+      { key: "devices", label: "Not on the server", title: "The server isn't listed, or doesn't have the folder", test: (f) => !f.on_server && f.kept_on > 0 },
+      { key: "part", label: "Partly on a device", title: "A device keeps some of the files, the rest are online-only", test: (f) => f.devices.some((d) => d.on_disk > 0 && !d.complete) },
+      { key: "old", label: "Not changed in a year", title: "By the date the server has", test: (f) => f.modified && f.modified < Date.now() / 1000 - YEAR },
+    ], () => draw());
+    // What a device keeps of the folder, and the buttons to change that.
+    const deviceLine = (f, d) => {
+      const what = !d.on_disk ? "keeps none of it (online-only)" : d.complete ? "keeps all of it" : `keeps ${size(d.on_disk)} of it`;
+      return h("div", { class: "sub", style: "margin-top:2px" }, h("strong", {}, d.name), ` ${what}`, pinButtons(f, d));
+    };
+    const { table, draw: drawTable } = sortedTable("copies-folders", [
+      { key: "path", label: "Folder", by: (f) => f.path, descFirst: false },
+      { key: "server", label: "On the server", class: "num", by: (f) => f.on_server ?? -1 },
+      { key: "copies", label: "Copies", by: (f) => (f.on_server ? 1 : 0) + f.kept_on, descFirst: false },
+      { key: "devices", label: "On devices", by: (f) => f.stored },
+      { key: "changed", label: "Last changed", class: "hide-narrow", by: (f) => f.modified || 0 },
+      { key: "open", label: "", class: "num" },
+    ], (f) => {
+      const kept = f.devices.filter((d) => d.on_disk > 0).map((d) => d.name);
+      return h("tr", {},
+        h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`)),
+        h("td", { class: "num" }, f.on_server === null ? h("span", { class: "dim" }, "not listed") : size(f.on_server)),
+        placesCell(Boolean(f.on_server), kept),
+        h("td", {}, h("strong", {}, f.stored ? size(f.stored) : "nothing"), f.devices.map((d) => deviceLine(f, d))),
+        h("td", { class: "hide-narrow small" }, f.modified ? day(f.modified) : h("span", { class: "dim" }, "–")),
+        h("td", { class: "num" }, openInNextcloud(f.server, f.fileid)));
+    }, { key: "devices", desc: true });
+    const draw = () => drawTable(copies.folders.filter(filters.keep));
+    draw();
+    const canFree = copies.folders.some((f) => f.devices.some((d) => { const device = deviceById.get(d.id); return device && canDo(device, "online_only"); }));
+    view = h("div", { class: "card" }, h("h2", {}, "Where each folder is kept"),
+      h("p", { class: "dim small" }, "Each synced folder two levels down. Copies counts the server and each device that stores any of it; a device where it's all online-only doesn't count. Last changed is the date Nextcloud has for the folder.",
+        canFree ? " \"Free on …\" makes the folder online-only on that device: it stays in Nextcloud and each file downloads when it's opened. \"Keep on …\" downloads the whole folder to that device; a device that keeps all of it already only gets Free." : ""),
+      filters.bar, h("div", { class: "table-wrap" }, table));
   } else {
-    view = copies.folders.length
-      ? h("div", { class: "card table-wrap" }, h("h2", {}, "Kept on how many devices"),
-          h("p", { class: "dim small" }, "Each synced folder two levels down, with what the server holds and what each device stores of it. Online-only files count on the server, not on the device."),
-          h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Folder"), h("th", { class: "num" }, "On the server"), h("th", {}, "Kept on"), h("th", { class: "num" }, "Stored, all told"))),
-            h("tbody", {}, copies.folders.map((f) => h("tr", {},
-              h("td", {}, f.path, h("div", { class: "sub" }, `${f.user} on ${f.server}`)),
-              h("td", { class: "num" }, f.on_server === null ? h("span", { class: "dim" }, "not listed") : size(f.on_server)),
-              h("td", {}, h("strong", {}, count(f.kept_on, "device", "devices")), h("div", { class: "sub" },
-                f.devices.map((d, i) => [i ? " · " : null, `${d.name}: ${size(d.on_disk)}${d.complete ? "" : d.on_disk ? " (part)" : " (online-only)"}`, pinButtons(f, d)]))),
-              h("td", { class: "num" }, size(f.stored), f.on_server && f.kept_on ? h("div", { class: "sub" }, `${f.kept_on + 1}× with the server`) : null))))))
-      : h("div", { class: "card empty" }, h("h2", {}, "No synced folders reported yet"),
-          h("p", {}, "Devices with the Nextcloud client report their sync folders in their next hourly report; the app does so when it starts."));
+    view = h("div", { class: "card empty" }, h("h2", {}, "No synced folders reported yet"),
+      h("p", {}, "Devices with the Nextcloud client report their sync folders in their next hourly report; the app does so when it starts."));
   }
   return [h("div", { class: "page-head" }, h("div", { class: "grow" }, h("h1", {}, "Copies"),
       h("p", { class: "dim" }, "Where each synced folder is kept: on Nextcloud, and on which devices."))),

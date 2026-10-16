@@ -1093,12 +1093,23 @@ Nextcloud, and **Disconnect** asks Nextcloud to drop the app password.
 
 With both sides in, the page shows:
 
-- **Folders**: each synced folder with what the server holds, which
-  devices keep it stored (with "part" or "online-only" when a device has
-  only some of it), and how much is stored across the devices all told.
+- **Folders**: each synced folder with what the server holds, how many
+  copies there are and where ("3 copies: the server, Gaming PC and
+  MacBook Air"; a lone copy shows in orange), and what each device keeps
+  of it (all of it, some of it, or none because it's online-only), with
+  how much is stored across the devices all told.
 - **Big files**: each file of 100 MB and over with the server's file id
-  and checksums, whether it is on the server, and the devices that store
-  it, with the path on each.
+  and checksums, how many copies there are and where, and the devices
+  that store it.
+
+On both tabs the column headers sort when clicked, the search box and the
+filters narrow the rows (one copy, server only, not on the server, not
+changed in a year…), **Last changed** is the date Nextcloud has for it
+(Nextcloud doesn't record when a file was last opened), and **Open**
+opens it in Nextcloud's own Files app. When the
+[FreeSize Nextcloud app](#cleaning-up-nextcloud-the-freesize-nextcloud-app)
+covers the account, Big files has tick boxes and **Move to the trash
+bin…**, which goes through the app like the In Nextcloud tab.
 - **Only one copy**: big files and folders a device holds that aren't on
   Nextcloud yet and no other device keeps; top folders only the server
   holds, with nobody keeping a stored copy; and the biggest scanned folders
@@ -1115,7 +1126,9 @@ With both sides in, the page shows:
     the folder online-only: the files stay listed and download when
     opened, and the Nextcloud client frees them on its next run (it only
     ever frees what it has uploaded). The Folders tab has the same per
-    device as **Free** and **Keep here**. On macOS and Linux the page
+    device as **Free on …** (make the folder online-only there) and
+    **Keep on …** (download all of it there; a device that already keeps
+    all of it only gets Free). On macOS and Linux the page
     points to the client's own "Free up local space" instead, and on
     Windows without virtual files, to turning them on.
   - **Camera**: photos and videos under a phone's `DCIM` that the

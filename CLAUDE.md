@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.20.0)
+## Where things stand (0.20.1)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -199,7 +199,11 @@ compiling inside Docker.
   email; admins all), the device's Nextcloud tab and Copies' In
   Nextcloud. Bump the app's version with `Cargo.toml` (a test checks).
   0.21 has what it left (folders only in the cloud, camera uploads,
-  review on Nextcloud).
+  review on Nextcloud). 0.20.1: the Copies page's Folders and Big files
+  tabs made plain (copies counted with the server, sortable columns,
+  filters, Last changed, Open in Nextcloud, deletes through the app from
+  Big files; `cloud::account_for` matches a connected account to a
+  covered user).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

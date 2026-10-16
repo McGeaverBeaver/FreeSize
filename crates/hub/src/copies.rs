@@ -189,6 +189,10 @@ pub struct FolderCopies {
     pub path: String,
     /// What the server holds there; none when the Hub hasn't listed it.
     pub on_server: Option<u64>,
+    /// Nextcloud's id for the folder, which opens it there.
+    pub fileid: Option<i64>,
+    /// When the server last saw a change in it (seconds since 1970).
+    pub modified: Option<i64>,
     /// The best-known size: the server's, else the most a device knows.
     pub size: u64,
     pub devices: Vec<DeviceCopy>,
@@ -220,10 +224,23 @@ pub struct FileCopies {
     pub size: u64,
     pub fileid: Option<i64>,
     pub checksums: String,
+    /// When the server last saw it change (seconds since 1970).
+    pub modified: Option<i64>,
+    /// The FreeSize Nextcloud app that can move it to the trash bin, when
+    /// one covers the account and the person may ask it.
+    pub cloud: Option<CloudTarget>,
     /// None when the Hub hasn't listed the account.
     pub on_server: Option<bool>,
     pub devices: Vec<FileCopy>,
     pub kept_on: usize,
+}
+
+/// The app device and the user id a delete names.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct CloudTarget {
+    pub device_id: String,
+    pub device_name: String,
+    pub user: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -410,10 +427,8 @@ pub fn join(devices: &[DeviceSync], listings: &[ServerListing], scans: &[ScanTop
     }
 
     for ((key, path), mut side) in folders {
-        let on_server = server_entries
-            .get(&key)
-            .and_then(|e| e.get(path.as_str()))
-            .map(|e| e.size);
+        let entry = server_entries.get(&key).and_then(|e| e.get(path.as_str()));
+        let on_server = entry.map(|e| e.size);
         side.devices.sort_by(|a, b| a.name.cmp(&b.name));
         let (server, user) = name_of(&key);
         out.folders.push(FolderCopies {
@@ -421,6 +436,8 @@ pub fn join(devices: &[DeviceSync], listings: &[ServerListing], scans: &[ScanTop
             user,
             size: on_server.unwrap_or(side.size),
             on_server,
+            fileid: entry.map(|e| e.fileid).filter(|&id| id > 0),
+            modified: entry.map(|e| e.modified).filter(|&t| t > 0),
             kept_on: side.devices.iter().filter(|d| d.on_disk > 0).count(),
             stored: side.devices.iter().map(|d| d.on_disk).sum(),
             devices: side.devices,
@@ -442,6 +459,8 @@ pub fn join(devices: &[DeviceSync], listings: &[ServerListing], scans: &[ScanTop
             size: entry.map_or(side.size, |e| e.size),
             fileid: entry.map(|e| e.fileid).filter(|&id| id > 0),
             checksums: entry.map(|e| e.checksums.join(" ")).unwrap_or_default(),
+            modified: entry.map(|e| e.modified).filter(|&t| t > 0),
+            cloud: None,
             on_server: listed.map(|_| entry.is_some()),
             kept_on: side.devices.iter().filter(|d| d.on_disk).count(),
             devices: side.devices,
@@ -1181,6 +1200,21 @@ pub async fn copies(State(state): State<AppState>, user: User) -> ApiResult<Json
             let mut copies = join(&syncs, &listings, &scans);
             copies.suggestions = suggestions(&copies, &syncs, &listings, &scans, &phones, &servers);
             copies.cloud = crate::cloud::views(c, &devices, &user)?;
+            for file in &mut copies.files {
+                if file.on_server != Some(true) {
+                    continue;
+                }
+                if let Some((view, covered)) =
+                    crate::cloud::covered_by(&copies.cloud, &file.server, &file.user)
+                    && view.can_delete
+                {
+                    file.cloud = Some(CloudTarget {
+                        device_id: view.device_id.clone(),
+                        device_name: view.device_name.clone(),
+                        user: covered.id.clone(),
+                    });
+                }
+            }
             copies
                 .suggestions
                 .extend(crate::cloud::suggestions(&copies.cloud));

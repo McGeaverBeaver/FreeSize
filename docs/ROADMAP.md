@@ -387,6 +387,23 @@ Parked, each with its reason:
   Releases stop making `disktree.plg` and tagging the image as
   `disktree-hub`: every install runs FreeSize now. The last of each stays
   where it is.
+- 0.20.1, the Copies page made plain (the owner's review of 0.20.0). The
+  Folders and Big files tabs say how many copies there are and where ("3
+  copies: the server, Gaming PC and MacBook Air"; "1 copy: the server
+  only" in orange) instead of a device count beside "2× with the server";
+  each device's line says what it keeps ("keeps all of it", "keeps 7.85 GB
+  of it", "keeps none of it (online-only)"), and the buttons say which
+  device they act on ("Free on RIG3", "Keep on RIG3"), with the intro
+  explaining them and why a device that keeps all of it only gets Free.
+  Columns sort when clicked, a search box and filters narrow the rows (one
+  copy, server only, not on the server, partly on a device, not changed
+  in a year), Last changed shows the date the server has (Nextcloud
+  doesn't record when a file was last opened), and Open opens the folder
+  or file in Nextcloud's Files app. On Big files, when the FreeSize
+  Nextcloud app covers the account, ticked files go to the user's trash
+  bin through the app, like Copies' In Nextcloud tab; the Hub accepts a
+  path from its own listing of that account, not only from the app's
+  report. The demo gets a listed account.
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the

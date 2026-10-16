@@ -247,13 +247,18 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
         actions: if platform == Platform::Android {
             vec![ActionKind::Delete, ActionKind::Uninstall, ActionKind::Clean]
         } else if attended {
-            // What the desktop app does since 0.10.
-            vec![
+            // What the desktop app does since 0.10; Windows frees local
+            // copies of synced files since 0.13.
+            let mut kinds = vec![
                 ActionKind::Delete,
                 ActionKind::Clean,
                 ActionKind::Restore,
                 ActionKind::Empty,
-            ]
+            ];
+            if platform == Platform::Windows {
+                kinds.push(ActionKind::OnlineOnly);
+            }
+            kinds
         } else {
             vec![ActionKind::Delete]
         },
@@ -750,6 +755,47 @@ fn agentless(state: &AppState) {
         )
         .unwrap();
         freesize_hub::devices::store_scan(c, "DEMOPROXMOX", report).unwrap();
+        // The Hub signed in to Robert's account, so the Copies page knows
+        // what the server holds: the synced folders above, plus a folder
+        // only the server has.
+        c.execute(
+            "INSERT INTO nextcloud (server, user, password, added, added_by, synced, files,
+                                    folders, bytes, trash, quota_used, dav_user)
+             VALUES ('https://cloud.example.lan', 'robert', 'demo', ?1, 'Robert', ?2, 6, 9,
+                     ?3, ?4, ?3, 'robert')",
+            params![
+                now - 30 * 86_400,
+                now - 3 * 3_600,
+                (61_000 + 4_200 + 48_000 + 12_000) * MB as i64,
+                9 * GB as i64
+            ],
+        )
+        .unwrap();
+        let listed: &[(&str, u64, bool, i64, &str)] = &[
+            ("/Photos", 61_000, true, 40, ""),
+            ("/Photos/2019", 18_000, true, 2_100, ""),
+            ("/Photos/2024", 22_000, true, 40, ""),
+            ("/Documents", 4_200, true, 3, ""),
+            ("/Documents/Taxes", 900, true, 200, ""),
+            ("/Videos", 48_000, true, 12, ""),
+            ("/Videos/Drone", 31_000, true, 12, ""),
+            ("/Archive", 12_000, true, 1_300, ""),
+            ("/Archive/Old laptop", 12_000, true, 1_300, ""),
+            ("/Videos/Drone/DJI_0412.MP4", 3_900, false, 12, "SHA1:2f1c6d9a0b7e4c3d8a1f5e6b9c0d2a3b4c5d6e7f"),
+            ("/Videos/Drone/DJI_0398.MP4", 3_100, false, 14, "SHA1:9b8a7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b"),
+            ("/Photos/2024/Iceland.zip", 2_400, false, 40, ""),
+            ("/Videos/wedding-raw.mov", 9_800, false, 700, ""),
+            ("/Archive/Old laptop/backup-2019.tar", 8_600, false, 1_300, ""),
+            ("/Archive/Old laptop/VirtualBox-win7.vdi", 3_400, false, 1_300, ""),
+        ];
+        for (i, (path, mb, is_dir, days, checksums)) in listed.iter().enumerate() {
+            c.execute(
+                "INSERT INTO nextcloud_files (account_id, path, fileid, size, is_dir, modified, checksums)
+                 VALUES ((SELECT id FROM nextcloud WHERE user = 'robert'), ?1, ?2, ?3, ?4, ?5, ?6)",
+                params![path, 4_000 + i as i64, (mb * MB) as i64, is_dir, now - days * 86_400, checksums],
+            )
+            .unwrap();
+        }
         // Where alerts would go; off, so the demo sends nothing.
         c.execute(
             "INSERT INTO alert_channels (name, target, enabled, created)
