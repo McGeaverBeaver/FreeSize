@@ -404,6 +404,24 @@ Parked, each with its reason:
   bin through the app, like Copies' In Nextcloud tab; the Hub accepts a
   path from its own listing of that account, not only from the app's
   report. The demo gets a listed account.
+- 0.20.2, suggestions you can steer, and the Nextcloud app updating
+  itself (the owner's review, 2026-10-16). Move-in suggestions went into
+  the device's first synced folder, which on a PC syncing only Steam's
+  save games meant `/Steam User Configs/Archive/<device>/…`: now the
+  folder syncing the whole account wins, else a plain folder, and a
+  device with only a program's own folders gets no place suggested, the
+  row saying to add a folder to sync or to choose with Edit. Edit on a
+  move-in row picks the synced folder and the path below it, with both
+  paths shown. Ignore on any suggestion sets it aside under Ignored
+  (Show again brings it back), kept in the Hub's settings by a key that
+  names the folder, not its size, and written to the audit log. The
+  Nextcloud app gets Updates on its settings page and `occ
+  freesize:update`: GitHub's newest release, checked against the signed
+  sums with the release key packed into the app, replaces the app's
+  files and runs the app's upgrade; the Hub's poll answers tell the app
+  about a newer release as they do every device. The demo gets a Workshop
+  PC syncing only Steam's folder, and `Windows.old` is no longer offered
+  for moving in.
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the

@@ -204,6 +204,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/nextcloud/{id}", delete(nextcloud::remove))
         .route("/api/nextcloud/{id}/sync", post(nextcloud::sync_now))
         .route("/api/copies", get(copies::copies))
+        .route(
+            "/api/copies/ignored",
+            post(copies::ignore).delete(copies::unignore),
+        )
         .route("/metrics", get(metrics::prometheus))
         .route("/metrics/json", get(metrics::summary))
         .route(

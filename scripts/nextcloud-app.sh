@@ -23,6 +23,11 @@ if command -v php >/dev/null; then
     php "$app/tests/run.php" >/dev/null
 fi
 mkdir -p "$dist"
+# The release key's public half goes in, so the app can check the releases
+# it updates itself from (empty until the owner makes the key: then the app
+# says to update by hand).
+cp release/public-key.txt "$app/release-key.txt"
+trap 'rm -f "$app/release-key.txt"' EXIT
 tar -czf "$dist/freesize-nextcloud-$version.tar.gz" -C nextcloud \
     --exclude=freesize/tests --owner=0 --group=0 freesize
 echo "    $app -> $dist/freesize-nextcloud-$version.tar.gz"

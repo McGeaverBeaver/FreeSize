@@ -202,6 +202,38 @@
 			search, found)
 	}
 
+	function updatesCard() {
+		const status = state.status || {}
+		const update = state.update || {}
+		const latest = status.latest_version || ''
+		const check = el('button', { class: 'button' }, 'Check now')
+		check.onclick = busy(check, () => call('POST', '/admin/update/check'))
+		const canUpdate = Boolean(latest) && update.key && update.writable && !update.linked
+		const install = el('button', { class: 'button primary', disabled: !canUpdate }, latest ? 'Update to ' + latest : 'Update')
+		install.onclick = busy(install, async () => {
+			if (window.confirm('Update the FreeSize app to ' + latest + '? Its files are replaced and Nextcloud runs the app\'s upgrade; your pairing, approver and users stay.')) {
+				await call('POST', '/admin/update', null, true)
+			}
+		})
+		const byHand = 'Update by hand: unpack the release\'s freesize-nextcloud-<version>.tar.gz over ' + (update.path || 'the app\'s folder') + ' and run occ upgrade, or occ freesize:update --file FILE.'
+		const parts = [
+			el('p', {}, 'This is FreeSize Nextcloud app ', el('strong', {}, state.version), '. ',
+				latest
+					? ['FreeSize ', el('strong', {}, latest), ' is out', status.latest_url ? [' (', el('a', { href: status.latest_url, target: '_blank', rel: 'noopener' }, 'release notes'), ')'] : null, '.']
+					: 'No newer release is known.'),
+			el('p', { class: 'freesize-hint' }, 'The Hub tells it about new releases when the Hub\'s update check is on; Check now asks GitHub. Nothing updates on its own.'),
+		]
+		if (!update.key) {
+			parts.push(el('p', { class: 'freesize-warning' }, 'This copy of the app carries no release key, so it can\'t check what it downloads and won\'t update itself. ' + byHand))
+		} else if (update.linked) {
+			parts.push(el('p', { class: 'freesize-warning' }, 'The app is a link to a checkout, as on a development setup: update that checkout instead.'))
+		} else if (!update.writable) {
+			parts.push(el('p', { class: 'freesize-warning' }, 'Nextcloud can\'t write to ' + update.path + ', so it can\'t replace the app\'s files. ' + byHand))
+		}
+		parts.push(el('div', { class: 'freesize-buttons' }, check, install))
+		return card('Updates', ...parts)
+	}
+
 	function warnings() {
 		const out = []
 		if (!state.trash_bin) {
@@ -218,7 +250,7 @@
 		if (!body || !state) {
 			return
 		}
-		body.replaceChildren(...warnings(), hubCard(), ...(state.paired ? [approverCard(), usersCard()] : []))
+		body.replaceChildren(...warnings(), hubCard(), ...(state.paired ? [approverCard(), usersCard()] : []), updatesCard())
 	}
 
 	document.addEventListener('DOMContentLoaded', () => {

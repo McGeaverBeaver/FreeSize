@@ -40,6 +40,7 @@ class Agent {
 		private Scanner $scanner,
 		private Deleter $deleter,
 		private Hasher $hasher,
+		private Updater $updater,
 		private IAppManager $apps,
 		private IConfig $config,
 		private ILockingProvider $locks,
@@ -222,6 +223,9 @@ class Agent {
 		$this->state->setStatus('last_poll', (string)time());
 		if (isset($response['move_to']) && is_array($response['move_to'])) {
 			$this->moveTo($response['move_to']);
+		}
+		if (isset($response['latest']) && is_array($response['latest'])) {
+			$this->updater->learned($response['latest']);
 		}
 		return $this->handle($response);
 	}

@@ -11,4 +11,9 @@ Install: unpack the release's `freesize-nextcloud-<version>.tar.gz` into
 `custom_apps`, run `occ app:enable freesize`, and pair under Administration
 settings → FreeSize. See "Cleaning up Nextcloud" in the main README.
 
+Update: under Administration settings → FreeSize → Updates, or with `occ
+freesize:update` (`--check` only looks, `--file FILE` installs a tarball);
+releases are checked against the release key the app carries. By hand:
+unpack the new tarball over the app's folder and run `occ upgrade`.
+
 License: AGPL-3.0-or-later.

@@ -147,6 +147,7 @@ pub fn suggestions(views: &[CloudView]) -> Vec<Suggestion> {
                         json!({"type": "delete", "root": account.id, "paths": paths, "bytes": bytes})
                     }),
                     pointer: pointer(view),
+                    ..Default::default()
                 });
             }
             if account.old_files > 0 {
@@ -164,6 +165,7 @@ pub fn suggestions(views: &[CloudView]) -> Vec<Suggestion> {
                     bytes: account.old_bytes,
                     action: None,
                     pointer: "Choose which on the In Nextcloud tab.".into(),
+                    ..Default::default()
                 });
             }
             let held = account.trash + account.versions;
@@ -186,6 +188,7 @@ pub fn suggestions(views: &[CloudView]) -> Vec<Suggestion> {
                     bytes: held,
                     action: None,
                     pointer: "Empty it in Nextcloud, under Files, Deleted files.".into(),
+                    ..Default::default()
                 });
             }
         }

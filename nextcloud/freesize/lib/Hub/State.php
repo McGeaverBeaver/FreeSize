@@ -237,6 +237,8 @@ class State {
 			'last_report' => (int)$this->get('last_report', '0'),
 			'last_poll' => (int)$this->get('last_poll', '0'),
 			'last_error' => $this->get('last_error'),
+			'latest_version' => $this->get('latest_version'),
+			'latest_url' => $this->get('latest_url'),
 		];
 	}
 

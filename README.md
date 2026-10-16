@@ -1142,6 +1142,16 @@ bin…**, which goes through the app like the In Nextcloud tab.
     going to the quarantine, and nothing is removed before the copy
     checks out. The Hub makes the folder on Nextcloud first, when it is
     connected to the account, and says how much the account has left.
+    It goes into the folder that syncs the whole account, else a plain
+    synced folder; a device that syncs only a program's own folder
+    (Steam's save games, say) gets no place suggested, and the row says
+    to add a folder to sync, or to choose with **Edit**. Edit, on any
+    move-in row, picks which synced folder it goes into and where below
+    it, and shows both paths before asking.
+  - **Ignore**, on every row, sets a suggestion aside: it goes under
+    **Ignored** at the bottom of the tab, with **Show again** to bring it
+    back, and stays ignored however often the devices report. Ignoring
+    and showing again are in the audit log.
   - **External storage**: on an Unraid server, a share the Nextcloud
     container already mounts but Nextcloud doesn't offer. The request runs
     `occ files_external:create` in the container (the `local` backend),
@@ -1396,6 +1406,22 @@ page says so when it doesn't. The same is there from the command line:
 `occ freesize:users --add USER`, `occ freesize:run` (now, rather than in
 five minutes), `occ freesize:status`, and `occ freesize:report`, which
 prints exactly what goes to the Hub without sending it.
+
+**Updating the app.** Nextcloud only updates apps from its app store,
+and FreeSize isn't there yet, so the app updates itself from FreeSize's
+GitHub releases instead, the way the desktop apps do: under
+**Administration settings → FreeSize → Updates**, **Check now** asks
+GitHub, and **Update to …** downloads the release's
+`freesize-nextcloud-<version>.tar.gz`, checks it against the release's
+signed sums (the app carries the release key's public half; one packed
+without a key says to update by hand), replaces the app's files and runs
+the app's upgrade. The Hub also tells the app about a newer release in
+its poll answers when the Hub's update check is on. From the command
+line, `occ freesize:update` does the same, `--check` only looks, and
+`--file FILE` installs a tarball you put on the server. Nothing updates
+on its own. By hand: unpack the new tarball over `custom_apps/freesize`
+and run `occ upgrade`. Your pairing, approver and users stay through an
+update.
 
 Without the app, a Nextcloud account connected on the Copies page still
 gets the suggestions that need no guessing: big files nobody changed in a

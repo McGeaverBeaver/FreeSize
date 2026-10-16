@@ -258,6 +258,8 @@ fn info(name: &str, platform: Platform, os: &str, attended: bool) -> DeviceInfo 
             if platform == Platform::Windows {
                 kinds.push(ActionKind::OnlineOnly);
             }
+            // Desktops move folders into the synced folder since 0.13.
+            kinds.push(ActionKind::MoveIn);
             kinds
         } else {
             vec![ActionKind::Delete]
@@ -600,6 +602,50 @@ fn seed(url: &str, state: &AppState) {
                 ..Report::default()
             },
             vec![("/", 494, 306)],
+        ),
+        (
+            // A PC that syncs only Steam's save games: its big folders have
+            // nowhere sensible to go on the Copies page until it syncs a
+            // plain folder.
+            info("Workshop PC", Platform::Windows, "Windows 11", true),
+            Report {
+                disks: Some(vec![
+                    Disk {
+                        name: "C:".into(),
+                        path: "C:\\".into(),
+                        total: 476 * GB,
+                        free: 91 * GB,
+                    },
+                    Disk {
+                        name: "D:".into(),
+                        path: "D:\\".into(),
+                        total: 3_726 * GB,
+                        free: 410 * GB,
+                    },
+                ]),
+                scan: Some(scan(
+                    "D:\\",
+                    "D:",
+                    1,
+                    folders(&[
+                        ("", 33_160),
+                        ("Adobe LR", 995),
+                        ("Ollama", 314),
+                        ("Battlestate Games", 242),
+                        ("vllm", 162),
+                        ("SteamLibrary", 31_000),
+                    ]),
+                    files(&[("Adobe LR/Catalog.lrcat", 4_100)]),
+                )),
+                sync: Some(sync(
+                    "C:\\Program Files (x86)\\Steam\\userdata",
+                    "/Steam User Configs",
+                    &[("Steam User Configs", 1_200, 1_200)],
+                    &[],
+                )),
+                ..Report::default()
+            },
+            vec![("C:\\", 476, 385), ("D:\\", 3_726, 3_316)],
         ),
         (
             {

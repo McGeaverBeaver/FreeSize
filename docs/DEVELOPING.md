@@ -68,7 +68,13 @@ at once and `occ freesize:report` prints the report.
 `php nextcloud/freesize/tests/run.php` runs its checks without Nextcloud.
 `scripts/nextcloud-app.sh DIST` packs it (the release script does), after
 checking its version is the workspace's: bump `appinfo/info.xml` and
-`Application::VERSION` with `Cargo.toml`.
+`Application::VERSION` with `Cargo.toml`. The tarball carries
+`release/public-key.txt` as `release-key.txt`, which the app's updater
+(`occ freesize:update`, the Updates card) checks releases against; a
+linked checkout reads the repository's copy. `occ freesize:update --file
+FILE` installs a tarball without the signature check, for trying an
+update: the updater refuses to replace a linked checkout, so copy the
+folder into `apps/` for that.
 
 ## Releases
 

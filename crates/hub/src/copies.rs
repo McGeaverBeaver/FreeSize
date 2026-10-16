@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use axum::Json;
 use axum::extract::State;
 use freesize_core::snapshot::FolderSize;
-use freesize_proto::sync::{BIG_FILE, SyncReport};
+use freesize_proto::sync::{BIG_FILE, SyncFolder, SyncReport, join_remote};
 use freesize_proto::unraid::{NextcloudReport, UnraidReport};
 use freesize_proto::{Action, ActionKind};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -35,6 +35,7 @@ const MAX_ROWS: usize = 2_000;
 /// Folders of the system's own that nobody syncs, by name, in any case.
 const SYSTEM_FOLDERS: &[&str] = &[
     "windows",
+    "windows.old",
     "users",
     "home",
     "program files",
@@ -141,6 +142,8 @@ pub struct Copies {
     pub risks: Vec<Risk>,
     /// What could be done about it (0.13), each one request away.
     pub suggestions: Vec<Suggestion>,
+    /// Suggestions set aside with Ignore, which `suggestions` leaves out.
+    pub ignored: Vec<Ignored>,
     /// Devices that reported their Nextcloud folders.
     pub reported: usize,
     /// What the FreeSize Nextcloud app reports (0.20), with only the
@@ -164,6 +167,45 @@ pub struct Suggestion {
     /// do on the device instead.
     pub action: Option<Value>,
     pub pointer: String,
+    /// What it's about, the same each time it's suggested (the kind, the
+    /// device and the folder or files), so it can be ignored by name.
+    #[serde(default)]
+    pub key: String,
+    /// For moving a folder in: the device's synced folders, so the person
+    /// can choose another than the one suggested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<MoveChoice>,
+    /// For moving a folder in: `{root, path, target}`, what Edit starts
+    /// from, there even when there's no folder to suggest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<Value>,
+}
+
+/// One synced folder a moved-in folder could go into.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct MoveChoice {
+    /// The folder on the device, as the device writes it.
+    pub local: String,
+    /// The folder on the server it mirrors.
+    pub remote: String,
+    /// "root" for the whole account, "folder" for a plain folder, or
+    /// "program" for a program's own folder, where an archive doesn't
+    /// belong.
+    pub fit: &'static str,
+}
+
+/// A suggestion the person doesn't want to see again, by its key.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize)]
+pub struct Ignored {
+    pub key: String,
+    pub kind: String,
+    pub title: String,
+    pub device_name: String,
+    pub bytes: u64,
+    /// When it was ignored, seconds since the epoch.
+    pub when: i64,
+    /// Who ignored it.
+    pub by: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -799,6 +841,7 @@ pub fn suggestions(
                     bytes: folder.on_disk,
                     action: action.and_then(|a| serde_json::to_value(a).ok()),
                     pointer,
+                    ..Default::default()
                 });
             }
         }
@@ -874,6 +917,7 @@ pub fn suggestions(
             })
             .ok(),
             pointer: String::new(),
+            ..Default::default()
         });
     }
 
@@ -886,14 +930,17 @@ pub fn suggestions(
         if !device.actions.contains(&ActionKind::MoveIn) {
             continue;
         }
-        // The account's root folder, or the first synced one.
-        let Some((account, folder)) = device.report.accounts.iter().find_map(|a| {
-            a.folders
-                .iter()
-                .find(|f| f.remote_path("") == "/")
-                .or_else(|| a.folders.first())
-                .map(|f| (a, f))
-        }) else {
+        // The folder that syncs the whole account, else a plain folder; a
+        // program's own folder (Steam's, AppData) is no place for an
+        // archive, so with only those there's nowhere to suggest.
+        let mut choices: Vec<(&freesize_proto::sync::SyncAccount, MoveChoice)> = device
+            .report
+            .accounts
+            .iter()
+            .flat_map(|a| a.folders.iter().map(move |f| (a, move_choice(f))))
+            .collect();
+        choices.sort_by_key(|(_, c)| fit_rank(c.fit));
+        let Some((account, best)) = choices.first().cloned() else {
             continue;
         };
         let key = account_key(&account.server, &account.user);
@@ -908,6 +955,42 @@ pub fn suggestions(
             continue;
         }
         let target = format!("Archive/{}/{name}", device.name.replace(['/', '\\'], " "));
+        let left = match room {
+            Some(free) if free >= 0 => format!(
+                " The account has {} left.",
+                freesize_core::format_size(free as u64)
+            ),
+            _ => String::new(),
+        };
+        let choices: Vec<MoveChoice> = choices.into_iter().map(|(_, c)| c).collect();
+        if best.fit == "program" {
+            out.push(Suggestion {
+                kind: "move_in".into(),
+                title: format!("Move {full} on {} into Nextcloud", device.name),
+                detail: format!(
+                    "{} syncs only {}, a program's own folder, so there's no sensible place \
+                     for it yet. Add a folder to sync in {}'s Nextcloud client (for instance \
+                     a Nextcloud folder in your home folder, or the whole account) and the \
+                     suggestion comes back pointing there; or choose where it goes with Edit.{left}",
+                    device.name,
+                    choices
+                        .iter()
+                        .map(|c| c.local.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" and "),
+                    device.name,
+                ),
+                device_id: device.id.clone(),
+                device_name: device.name.clone(),
+                bytes: size,
+                action: None,
+                pointer: String::new(),
+                key: String::new(),
+                choices,
+                edit: Some(serde_json::json!({ "root": scan.root, "path": name, "target": target })),
+            });
+            continue;
+        }
         out.push(Suggestion {
             kind: "move_in".into(),
             title: format!("Move {full} on {} into Nextcloud", device.name),
@@ -915,30 +998,26 @@ pub fn suggestions(
                 "It would go to {} in {}'s folder {} and upload from there, so a copy is on \
                  Nextcloud and every device that syncs it. On the same drive that's a rename; \
                  otherwise it's copied, checked byte for byte, and the original goes to the \
-                 quarantine.{}",
-                folder.remote_path(&target),
+                 quarantine.{left}",
+                join_remote(&best.remote, &target),
                 device.name,
-                folder.local,
-                match room {
-                    Some(free) if free >= 0 => format!(
-                        " The account has {} left.",
-                        freesize_core::format_size(free as u64)
-                    ),
-                    _ => String::new(),
-                }
+                best.local,
             ),
             device_id: device.id.clone(),
             device_name: device.name.clone(),
             bytes: size,
+            edit: Some(serde_json::json!({ "root": scan.root, "path": name, "target": target })),
             action: serde_json::to_value(Action::MoveIn {
                 root: scan.root.clone(),
                 path: name,
-                into: folder.local.clone(),
+                into: best.local.clone(),
                 target,
                 bytes: size,
             })
             .ok(),
             pointer: String::new(),
+            key: String::new(),
+            choices,
         });
     }
 
@@ -993,6 +1072,7 @@ pub fn suggestions(
                     })
                     .ok(),
                     pointer: String::new(),
+                    ..Default::default()
                 });
             }
         }
@@ -1223,6 +1303,7 @@ pub async fn copies(State(state): State<AppState>, user: User) -> ApiResult<Json
                 &copies.cloud,
                 crate::db::now(),
             ));
+            apply_ignored(&mut copies, load_ignored(c)?);
             Ok(copies)
         })
         .await?;
@@ -1230,6 +1311,228 @@ pub async fn copies(State(state): State<AppState>, user: User) -> ApiResult<Json
         account.account.syncing = state.nextcloud.is_syncing(account.account.id);
     }
     Ok(Json(copies))
+}
+
+/// Folders of a program's own, by a name in the path, in any case: an
+/// archive moved there would sit among a program's data.
+const PROGRAM_FOLDERS: &[&str] = &[
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "appdata",
+    "steam",
+    "steamapps",
+    "steamlibrary",
+    "epic games",
+    "application support",
+    ".local",
+    ".config",
+    ".var",
+    ".cache",
+    "node_modules",
+];
+
+/// How well a synced folder fits as the place for an archive.
+fn move_choice(folder: &SyncFolder) -> MoveChoice {
+    let remote = folder.remote_path("");
+    let fit = if remote == "/" {
+        "root"
+    } else if normalize(&folder.local)
+        .split('/')
+        .any(|part| PROGRAM_FOLDERS.contains(&part.to_lowercase().as_str()))
+    {
+        "program"
+    } else {
+        "folder"
+    };
+    MoveChoice {
+        local: folder.local.clone(),
+        remote,
+        fit,
+    }
+}
+
+fn fit_rank(fit: &str) -> u8 {
+    match fit {
+        "root" => 0,
+        "folder" => 1,
+        _ => 2,
+    }
+}
+
+/// What a suggestion is about, the same however often it's made: its kind,
+/// its device and the folder or files, without the sizes, which change.
+pub fn suggestion_key(s: &Suggestion) -> String {
+    let what = match &s.action {
+        Some(action) => {
+            let field = |name: &str| {
+                action
+                    .get(name)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            match action
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
+                "move_in" => format!("{}/{}", field("root"), field("path")),
+                "online_only" => format!(
+                    "{}:{}",
+                    field("root"),
+                    action
+                        .get("keep")
+                        .is_some_and(|k| k.as_bool() == Some(true))
+                ),
+                "delete" if s.kind == "camera_uploads" => field("root"),
+                "delete" => {
+                    let mut paths: Vec<String> = action
+                        .get("paths")
+                        .and_then(Value::as_array)
+                        .map(|p| {
+                            p.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    paths.sort();
+                    format!("{}:{}", field("root"), paths.join("\n"))
+                }
+                "external_storage" => format!("{}@{}", field("share"), field("container")),
+                _ => s.title.clone(),
+            }
+        }
+        None => s.title.clone(),
+    };
+    format!("{}|{}|{what}", s.kind, s.device_id)
+}
+
+/// The ignored suggestions, as saved.
+pub fn load_ignored(c: &Connection) -> rusqlite::Result<Vec<Ignored>> {
+    let text: Option<String> = c
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'ignored_suggestions'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(text
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default())
+}
+
+fn save_ignored(c: &Connection, ignored: &[Ignored]) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('ignored_suggestions', ?1)",
+        [serde_json::to_string(ignored).unwrap_or_default()],
+    )?;
+    Ok(())
+}
+
+/// Gives every suggestion its key and sets the ignored ones aside.
+pub fn apply_ignored(copies: &mut Copies, ignored: Vec<Ignored>) {
+    for s in &mut copies.suggestions {
+        s.key = suggestion_key(s);
+    }
+    let keys: HashSet<&str> = ignored.iter().map(|i| i.key.as_str()).collect();
+    copies
+        .suggestions
+        .retain(|s| !keys.contains(s.key.as_str()));
+    copies.ignored = ignored;
+}
+
+/// What `POST /api/copies/ignored` takes: the suggestion as the dashboard
+/// shows it, so the list can name it after it's gone.
+#[derive(Debug, serde::Deserialize)]
+pub struct IgnoreRequest {
+    pub key: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub device_name: String,
+    #[serde(default)]
+    pub bytes: u64,
+}
+
+/// `POST /api/copies/ignored`: don't show this suggestion again.
+pub async fn ignore(
+    State(state): State<AppState>,
+    crate::auth::Admin(user): crate::auth::Admin,
+    Json(request): Json<IgnoreRequest>,
+) -> ApiResult<Json<Vec<Ignored>>> {
+    if request.key.trim().is_empty() || request.key.len() > 4096 {
+        return Err(crate::error::ApiError::bad_request(
+            "that suggestion has no key",
+        ));
+    }
+    let who = user.name.clone();
+    let list = state
+        .db
+        .call(move |c| -> rusqlite::Result<Vec<Ignored>> {
+            let mut list = load_ignored(c)?;
+            list.retain(|i| i.key != request.key);
+            list.push(Ignored {
+                key: request.key,
+                kind: request.kind,
+                title: request.title.chars().take(300).collect(),
+                device_name: request.device_name.chars().take(100).collect(),
+                bytes: request.bytes,
+                when: crate::db::now(),
+                by: who.clone(),
+            });
+            save_ignored(c, &list)?;
+            let last = list.last().cloned().unwrap_or_default();
+            crate::audit::append(
+                c,
+                &who,
+                "suggestion ignored",
+                None,
+                &serde_json::json!({ "suggestion": last.title, "device": last.device_name }),
+            )?;
+            Ok(list)
+        })
+        .await?;
+    Ok(Json(list))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct KeyRequest {
+    pub key: String,
+}
+
+/// `DELETE /api/copies/ignored`: show it again.
+pub async fn unignore(
+    State(state): State<AppState>,
+    crate::auth::Admin(user): crate::auth::Admin,
+    Json(request): Json<KeyRequest>,
+) -> ApiResult<Json<Vec<Ignored>>> {
+    let who = user.name.clone();
+    let list = state
+        .db
+        .call(move |c| -> rusqlite::Result<Vec<Ignored>> {
+            let mut list = load_ignored(c)?;
+            let before = list.len();
+            let gone = list.iter().find(|i| i.key == request.key).cloned();
+            list.retain(|i| i.key != request.key);
+            if list.len() != before {
+                save_ignored(c, &list)?;
+                let gone = gone.unwrap_or_default();
+                crate::audit::append(
+                    c,
+                    &who,
+                    "suggestion shown again",
+                    None,
+                    &serde_json::json!({ "suggestion": gone.title, "device": gone.device_name }),
+                )?;
+            }
+            Ok(list)
+        })
+        .await?;
+    Ok(Json(list))
 }
 
 #[cfg(test)]
@@ -1535,6 +1838,83 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    #[test]
+    fn moving_in_picks_a_plain_folder_or_none() {
+        let steam = SyncFolder {
+            local: "C:\\Program Files (x86)\\Steam\\userdata".into(),
+            remote: "/Steam User Configs".into(),
+            size: GB,
+            on_disk: GB,
+            files: 10,
+            on_disk_files: 10,
+            ..SyncFolder::default()
+        };
+        let docs = SyncFolder {
+            local: "C:\\Users\\bob\\Documents".into(),
+            remote: "/Documents".into(),
+            ..steam.clone()
+        };
+        let root = SyncFolder {
+            local: "C:\\Users\\bob\\Nextcloud".into(),
+            remote: "/".into(),
+            ..steam.clone()
+        };
+        assert_eq!(move_choice(&steam).fit, "program");
+        assert_eq!(move_choice(&docs).fit, "folder");
+        assert_eq!(move_choice(&root).fit, "root");
+        let scans = vec![ScanTop {
+            device_id: "d1".into(),
+            device_name: "RIG3".into(),
+            root: "D:\\".into(),
+            folders: vec![
+                ("Adobe LR".into(), 90 * GB),
+                ("Windows.old".into(), 20 * GB),
+            ],
+        }];
+        let server = "https://cloud.example.com";
+        // Only Steam's folder: no place, but the choice is there for Edit.
+        let rig = device("d1", "RIG3", server, vec![steam.clone()]);
+        let copies = join(std::slice::from_ref(&rig), &[], &scans);
+        let out = suggestions(&copies, std::slice::from_ref(&rig), &[], &scans, &[], &[]);
+        let moves: Vec<&Suggestion> = out.iter().filter(|s| s.kind == "move_in").collect();
+        assert_eq!(moves.len(), 1, "{out:?}");
+        assert!(moves[0].action.is_none());
+        assert!(moves[0].detail.contains("a program's own folder"));
+        assert_eq!(moves[0].choices.len(), 1);
+        assert_eq!(moves[0].edit.as_ref().unwrap()["path"], "Adobe LR");
+        // With Documents too, that's where it goes; the root wins over both.
+        let rig = device("d1", "RIG3", server, vec![steam.clone(), docs.clone()]);
+        let out = suggestions(&copies, std::slice::from_ref(&rig), &[], &scans, &[], &[]);
+        let m = out.iter().find(|s| s.kind == "move_in").unwrap();
+        assert_eq!(m.action.as_ref().unwrap()["into"], docs.local);
+        assert_eq!(
+            m.action.as_ref().unwrap()["target"],
+            "Archive/RIG3/Adobe LR"
+        );
+        assert!(m.detail.contains("/Documents/Archive/RIG3/Adobe LR"));
+        let rig = device("d1", "RIG3", server, vec![steam, docs, root.clone()]);
+        let out = suggestions(&copies, std::slice::from_ref(&rig), &[], &scans, &[], &[]);
+        let m = out.iter().find(|s| s.kind == "move_in").unwrap();
+        assert_eq!(m.action.as_ref().unwrap()["into"], root.local);
+        assert_eq!(m.choices.len(), 3);
+        // The key names the folder, not its size, and ignoring hides it.
+        let key = suggestion_key(m);
+        assert_eq!(key, "move_in|d1|D:\\/Adobe LR");
+        let mut copies = Copies {
+            suggestions: out,
+            ..Copies::default()
+        };
+        apply_ignored(
+            &mut copies,
+            vec![Ignored {
+                key,
+                ..Ignored::default()
+            }],
+        );
+        assert!(copies.suggestions.iter().all(|s| s.kind != "move_in"));
+        assert_eq!(copies.ignored.len(), 1);
     }
 
     #[test]

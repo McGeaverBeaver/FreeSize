@@ -275,6 +275,10 @@ body.plain main.notice { margin-top: 12vh; }
   .nav, .tabs { flex-wrap: wrap; overflow-x: visible; }
   .card { padding: 12px; overflow-x: auto; }
   th, td { padding: 8px 6px; }
+  /* A suggestion's buttons go on their own line under the text. */
+  .alert-row { flex-wrap: wrap; }
+  .alert-row .grow { flex-basis: 60%; }
+  .alert-row .alert-actions { flex-basis: 100%; justify-content: flex-end; }
 }
 
 .warn { color: var(--warn); }

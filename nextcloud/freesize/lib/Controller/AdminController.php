@@ -9,6 +9,7 @@ namespace OCA\FreeSize\Controller;
 use OCA\FreeSize\AppInfo\Application;
 use OCA\FreeSize\Hub\HubException;
 use OCA\FreeSize\Service\Agent;
+use OCA\FreeSize\Service\Updater;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\FrontpageRoute;
@@ -23,6 +24,7 @@ class AdminController extends Controller {
 	public function __construct(
 		IRequest $request,
 		private Agent $agent,
+		private Updater $updater,
 		private IUserManager $users,
 		private IAppConfig $appConfig,
 	) {
@@ -55,6 +57,8 @@ class AdminController extends Controller {
 			'trash_bin' => $this->agent->trashBin(),
 			'cron' => $this->appConfig->getValueString('core', 'backgroundjobs_mode', 'ajax'),
 			'status' => $state->status(),
+			'version' => Application::VERSION,
+			'update' => $this->updater->situation(),
 		];
 	}
 
@@ -138,6 +142,29 @@ class AdminController extends Controller {
 		}
 		$state->setUsers(array_values(array_diff($covered, [$remove])));
 		return $this->answer();
+	}
+
+	#[FrontpageRoute(verb: 'POST', url: '/admin/update/check')]
+	public function checkUpdate(): JSONResponse {
+		try {
+			$found = $this->updater->check();
+		} catch (\RuntimeException $e) {
+			return $this->answer($e->getMessage());
+		}
+		return $this->answer(null, $found === null
+			? 'This is the newest version (' . Application::VERSION . ').'
+			: "FreeSize {$found['version']} is out.");
+	}
+
+	#[PasswordConfirmationRequired]
+	#[FrontpageRoute(verb: 'POST', url: '/admin/update')]
+	public function update(): JSONResponse {
+		try {
+			$said = $this->updater->update();
+		} catch (\RuntimeException $e) {
+			return $this->answer($e->getMessage());
+		}
+		return $this->answer(null, $said);
 	}
 
 	#[FrontpageRoute(verb: 'POST', url: '/admin/run')]

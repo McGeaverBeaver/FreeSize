@@ -1659,25 +1659,96 @@ PAGES.copies = async (section = "folders") => {
     view = h("div", { class: "stack" }, (copies.cloud || []).map((v) => [
       copies.cloud.length > 1 ? h("h2", {}, v.device_name) : null, cloudView(v, deviceById.get(v.device_id))]));
   } else if (section === "suggestions") {
-    view = suggestions.length
+    const ignored = copies.ignored || [];
+    // Set a suggestion aside; it's listed under Ignored, with Show again.
+    const ignore = async (s) => {
+      try {
+        await api("/api/copies/ignored", { method: "POST", body: { key: s.key, kind: s.kind, title: s.title, device_name: s.device_name, bytes: s.bytes } });
+        toast("Ignored. It's under Ignored at the bottom, where Show again brings it back.");
+        render();
+      } catch (e) { toast(e.message, true); }
+    };
+    const unignore = async (i) => {
+      try { await api("/api/copies/ignored", { method: "DELETE", body: { key: i.key } }); toast("It's back in the list."); render(); } catch (e) { toast(e.message, true); }
+    };
+    // Choose where a folder goes in Nextcloud: which synced folder on the
+    // device, and the folder below it.
+    const editMoveIn = (s, device) => {
+      const base = s.action || {};
+      const from = s.edit || {};
+      const choices = s.choices || [];
+      const start = Math.max(0, choices.findIndex((c) => c.local === base.into));
+      const select = h("select", {}, choices.map((c, i) => h("option", { value: String(i), selected: i === start },
+        `${c.remote} (${c.local})${c.fit === "program" ? " — a program's folder" : c.fit === "root" ? " — the whole account" : ""}`)));
+      const target = h("input", { type: "text", value: base.target || from.target || "", placeholder: `Archive/${device.name}/…` });
+      const preview = h("p", { class: "callout small", style: "margin-top:12px" });
+      const cleaned = () => target.value.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+      const problem = () => {
+        const t = cleaned();
+        if (!t) return "Say which folder it goes to below the synced folder.";
+        if (t.split("/").some((part) => part === "..")) return "The folder must be below the synced folder.";
+        return "";
+      };
+      const show = () => {
+        const c = choices[Number(select.value)] || choices[0];
+        const t = cleaned();
+        const sep = c.local.includes("\\") ? "\\" : "/";
+        const remote = (c.remote.replace(/\/+$/, "") || "") + "/" + t;
+        const local = c.local.replace(/[\\/]+$/, "") + sep + t.split("/").join(sep);
+        const bad = problem();
+        preview.replaceChildren(...(bad ? [bad] : [h("div", {}, "In Nextcloud: ", h("strong", {}, remote)), h("div", {}, `On ${device.name}: ${local}`),
+          c.fit === "program" ? h("div", { class: "warn", style: "margin-top:4px" }, "That's a program's own folder; its program may not expect an archive there.") : null].filter(Boolean)));
+      };
+      select.onchange = show; target.oninput = show; show();
+      dialog((close) => [
+        h("h2", {}, "Where it goes"),
+        h("div", { class: "paths" }, h("div", {}, s.title)),
+        h("label", {}, `Synced folder on ${device.name}`), select,
+        h("label", {}, "Folder below it, in Nextcloud"), target,
+        preview,
+        h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: () => {
+          if (problem()) { toast(problem(), true); return; }
+          const c = choices[Number(select.value)] || choices[0];
+          const t = cleaned();
+          const remote = (c.remote.replace(/\/+$/, "") || "") + "/" + t;
+          close();
+          requestDialog(device, { type: "move_in", root: from.root || base.root, path: from.path || base.path, into: c.local, target: t, bytes: s.bytes },
+            [s.title, `It goes to ${remote} in ${device.name}'s folder ${c.local} and uploads from there. On the same drive that's a rename; otherwise it's copied, checked byte for byte, and the original goes to the quarantine.`]);
+        } }, "Ask the device")),
+      ]);
+    };
+    const ignoredCard = ignored.length
+      ? h("div", { class: "card" }, h("details", {}, h("summary", {}, h("strong", {}, `Ignored (${ignored.length})`), h("span", { class: "dim small" }, " · set aside with Ignore; Show again brings one back")),
+          ignored.map((i) => h("div", { class: "alert-row" },
+            h("span", { class: "badge" }, KINDS[i.kind] || i.kind),
+            h("div", { class: "grow" }, h("strong", {}, i.title), h("div", { class: "dim small" }, `${i.device_name ? i.device_name + " · " : ""}ignored ${ago(i.when)}${i.by ? ` by ${i.by}` : ""}`)),
+            h("span", { class: "num" }, size(i.bytes)),
+            state.me.admin ? h("button", { class: "small", onclick: () => unignore(i) }, "Show again") : null))))
+      : null;
+    view = h("div", { class: "stack" }, suggestions.length
       ? h("div", { class: "card" }, h("h2", {}, "What could be done"),
-          h("p", { class: "dim small" }, "Each is one request: the device shows it and asks before doing anything, and what's freed can be put back from the quarantine, or from Nextcloud's trash bin. Nothing here is done on its own."),
+          h("p", { class: "dim small" }, "Each is one request: the device shows it and asks before doing anything, and what's freed can be put back from the quarantine, or from Nextcloud's trash bin. Nothing here is done on its own. Ignore sets one aside; Edit changes where a folder goes."),
           suggestions.map((s) => {
             const device = deviceById.get(s.device_id);
             const kind = s.action ? s.action.type === "delete" ? "delete" : s.action.type === "online_only" ? "online_only" : s.action.type === "move_in" ? "move_in" : "mount" : null;
             const can = device && kind && canDo(device, kind);
+            const editable = s.kind === "move_in" && device && (s.choices || []).length && s.edit && canDo(device, "move_in");
             return h("div", { class: "alert-row" },
               h("span", { class: "badge accent" }, KINDS[s.kind] || s.kind),
               h("div", { class: "grow" }, h("strong", {}, s.title), h("div", { class: "dim small" }, s.detail),
                 s.pointer ? h("div", { class: "small", style: "margin-top:4px" }, s.kind.startsWith("cloud") ? "" : "On the device: ", s.pointer) : null),
               h("span", { class: "num" }, size(s.bytes)),
-              can ? h("button", { class: "small primary", onclick: () => askDialog(s) }, s.kind.startsWith("cloud") ? "Move to the trash bin…" : "Ask the device")
-                : s.action && state.me.admin ? h("span", { class: "dim small" }, "needs an approver") : null);
+              h("div", { class: "row alert-actions", style: "gap:6px;flex-wrap:wrap;justify-content:flex-end" },
+                editable ? h("button", { class: "small", title: "Choose which synced folder it goes into, and where below it", onclick: () => editMoveIn(s, device) }, "Edit…") : null,
+                can ? h("button", { class: "small primary", onclick: () => askDialog(s) }, s.kind.startsWith("cloud") ? "Move to the trash bin…" : "Ask the device")
+                  : s.action && state.me.admin ? h("span", { class: "dim small" }, "needs an approver") : null,
+                state.me.admin && s.key ? h("button", { class: "small", title: "Don't show this again; it's listed under Ignored, where Show again brings it back", onclick: () => ignore(s) }, "Ignore") : null));
           }))
       : h("div", { class: "card empty" }, h("h2", {}, "Nothing to suggest"),
           h("p", {}, copies.accounts.length
-            ? "Suggestions come from what the devices and the server report: a folder kept whole in three places on a nearly full disk, camera files a phone still holds after they uploaded, big folders outside any synced folder, and shares an Unraid Nextcloud container could offer as external storage."
-            : "Connect a Nextcloud account for the Hub to know what the server holds."));
+            ? `Suggestions come from what the devices and the server report: a folder kept whole in three places on a nearly full disk, camera files a phone still holds after they uploaded, big folders outside any synced folder, and shares an Unraid Nextcloud container could offer as external storage.${ignored.length ? ` ${count(ignored.length, "suggestion is", "suggestions are")} ignored, below.` : ""}`
+            : "Connect a Nextcloud account for the Hub to know what the server holds.")),
+      ignoredCard);
   } else if (section === "files") {
     if (copies.files.length) {
       // Deletes go to the FreeSize Nextcloud app covering the account,

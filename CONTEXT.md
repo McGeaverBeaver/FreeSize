@@ -245,7 +245,9 @@ _Avoid_: unbacked, at risk
 **Suggestion**:
 A request the Copies page proposes to free or protect space (free a stored
 copy, move a folder into a synced folder, add a share as external storage).
-_Avoid_: recommendation, action
+Edit changes where a moved folder goes; Ignore sets a suggestion aside
+under Ignored, where Show again brings it back.
+_Avoid_: recommendation, action, dismiss, snooze
 
 **Nextcloud app**:
 The FreeSize app inside Nextcloud (0.20), paired with the Hub as the device
