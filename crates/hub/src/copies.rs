@@ -930,16 +930,16 @@ pub fn suggestions(
         if !device.actions.contains(&ActionKind::MoveIn) {
             continue;
         }
-        // The folder that syncs the whole account, else a plain folder; a
-        // program's own folder (Steam's, AppData) is no place for an
-        // archive, so with only those there's nowhere to suggest.
+        // The synced folders, best fit first (`choice_rank`); a program's
+        // own folder (Steam's, AppData) is no place for an archive, so with
+        // only those there's nowhere to suggest.
         let mut choices: Vec<(&freesize_proto::sync::SyncAccount, MoveChoice)> = device
             .report
             .accounts
             .iter()
             .flat_map(|a| a.folders.iter().map(move |f| (a, move_choice(f))))
             .collect();
-        choices.sort_by_key(|(_, c)| fit_rank(c.fit));
+        choices.sort_by_key(|(_, c)| choice_rank(c, &scan.root));
         let Some((account, best)) = choices.first().cloned() else {
             continue;
         };
@@ -1352,12 +1352,31 @@ fn move_choice(folder: &SyncFolder) -> MoveChoice {
     }
 }
 
-fn fit_rank(fit: &str) -> u8 {
-    match fit {
-        "root" => 0,
-        "folder" => 1,
-        _ => 2,
-    }
+/// The order synced folders are offered in for a folder under `from`: a
+/// program's own folder last; before that, one on the same drive (the move
+/// is a rename, instant, and the files are never in two places), then the
+/// whole account, then one named Documents or Nextcloud, then as the client
+/// lists them.
+fn choice_rank(choice: &MoveChoice, from: &str) -> (bool, bool, bool, bool) {
+    let name = normalize(&choice.local);
+    let name = name.rsplit('/').next().unwrap_or_default();
+    (
+        choice.fit == "program",
+        !same_drive(&choice.local, from),
+        choice.fit != "root",
+        !matches!(name, "documents" | "nextcloud"),
+    )
+}
+
+/// Whether two paths are on one drive, as far as the Hub can tell: the
+/// same drive letter on Windows; elsewhere unknown, so never.
+fn same_drive(a: &str, b: &str) -> bool {
+    let letter = |p: &str| {
+        let p = p.as_bytes();
+        (p.len() >= 2 && p[1] == b':' && p[0].is_ascii_alphabetic())
+            .then(|| p[0].to_ascii_lowercase())
+    };
+    matches!((letter(a), letter(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// What a suggestion is about, the same however often it's made: its kind,
@@ -1864,6 +1883,39 @@ mod tests {
         assert_eq!(move_choice(&steam).fit, "program");
         assert_eq!(move_choice(&docs).fit, "folder");
         assert_eq!(move_choice(&root).fit, "root");
+        // For a folder on D:, a synced folder on D: comes first, then the
+        // whole account, then Documents, then the rest; Steam's last.
+        let dev = SyncFolder {
+            local: "D:\\DEV".into(),
+            remote: "/DEV".into(),
+            ..steam.clone()
+        };
+        let pictures = SyncFolder {
+            local: "C:\\Users\\bob\\Pictures".into(),
+            remote: "/Desktop Media/RIG2 Photos".into(),
+            ..steam.clone()
+        };
+        let mut order: Vec<MoveChoice> = [&steam, &pictures, &docs, &root, &dev]
+            .into_iter()
+            .map(move_choice)
+            .collect();
+        order.sort_by_key(|c| choice_rank(c, "D:\\"));
+        let remotes: Vec<&str> = order.iter().map(|c| c.remote.as_str()).collect();
+        assert_eq!(
+            remotes,
+            [
+                "/DEV",
+                "/",
+                "/Documents",
+                "/Desktop Media/RIG2 Photos",
+                "/Steam User Configs"
+            ]
+        );
+        order.sort_by_key(|c| choice_rank(c, "/home/bob"));
+        let remotes: Vec<&str> = order.iter().map(|c| c.remote.as_str()).collect();
+        assert_eq!(remotes[0], "/");
+        assert_eq!(remotes[1], "/Documents");
+        assert_eq!(remotes[4], "/Steam User Configs");
         let scans = vec![ScanTop {
             device_id: "d1".into(),
             device_name: "RIG3".into(),

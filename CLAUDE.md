@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.20.2)
+## Where things stand (0.20.3)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -208,7 +208,10 @@ compiling inside Docker.
   (`PROGRAM_FOLDERS`), Edit and Ignore on the Suggestions tab (keys from
   `copies::suggestion_key`, the list in the settings table), and the
   Nextcloud app's updater (`Service/Updater.php`, `occ freesize:update`,
-  the release key packed in as `release-key.txt`).
+  the release key packed in as `release-key.txt`). 0.20.3: the folder a
+  move-in picks (`copies::choice_rank`: same drive, whole account, a
+  Documents or Nextcloud folder, the client's order, program folders
+  last); the agent reads named folder aliases in `nextcloud.cfg`.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

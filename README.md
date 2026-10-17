@@ -1142,12 +1142,15 @@ bin…**, which goes through the app like the In Nextcloud tab.
     going to the quarantine, and nothing is removed before the copy
     checks out. The Hub makes the folder on Nextcloud first, when it is
     connected to the account, and says how much the account has left.
-    It goes into the folder that syncs the whole account, else a plain
-    synced folder; a device that syncs only a program's own folder
-    (Steam's save games, say) gets no place suggested, and the row says
-    to add a folder to sync, or to choose with **Edit**. Edit, on any
-    move-in row, picks which synced folder it goes into and where below
-    it, and shows both paths before asking.
+    It goes into a synced folder on the same drive when there is one
+    (a rename, so the files are never in two places), else the folder
+    that syncs the whole account, else one named Documents or Nextcloud,
+    else the first plain folder the client lists; a device that syncs
+    only a program's own folder (Steam's save games, say) gets no place
+    suggested, and the row says to add a folder to sync, or to choose
+    with **Edit**. Edit, on any move-in row, picks which synced folder it
+    goes into and where below it, in that same order with program folders
+    last and marked, and shows both paths before asking.
   - **Ignore**, on every row, sets a suggestion aside: it goes under
     **Ignored** at the bottom of the tab, with **Show again** to bring it
     back, and stays ignored however often the devices report. Ignoring

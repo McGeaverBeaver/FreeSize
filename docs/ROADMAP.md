@@ -422,6 +422,15 @@ Parked, each with its reason:
   about a newer release as they do every device. The demo gets a Workshop
   PC syncing only Steam's folder, and `Windows.old` is no longer offered
   for moving in.
+- 0.20.3, the folder a move-in picks (the owner's review, 2026-10-17).
+  The owner's PC syncs six folders, five with virtual files, and 0.20.2
+  took the first plain one the client listed. Now a synced folder on the
+  same drive as the folder being moved comes first (a rename), then the
+  whole account, then one named Documents or Nextcloud, then the client's
+  order, with a program's own folders last and marked in Edit. The agent
+  also reads folders older configs name rather than number
+  (`0\Folders\Nextcloud\…`), with the 35.0 Windows client's layout as
+  a test.
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the
