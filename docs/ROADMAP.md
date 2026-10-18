@@ -431,6 +431,16 @@ Parked, each with its reason:
   also reads folders older configs name rather than number
   (`0\Folders\Nextcloud\…`), with the 35.0 Windows client's layout as
   a test.
+- 0.20.4, emptying the phone's trash (the owner's test, 2026-10-18).
+  Cleaning the Trash rule on a phone failed with "Operation not
+  permitted": Android's media store owns trashed files (`.trashed-…` in
+  the gallery folders) and lets no other app move or delete them, All
+  files access or not. The rule now goes through the store's delete
+  request (`MediaStore.createDeleteRequest`): Android shows one dialog
+  naming the files, and deletes them for good once it's confirmed; the app
+  waits for the dialog to close and counts what's gone. Both ways of
+  cleaning use it: the Clean junk screen and a Hub request. The rule's
+  words, the confirmation and the README say it skips the quarantine.
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the

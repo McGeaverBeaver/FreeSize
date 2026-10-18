@@ -773,13 +773,18 @@ pub fn tool_url(tool: &str) -> Option<&'static str> {
 
 /// The phone's rules that the junk cleaner doesn't have: what the app
 /// finds in shared storage (`cleanup::find` and the trash).
+/// The rule for Android's trash, which is deleted for good through
+/// Android's own dialog rather than moved to the quarantine.
+pub const PHONE_TRASH: &str = "phone-trash";
+
 static PHONE_RULES: [Rule; 4] = [
     phone_rule(
-        "phone-trash",
+        PHONE_TRASH,
         Category::Trash,
         "Trash",
-        "Photos and videos you deleted in the last 30 days. They take space until Android \
-         removes them for good.",
+        "Photos and videos you deleted in the last 30 days, which take space until Android \
+         removes them for good. Android asks once, then deletes them for good: they don't go \
+         to the quarantine.",
         Safety::CheckFirst,
     ),
     phone_rule(
@@ -1136,6 +1141,22 @@ pub fn clean(chosen: Vec<Finding>, progress: &Progress) -> Outcome {
                         done.skipped.extend(cleaned.skipped);
                     }
                     Ok(done)
+                }
+                Safety::CheckFirst if finding.rule.id == PHONE_TRASH => {
+                    // Android's trash can't be moved: Android deletes it
+                    // for good, after its own dialog.
+                    let paths: Vec<PathBuf> =
+                        finding.items.iter().flat_map(|i| i.paths()).collect();
+                    crate::apps::empty_trash(&paths).map(|(bytes, files)| {
+                        progress.update(|state| {
+                            state.bytes += bytes;
+                            state.files += files;
+                        });
+                        cleaner::Outcome {
+                            freed: bytes,
+                            ..Default::default()
+                        }
+                    })
                 }
                 Safety::CheckFirst => {
                     let paths: Vec<PathBuf> =

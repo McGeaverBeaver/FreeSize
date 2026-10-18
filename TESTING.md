@@ -103,6 +103,10 @@ what was tried in the release's draft notes, and say what wasn't.
       ticked; Clean shows the progress and results pages; what's moved
       lands in the quarantine as one batch that opens like on a desktop,
       and the tabs and buttons are easy to hit.
+- [ ] The trash (0.20.4): with a photo deleted in the gallery, ticking
+      Trash and cleaning shows Android's own dialog; Allow frees it and
+      the results page says freed, not quarantined; Don't allow leaves the
+      row marked as not confirmed, nothing else is touched either way.
 - [ ] Pairs from the QR code; a delete from the Hub is approved on the
       phone.
 - [ ] The QR code fills in the connect dialog both ways (0.15.1): with

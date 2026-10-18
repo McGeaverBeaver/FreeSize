@@ -702,7 +702,10 @@ files access:
   same Clean junk screen as on a computer (see [Clean junk](#clean-junk)),
   with a tick box per rule, a progress page and a results page:
   - the trash (Android 11+): photos and videos deleted in the last 30
-    days, which still take space until Android removes them for good;
+    days, which still take space until Android removes them for good.
+    Android lets no app move those files, so this one rule doesn't use the
+    quarantine: Android shows its own dialog naming them and deletes them
+    for good once you confirm;
   - old app installers: `.apk` files in Download. APKs saved with
     FreeSize in `Download/FreeSize` are kept;
   - the thumbnail cache, `DCIM/.thumbnails`, which gallery apps rebuild

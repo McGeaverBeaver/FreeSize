@@ -256,13 +256,27 @@ pub fn collect() -> Result<AppReport, String> {
 
 /// Moves one kind of junk into the quarantine. Returns the bytes set aside
 /// and the items that couldn't be moved. Slow for big folders, so call it
-/// off the UI thread.
+/// off the UI thread. Android's trash is the exception: its files can't
+/// be moved, so Android is asked to delete them for good (see
+/// [`empty_trash`]), and the bytes returned are freed, not set aside.
 pub fn delete_junk(junk: &Junk) -> (u64, Vec<String>) {
     if demo::enabled() {
         demo::clean(junk.kind);
         return (junk.bytes, Vec::new());
     }
+    if junk.kind == crate::cleanup::JunkKind::Trash && cfg!(target_os = "android") {
+        return match empty_trash(&junk.paths) {
+            Ok((bytes, _)) => (bytes, Vec::new()),
+            Err(err) => (0, vec![err]),
+        };
+    }
     crate::quarantine::delete_all(&junk.paths, junk.kind.id())
+}
+
+/// Empties Android's trash of `paths` through Android's own delete
+/// dialog; the bytes and files deleted for good.
+pub fn empty_trash(paths: &[PathBuf]) -> Result<(u64, u64), String> {
+    platform::empty_trash(paths)
 }
 
 /// Removes an app from the history of removed apps.
@@ -449,10 +463,10 @@ fn log(message: &str) {
 mod platform {
     pub use crate::android::{
         abilities, apk_files, app_icons, clear_all_cache, collect_app_report as collect,
-        has_storage_access as storage_access, has_usage_access as has_access, media_rows,
-        open_app_settings as open, open_in_store, open_own_app_settings as open_own_settings,
-        private_dir, request_usage_access as request_access, search_store, trash, uninstall,
-        window_has_focus,
+        empty_trash, has_storage_access as storage_access, has_usage_access as has_access,
+        media_rows, open_app_settings as open, open_in_store,
+        open_own_app_settings as open_own_settings, private_dir,
+        request_usage_access as request_access, search_store, trash, uninstall, window_has_focus,
     };
 }
 
@@ -473,6 +487,10 @@ mod platform {
 
     pub fn trash() -> Option<Junk> {
         None
+    }
+
+    pub fn empty_trash(_paths: &[PathBuf]) -> Result<(u64, u64), String> {
+        Err("Android's trash is only on Android".into())
     }
 
     pub fn media_rows() -> Vec<(String, u64, PathBuf)> {

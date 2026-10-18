@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.20.3)
+## Where things stand (0.20.4)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -212,6 +212,9 @@ compiling inside Docker.
   move-in picks (`copies::choice_rank`: same drive, whole account, a
   Documents or Nextcloud folder, the client's order, program folders
   last); the agent reads named folder aliases in `nextcloud.cfg`.
+  0.20.4: the phone's Trash rule deletes through Android's media store
+  (`android::empty_trash`, `MediaStore.createDeleteRequest`, one system
+  dialog), since trashed files can't be moved by any other app.
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in
