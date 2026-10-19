@@ -226,9 +226,39 @@ fi
 # ── 2 ─────────────────────────────────────────────────────────────────────
 if ! skip 2; then
 stage "Put the public half in the repository"
+# Commits and pushes the key file, making sure git knows who's committing
+# first (a fresh VM doesn't, and the commit then fails). Says what failed.
+push_public_key() {
+  if [[ -z "$(git config user.email)" ]]; then
+    say "Git doesn't know who you are yet. The repository is public, so use"
+    say "GitHub's noreply address rather than your own email."
+    git config --global user.name "McGeaverBeaver"
+    git config --global user.email "29310945+McGeaverBeaver@users.noreply.github.com"
+    note "set git's name and email to McGeaverBeaver's GitHub noreply address"
+  fi
+  git add release/public-key.txt &&
+    git commit -q -m "The release key's public half" &&
+    git pull -q --rebase origin master &&
+    git push -q origin master
+}
+
 if grep -qvE '^\s*(#|$)' release/public-key.txt; then
   note "release/public-key.txt already holds a key:"
   grep -vE '^\s*(#|$)' release/public-key.txt | sed 's/^/    /'
+  if [[ -n "$(git status --porcelain release/public-key.txt)" ]] ||
+     ! git diff --quiet origin/master -- release/public-key.txt 2>/dev/null; then
+    say "It isn't on GitHub yet."
+    if confirm "Commit and push it to master now?"; then
+      if push_public_key; then
+        printf '  %s✓ pushed%s\n' "$GREEN" "$RESET"
+      else
+        say "The commit or push failed (see above); tell Claude what it said."
+        SKIPPED+=("commit and push release/public-key.txt")
+      fi
+    else
+      SKIPPED+=("commit and push release/public-key.txt")
+    fi
+  fi
 else
   if [[ -z "$PUBLIC_HALF" ]]; then
     say "The key was made on an earlier run; copy its public half from that"
@@ -238,10 +268,12 @@ else
   printf '%s\n' "$PUBLIC_HALF" >> release/public-key.txt
   git --no-pager diff release/public-key.txt
   if confirm "Commit and push this to master?"; then
-    git add release/public-key.txt
-    git commit -q -m "The release key's public half"
-    git push -q origin master
-    printf '  %s✓ pushed%s\n' "$GREEN" "$RESET"
+    if push_public_key; then
+      printf '  %s✓ pushed%s\n' "$GREEN" "$RESET"
+    else
+      say "The commit or push failed (see above); tell Claude what it said."
+      SKIPPED+=("commit and push release/public-key.txt")
+    fi
   else
     SKIPPED+=("commit and push release/public-key.txt")
   fi
