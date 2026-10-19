@@ -2014,7 +2014,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-agent"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-app"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "freesize-agent",
  "freesize-core",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-cli"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-core"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "crossbeam-channel",
  "libc",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-hub"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-proto"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "freesize-unraid"
-version = "0.20.4"
+version = "0.20.5"
 dependencies = [
  "freesize-agent",
  "freesize-core",

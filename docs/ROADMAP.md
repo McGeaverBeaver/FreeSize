@@ -441,6 +441,11 @@ Parked, each with its reason:
   waits for the dialog to close and counts what's gone. Both ways of
   cleaning use it: the Clean junk screen and a Hub request. The rule's
   words, the confirmation and the README say it skips the quarantine.
+- 0.20.5, the first release signed with the release key (2026-10-19).
+  The same code as 0.20.4; the owner made the key and committed its
+  public half, so from this build on the apps can verify and install
+  updates themselves. 0.20.4 and older have no key and still update by
+  hand once, to this release.
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the
