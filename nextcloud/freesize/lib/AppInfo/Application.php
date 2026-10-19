@@ -14,7 +14,7 @@ use OCP\AppFramework\Bootstrap\IRegistrationContext;
 class Application extends App implements IBootstrap {
 	public const APP_ID = 'freesize';
 	/** Sent to the Hub as the app's version; keep in step with appinfo/info.xml. */
-	public const VERSION = '0.20.5';
+	public const VERSION = '0.20.6';
 
 	public function __construct(array $urlParams = []) {
 		parent::__construct(self::APP_ID, $urlParams);

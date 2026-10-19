@@ -446,6 +446,16 @@ Parked, each with its reason:
   public half, so from this build on the apps can verify and install
   updates themselves. 0.20.4 and older have no key and still update by
   hand once, to this release.
+- 0.20.6, the phone's trash, second try (the owner's test, 2026-10-19).
+  0.20.4's delete request failed with "Java exception was thrown": it
+  named the files by their address in the media store's Files collection,
+  and Android's delete request takes only the Images, Video and Audio
+  collections' addresses. Each trashed file now goes by its own
+  collection's address; other trashed files (documents) are deleted
+  through the store directly, which All files access allows; when the
+  dialog still can't be shown, the same direct delete is tried before
+  giving up. Errors now carry Android's own message rather than "Java
+  exception was thrown".
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the

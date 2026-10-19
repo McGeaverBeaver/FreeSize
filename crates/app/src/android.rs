@@ -1392,139 +1392,346 @@ pub fn trash() -> Option<Junk> {
     (!junk.paths.is_empty()).then_some(junk)
 }
 
+/// The Java exception pending on this thread, as text, cleared; or the
+/// JNI error when there's none. Android's own messages say what it
+/// refused, which "Java exception was thrown" doesn't.
+fn java_error(env: &mut Env, err: &jni::errors::Error) -> String {
+    let Some(thrown) = env.exception_occurred() else {
+        return err.to_string();
+    };
+    env.exception_clear();
+    let text = env
+        .call_method(
+            &thrown,
+            jni_str!("toString"),
+            jni_sig!("()Ljava/lang/String;"),
+            &[],
+        )
+        .and_then(|v| v.l());
+    match text {
+        Ok(text) => java_string_opt(env, text)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| err.to_string()),
+        Err(_) => {
+            env.exception_clear();
+            err.to_string()
+        }
+    }
+}
+
+/// A trashed file as Android's media store lists it.
+struct Trashed {
+    id: i64,
+    size: u64,
+    path: PathBuf,
+    /// MediaStore.Files.FileColumns.MEDIA_TYPE: 1 image, 2 audio, 3 video.
+    media_type: i32,
+}
+
+/// The item's address in its own collection (Images, Video or Audio), the
+/// only kind Android's delete request takes; None for other files.
+fn media_uri<'local>(env: &mut Env<'local>, item: &Trashed) -> JniResult<Option<JObject<'local>>> {
+    let collection = match item.media_type {
+        1 => jni_str!("android/provider/MediaStore$Images$Media"),
+        2 => jni_str!("android/provider/MediaStore$Audio$Media"),
+        3 => jni_str!("android/provider/MediaStore$Video$Media"),
+        _ => return Ok(None),
+    };
+    let volume = env.new_string("external")?;
+    let base = env
+        .call_static_method(
+            collection,
+            jni_str!("getContentUri"),
+            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+            &[JValue::Object(&volume)],
+        )?
+        .l()?;
+    let uri = env
+        .call_static_method(
+            jni_str!("android/content/ContentUris"),
+            jni_str!("withAppendedId"),
+            jni_sig!("(Landroid/net/Uri;J)Landroid/net/Uri;"),
+            &[JValue::Object(&base), JValue::Long(item.id)],
+        )?
+        .l()?;
+    Ok(Some(uri))
+}
+
+/// The item's address in the Files collection, for deleting it directly.
+fn files_uri<'local>(env: &mut Env<'local>, id: i64) -> JniResult<JObject<'local>> {
+    let volume = env.new_string("external")?;
+    let base = env
+        .call_static_method(
+            jni_str!("android/provider/MediaStore$Files"),
+            jni_str!("getContentUri"),
+            jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+            &[JValue::Object(&volume)],
+        )?
+        .l()?;
+    env.call_static_method(
+        jni_str!("android/content/ContentUris"),
+        jni_str!("withAppendedId"),
+        jni_sig!("(Landroid/net/Uri;J)Landroid/net/Uri;"),
+        &[JValue::Object(&base), JValue::Long(id)],
+    )?
+    .l()
+}
+
+/// What of `wanted` is in Android's trash now.
+fn trashed_items(wanted: &std::collections::HashSet<&PathBuf>) -> Result<Vec<Trashed>, String> {
+    // MediaStore.MATCH_ONLY
+    const MATCH_ONLY: i32 = 3;
+    let mut failure = None;
+    let result = with_activity(|env, activity| {
+        let rows = (|| -> JniResult<Vec<Trashed>> {
+            let cursor = files_query(
+                env,
+                activity,
+                &["_id", "_size", "_data", "media_type"],
+                None,
+                Some(MATCH_ONLY),
+            )?;
+            if cursor.is_null() {
+                return Ok(Vec::new());
+            }
+            let column = |env: &mut Env, name: &str| column_index(env, &cursor, name);
+            let (id_col, size_col, data_col, type_col) = (
+                column(env, "_id")?,
+                column(env, "_size")?,
+                column(env, "_data")?,
+                column(env, "media_type")?,
+            );
+            let mut items = Vec::new();
+            let read = (|| -> JniResult<()> {
+                while env
+                    .call_method(&cursor, jni_str!("moveToNext"), jni_sig!("()Z"), &[])?
+                    .z()?
+                {
+                    let item = env.with_local_frame(8, |env| -> JniResult<Option<Trashed>> {
+                        let long = |env: &mut Env, col: i32| -> JniResult<i64> {
+                            env.call_method(
+                                &cursor,
+                                jni_str!("getLong"),
+                                jni_sig!("(I)J"),
+                                &[JValue::Int(col)],
+                            )?
+                            .j()
+                        };
+                        let id = long(env, id_col)?;
+                        let size = long(env, size_col)?;
+                        let media_type = env
+                            .call_method(
+                                &cursor,
+                                jni_str!("getInt"),
+                                jni_sig!("(I)I"),
+                                &[JValue::Int(type_col)],
+                            )?
+                            .i()?;
+                        let path = env
+                            .call_method(
+                                &cursor,
+                                jni_str!("getString"),
+                                jni_sig!("(I)Ljava/lang/String;"),
+                                &[JValue::Int(data_col)],
+                            )?
+                            .l()?;
+                        Ok(java_string_opt(env, path)?.map(|path| Trashed {
+                            id,
+                            size: u64::try_from(size).unwrap_or(0),
+                            path: PathBuf::from(path),
+                            media_type,
+                        }))
+                    })?;
+                    if let Some(item) = item
+                        && wanted.contains(&item.path)
+                    {
+                        items.push(item);
+                    }
+                }
+                Ok(())
+            })();
+            let _ = optional(env, |env| {
+                env.call_method(&cursor, jni_str!("close"), jni_sig!("()V"), &[])
+                    .map(|_| ())
+            });
+            read.map(|_| items)
+        })();
+        if let Err(err) = &rows {
+            failure = Some(java_error(env, err));
+        }
+        rows
+    });
+    result.map_err(|err| {
+        format!(
+            "could not read the trash: {}",
+            failure.unwrap_or(err.to_string())
+        )
+    })
+}
+
+/// Deletes trashed items directly through the media store, which Android
+/// allows an app with All files access for files outside the Images,
+/// Video and Audio collections. The ids deleted.
+fn delete_directly(items: &[&Trashed]) -> Vec<i64> {
+    let mut gone = Vec::new();
+    for item in items {
+        let deleted = with_activity(|env, activity| {
+            let uri = files_uri(env, item.id)?;
+            let resolver = env
+                .call_method(
+                    activity,
+                    jni_str!("getContentResolver"),
+                    jni_sig!("()Landroid/content/ContentResolver;"),
+                    &[],
+                )?
+                .l()?;
+            env.call_method(
+                &resolver,
+                jni_str!("delete"),
+                jni_sig!("(Landroid/net/Uri;Landroid/os/Bundle;)I"),
+                &[JValue::Object(&uri), JValue::Object(&JObject::null())],
+            )?
+            .i()
+        });
+        match deleted {
+            Ok(n) if n > 0 => gone.push(item.id),
+            Ok(_) => {}
+            Err(err) => log(&format!("could not delete {}: {err}", item.path.display())),
+        }
+    }
+    gone
+}
+
 /// Empties Android's trash of `paths` (Android 11+). The trashed files
-/// belong to Android's media store, which lets no other app move or
-/// delete them directly (even with All files access: "Operation not
-/// permitted"), so this asks through the store's own delete request:
-/// Android shows one dialog naming the files, and deletes them for good
-/// once it's confirmed. Waits for the dialog to close, then says what's
-/// gone: bytes and files. An error when nothing was deleted.
+/// belong to Android's media store, which lets no other app move them
+/// ("Operation not permitted", even with All files access), so photos,
+/// videos and music go through the store's own delete request, which
+/// takes them by their address in their own collection: Android shows one
+/// dialog naming them, and deletes them for good once it's confirmed.
+/// Other trashed files are deleted through the store directly. Waits for
+/// the dialog to close, then says what's gone: bytes and files. An error
+/// when nothing was deleted, with Android's reason when it gave one.
 pub fn empty_trash(paths: &[PathBuf]) -> Result<(u64, u64), String> {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
 
-    // MediaStore.MATCH_ONLY
-    const MATCH_ONLY: i32 = 3;
     if sdk() < 30 {
         return Err("Android's trash needs Android 11 or newer".into());
     }
     let wanted: HashSet<&PathBuf> = paths.iter().collect();
-    // What Android's index holds of them: ids and sizes.
-    let listed = |env: &mut Env, activity: &JObject| -> JniResult<Vec<(i64, u64, PathBuf)>> {
-        let cursor = files_query(
-            env,
-            activity,
-            &["_id", "_size", "_data"],
-            None,
-            Some(MATCH_ONLY),
-        )?;
-        if cursor.is_null() {
-            return Ok(Vec::new());
-        }
-        Ok(read_rows(env, &cursor, Some("_id"))?
-            .into_iter()
-            .filter_map(|(id, size, path)| {
-                let id = id?.parse::<i64>().ok()?;
-                wanted.contains(&path).then_some((id, size, path))
-            })
-            .collect())
-    };
-    let before = with_activity(|env, activity| listed(env, activity))
-        .map_err(|err| format!("could not read the trash: {err}"))?;
+    let before = trashed_items(&wanted)?;
     if before.is_empty() {
         return Err("nothing of that is in Android's trash any more".into());
     }
-    let started = with_activity(|env, activity| {
-        let volume = env.new_string("external")?;
-        let base = env
-            .call_static_method(
-                jni_str!("android/provider/MediaStore$Files"),
-                jni_str!("getContentUri"),
-                jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
-                &[JValue::Object(&volume)],
-            )?
-            .l()?;
-        let uris = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
-        for (id, _, _) in &before {
-            let uri = env
-                .call_static_method(
-                    jni_str!("android/content/ContentUris"),
-                    jni_str!("withAppendedId"),
-                    jni_sig!("(Landroid/net/Uri;J)Landroid/net/Uri;"),
-                    &[JValue::Object(&base), JValue::Long(*id)],
-                )?
-                .l()?;
-            env.call_method(
-                &uris,
-                jni_str!("add"),
-                jni_sig!("(Ljava/lang/Object;)Z"),
-                &[JValue::Object(&uri)],
-            )?;
-        }
-        let resolver = env
-            .call_method(
-                activity,
-                jni_str!("getContentResolver"),
-                jni_sig!("()Landroid/content/ContentResolver;"),
-                &[],
-            )?
-            .l()?;
-        let pending = env
-            .call_static_method(
-                jni_str!("android/provider/MediaStore"),
-                jni_str!("createDeleteRequest"),
-                jni_sig!("(Landroid/content/ContentResolver;Ljava/util/Collection;)Landroid/app/PendingIntent;"),
-                &[JValue::Object(&resolver), JValue::Object(&uris)],
-            )?
-            .l()?;
-        let sender = env
-            .call_method(
-                &pending,
-                jni_str!("getIntentSender"),
-                jni_sig!("()Landroid/content/IntentSender;"),
-                &[],
-            )?
-            .l()?;
-        env.call_method(
-            activity,
-            jni_str!("startIntentSenderForResult"),
-            jni_sig!("(Landroid/content/IntentSender;ILandroid/content/Intent;III)V"),
-            &[
-                JValue::Object(&sender),
-                JValue::Int(8),
-                JValue::Object(&JObject::null()),
-                JValue::Int(0),
-                JValue::Int(0),
-                JValue::Int(0),
-            ],
-        )?;
-        Ok(())
-    });
-    if let Err(err) = started {
-        return Err(format!("Android's delete dialog could not be shown: {err}"));
-    }
-    // The dialog takes the window's focus; it's over when the focus is
-    // back. Give it a moment to appear first.
-    let begun = Instant::now();
-    while window_has_focus() && begun.elapsed() < Duration::from_secs(5) {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    while !window_has_focus() && begun.elapsed() < Duration::from_secs(10 * 60) {
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    let after = with_activity(|env, activity| listed(env, activity)).unwrap_or_default();
-    let left: HashSet<i64> = after.iter().map(|(id, _, _)| *id).collect();
-    let gone: Vec<&(i64, u64, PathBuf)> = before
+    let (media, other): (Vec<&Trashed>, Vec<&Trashed>) = before
         .iter()
-        .filter(|(id, _, _)| !left.contains(id))
-        .collect();
-    if gone.is_empty() {
-        return Err("Android's dialog wasn't confirmed, so the trash is as it was".into());
+        .partition(|item| matches!(item.media_type, 1..=3));
+    let mut gone: HashSet<i64> = delete_directly(&other).into_iter().collect();
+    let mut refused = None;
+    if !media.is_empty() {
+        let mut failure = None;
+        let started = with_activity(|env, activity| {
+            let shown = (|| -> JniResult<()> {
+                let uris = env.new_object(jni_str!("java/util/ArrayList"), jni_sig!("()V"), &[])?;
+                for item in &media {
+                    if let Some(uri) = media_uri(env, item)? {
+                        env.call_method(
+                            &uris,
+                            jni_str!("add"),
+                            jni_sig!("(Ljava/lang/Object;)Z"),
+                            &[JValue::Object(&uri)],
+                        )?;
+                    }
+                }
+                let resolver = env
+                    .call_method(
+                        activity,
+                        jni_str!("getContentResolver"),
+                        jni_sig!("()Landroid/content/ContentResolver;"),
+                        &[],
+                    )?
+                    .l()?;
+                let pending = env
+                    .call_static_method(
+                        jni_str!("android/provider/MediaStore"),
+                        jni_str!("createDeleteRequest"),
+                        jni_sig!("(Landroid/content/ContentResolver;Ljava/util/Collection;)Landroid/app/PendingIntent;"),
+                        &[JValue::Object(&resolver), JValue::Object(&uris)],
+                    )?
+                    .l()?;
+                let sender = env
+                    .call_method(
+                        &pending,
+                        jni_str!("getIntentSender"),
+                        jni_sig!("()Landroid/content/IntentSender;"),
+                        &[],
+                    )?
+                    .l()?;
+                env.call_method(
+                    activity,
+                    jni_str!("startIntentSenderForResult"),
+                    jni_sig!("(Landroid/content/IntentSender;ILandroid/content/Intent;III)V"),
+                    &[
+                        JValue::Object(&sender),
+                        JValue::Int(8),
+                        JValue::Object(&JObject::null()),
+                        JValue::Int(0),
+                        JValue::Int(0),
+                        JValue::Int(0),
+                    ],
+                )?;
+                Ok(())
+            })();
+            if let Err(err) = &shown {
+                failure = Some(java_error(env, err));
+            }
+            shown
+        });
+        match started {
+            Ok(()) => {
+                // The dialog takes the window's focus; it's over when the
+                // focus is back. Give it a moment to appear first.
+                let begun = Instant::now();
+                while window_has_focus() && begun.elapsed() < Duration::from_secs(5) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                while !window_has_focus() && begun.elapsed() < Duration::from_secs(10 * 60) {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            }
+            Err(err) => {
+                let reason = failure.unwrap_or(err.to_string());
+                log(&format!("no delete dialog for the trash: {reason}"));
+                // Some Android versions let an app with All files access
+                // delete media directly instead.
+                gone.extend(delete_directly(&media));
+                refused = Some(reason);
+            }
+        }
     }
-    Ok((
-        gone.iter().map(|(_, size, _)| size).sum(),
-        gone.len() as u64,
-    ))
+    let left: HashSet<i64> = trashed_items(&wanted)
+        .unwrap_or_default()
+        .iter()
+        .map(|item| item.id)
+        .collect();
+    gone.extend(
+        before
+            .iter()
+            .map(|item| item.id)
+            .filter(|id| !left.contains(id)),
+    );
+    let done: Vec<&Trashed> = before
+        .iter()
+        .filter(|item| gone.contains(&item.id))
+        .collect();
+    if done.is_empty() {
+        return Err(match refused {
+            Some(reason) => format!("Android refused to delete them: {reason}"),
+            None => "Android's dialog wasn't confirmed, so the trash is as it was".into(),
+        });
+    }
+    Ok((done.iter().map(|item| item.size).sum(), done.len() as u64))
 }
 
 /// Storage used by every installed app, plus Android's own totals, when

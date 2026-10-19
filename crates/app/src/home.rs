@@ -909,8 +909,8 @@ pub fn junk_confirm(junk: &Junk) -> String {
     let n = junk.paths.len();
     match junk.kind {
         JunkKind::Trash => format!(
-            "Delete {} from the trash for good ({size})? Android asks once more, then removes \
-             them now instead of in 30 days; they don't go to the quarantine.",
+            "Delete {} from the trash for good ({size})? Android may ask once more, then \
+             removes them now instead of in 30 days; they don't go to the quarantine.",
             count(n, "item", "items")
         ),
         JunkKind::Installers => format!(

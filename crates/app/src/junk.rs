@@ -783,8 +783,8 @@ static PHONE_RULES: [Rule; 4] = [
         Category::Trash,
         "Trash",
         "Photos and videos you deleted in the last 30 days, which take space until Android \
-         removes them for good. Android asks once, then deletes them for good: they don't go \
-         to the quarantine.",
+         removes them for good. Android may ask once more, then deletes them for good: they \
+         don't go to the quarantine.",
         Safety::CheckFirst,
     ),
     phone_rule(

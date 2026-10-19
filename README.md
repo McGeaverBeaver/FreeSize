@@ -705,7 +705,8 @@ files access:
     days, which still take space until Android removes them for good.
     Android lets no app move those files, so this one rule doesn't use the
     quarantine: Android shows its own dialog naming them and deletes them
-    for good once you confirm;
+    for good once you confirm (on some phones it deletes them without
+    asking again);
   - old app installers: `.apk` files in Download. APKs saved with
     FreeSize in `Download/FreeSize` are kept;
   - the thumbnail cache, `DCIM/.thumbnails`, which gallery apps rebuild
