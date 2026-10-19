@@ -3,3 +3,4 @@
 # built with this file and trust only releases whose SHA256SUMS.txt it
 # signed; while it's empty, builds carry no key and never update themselves.
 # The private half stays in ~/.freesize/release-key and is never committed.
+5BCHPsU5eg45t3sCakP+AAz0LxFR78j7PkHO1v0ibgA=
