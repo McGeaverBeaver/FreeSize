@@ -616,6 +616,7 @@ impl Worker {
         let Some(state) = self.snapshot() else { return };
         for id in response.cancelled {
             self.asked.remove(&id);
+            unnotify(&id);
             self.tell(Event::Withdrawn(id));
         }
         let policy = self
@@ -647,6 +648,11 @@ impl Worker {
                     ) {
                         lines[0] = lines[0].replace("permanently delete", "move to the quarantine");
                     }
+                    notify(
+                        &id,
+                        "A request from the Hub",
+                        lines.first().map_or("", String::as_str),
+                    );
                     self.tell(Event::Ask(Prompt {
                         id,
                         title: "A request from the Hub".into(),
@@ -669,6 +675,11 @@ impl Worker {
             if !request.note.trim().is_empty() {
                 lines.push(request.note.trim().to_string());
             }
+            notify(
+                &command.id,
+                &format!("{} asks for your approval", request.device_name),
+                lines.first().map_or("", String::as_str),
+            );
             self.tell(Event::Ask(Prompt {
                 id: command.id.clone(),
                 title: format!("{} asks for your approval", request.device_name),
@@ -712,6 +723,7 @@ impl Worker {
 
     fn answer(&mut self, prompt: Prompt, choice: Choice) {
         self.asked.remove(&prompt.id);
+        unnotify(&prompt.id);
         match prompt.kind {
             PromptKind::Own(request) => {
                 let approval = {
@@ -749,6 +761,30 @@ impl Worker {
             }
         }
     }
+}
+
+/// On a phone, a request shown in the app is also a notification while
+/// FreeSize is out of sight: the background job stays quiet whenever the
+/// app runs, so nothing else would say a request came. Tapping it opens the
+/// app, where the request waits with every path.
+#[cfg_attr(not(target_os = "android"), allow(unused_variables))]
+fn notify(tag: &str, title: &str, line: &str) {
+    #[cfg(target_os = "android")]
+    crate::android::hub_notices(
+        &serde_json::json!({"notices": [{
+            "tag": tag,
+            "title": title,
+            "text": format!("{line} Open FreeSize to see every path and allow or deny it."),
+        }]})
+        .to_string(),
+    );
+}
+
+/// Takes down a request's notification: answered, or withdrawn.
+#[cfg_attr(not(target_os = "android"), allow(unused_variables))]
+fn unnotify(tag: &str) {
+    #[cfg(target_os = "android")]
+    crate::android::hub_notices(&serde_json::json!({"cancel": [tag]}).to_string());
 }
 
 fn plain(state: CommandState, detail: &str) -> CommandUpdate {

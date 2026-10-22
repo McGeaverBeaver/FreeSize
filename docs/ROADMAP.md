@@ -456,6 +456,17 @@ Parked, each with its reason:
   dialog still can't be shown, the same direct delete is tried before
   giving up. Errors now carry Android's own message rather than "Java
   exception was thrown".
+- 0.20.7, Nextcloud requests reach the approver's phone (the owner's
+  test, 2026-10-21: two requests, the phone never asked). The Nextcloud
+  app looks for requests only when Nextcloud's cron runs it, every five
+  minutes at best, and only then asked the phone, so a request could sit
+  unseen for minutes; and while FreeSize ran out of sight on the phone,
+  its own poll took the request but nothing showed it, because the
+  background job stays quiet whenever the app runs. Now the Hub asks the
+  Nextcloud's approver as soon as the request is made, and the app finds
+  the answer waiting; the phone shows a notification while FreeSize is
+  out of sight; and a request withdrawn or expired comes down from the
+  phone too.
 - 0.20.0, the FreeSize Nextcloud app (decided under After polish). A
   Nextcloud app in PHP (`nextcloud/freesize`, packed as
   `freesize-nextcloud-<version>.tar.gz` for `custom_apps`) pairs with the

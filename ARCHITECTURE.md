@@ -1020,7 +1020,13 @@ it scans as its user.
   shown, needs_approver, running, done, failed, denied, expired, cancelled.
   Undelivered work is sent again after 10 minutes and expires after a day.
   For a device without anyone at it, the request goes to the approver's
-  device and the signed decision back. The 0.13 actions: `online_only`
+  device and the signed decision back. A Nextcloud with the app looks only
+  when Nextcloud's cron runs it, so since 0.20.7 the Hub asks its approver
+  as soon as the request is made (unless a grant the app reported covers
+  it), takes the decision before the app has looked, and hands both over
+  together; the app checks them as always. An approver shown a request that
+  ends without its answer (withdrawn, expired, refused by the device) gets
+  its id in `cancelled` and takes the prompt down. The 0.13 actions: `online_only`
   needs a Windows device whose sync report names the folder with virtual
   files on (`wincfapi`), paths among its reported folders and big files,
   and takes the bytes from the report; `move_in` needs the folder in the

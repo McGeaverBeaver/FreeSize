@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.20.6)
+## Where things stand (0.20.7)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -218,6 +218,10 @@ compiling inside Docker.
   the request takes Images, Video and Audio addresses (the Files
   collection's were refused), errors carry Android's own message
   (`android::java_error`), and other files are deleted directly.
+  0.20.7: the Hub asks a Nextcloud's approver when the request is made
+  (`commands::ask_early`; the app only looks on Nextcloud's cron), tells
+  approvers about requests that ended unanswered, and the running phone
+  app notifies while out of sight (`HubJob.fromApp`).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

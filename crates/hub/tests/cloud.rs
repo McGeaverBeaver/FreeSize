@@ -8,7 +8,10 @@ use common::idp::MockUser;
 use common::{Browser, blocking, start_hub};
 use freesize_agent::{Client, UreqTransport, pair};
 use freesize_proto::cloud::{CloudFile, CloudFolder, CloudReport, CloudUser, DuplicateSet};
-use freesize_proto::{ActionKind, DeviceInfo, PairingLink, Platform, Report};
+use freesize_proto::{
+    ActionKind, CommandState, CommandUpdate, Decision, DeviceInfo, PairingLink, Platform, Purpose,
+    Report,
+};
 use serde_json::{Value, json};
 
 const MB: u64 = 1024 * 1024;
@@ -208,6 +211,130 @@ async fn each_person_sees_their_own_account() {
         assert!(detail["cloud"].is_null());
         let commands = erin.get(&format!("{url}/api/commands")).json();
         assert!(commands.as_array().unwrap().is_empty());
+    })
+    .await;
+}
+
+/// Nextcloud runs the app every five minutes at best, so its approver is
+/// asked as soon as the request is made, may answer before the app looks,
+/// and is told when a request it was shown ends without its answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_approver_is_asked_straight_away() {
+    let hub = start_hub("cloud-approver").await;
+    let url = hub.url.clone();
+    blocking(move || {
+        let transport = UreqTransport::new();
+        let mut admin = Browser::new();
+        admin.sign_in(&url, "%2F");
+        let pair_as = |admin: &mut Browser, info: DeviceInfo| {
+            let code = admin.post(
+                &format!("{url}/api/pairing-codes"),
+                &json!({"group_id": 1}),
+                true,
+            );
+            let link = PairingLink::parse(code.json()["link"].as_str().unwrap()).unwrap();
+            pair(&transport, &link, info, &mut |_| true).unwrap()
+        };
+        let phone = pair_as(
+            &mut admin,
+            DeviceInfo {
+                name: "Pixel".into(),
+                platform: Platform::Android,
+                attended: true,
+                actions: vec![ActionKind::Delete],
+                ..DeviceInfo::default()
+            },
+        );
+        let info = DeviceInfo {
+            name: "Nextcloud".into(),
+            platform: Platform::Nextcloud,
+            os: "Nextcloud 35.0.2.2".into(),
+            hostname: "cloud".into(),
+            app: "FreeSize Nextcloud app 0.20.5".into(),
+            actions: vec![ActionKind::Delete],
+            attended: false,
+            approver: Some(phone.fingerprint()),
+            grants: vec![],
+            rights: String::new(),
+        };
+        let cloud = pair_as(&mut admin, info.clone());
+        Client::new(&cloud, &transport)
+            .report(&Report {
+                info: Some(info),
+                cloud: Some(CloudReport {
+                    taken: 1_791_800_000,
+                    server: "https://cloud.example.lan".into(),
+                    version: "35.0.2.2".into(),
+                    trash_bin: true,
+                    users: vec![account("alice", "Alice")],
+                }),
+                ..Report::default()
+            })
+            .unwrap();
+        let ask = |admin: &mut Browser, path: &str| {
+            let made = admin.post(
+                &format!("{url}/api/devices/{}/commands", cloud.device),
+                &json!({"action": {"type": "delete", "root": "alice", "paths": [path], "bytes": 0}}),
+                true,
+            );
+            assert_eq!(made.status, 200, "{}", made.body);
+            made.json()["id"].as_str().unwrap().to_string()
+        };
+
+        // The phone sees it before the app has looked.
+        let first = ask(&mut admin, "Backup/a.jpg");
+        let at_phone = Client::new(&phone, &transport).poll(1).unwrap();
+        assert_eq!(at_phone.approvals.len(), 1);
+        assert!(at_phone.approvals[0].note.contains("Alice's trash bin"));
+        let shown = &at_phone.approvals[0].command;
+        let command = shown.open(&phone.hub_key, Purpose::Command).unwrap();
+        assert_eq!(command.id, first);
+        Client::new(&phone, &transport)
+            .decide(&Decision {
+                command: first.clone(),
+                command_hash: shown.hash(),
+                device: cloud.device.clone(),
+                allow: true,
+                minutes: 0,
+                time: freesize_agent::now(),
+            })
+            .unwrap();
+
+        // The app gets the request and the answer together, asks as it
+        // always does, and the answer comes again.
+        let at_cloud = Client::new(&cloud, &transport).poll(0).unwrap();
+        assert_eq!(at_cloud.commands.len(), 1);
+        assert_eq!(at_cloud.decisions.len(), 1);
+        let update = |state: CommandState, detail: &str| CommandUpdate {
+            state,
+            detail: detail.into(),
+            approval: None,
+            freed: 0,
+            failed: vec![],
+        };
+        Client::new(&cloud, &transport)
+            .update(&first, &update(CommandState::NeedsApprover, "Moves the files."))
+            .unwrap();
+        let again = Client::new(&cloud, &transport).poll(0).unwrap();
+        assert_eq!(again.decisions.len(), 1);
+        Client::new(&cloud, &transport)
+            .update(&first, &update(CommandState::Done, "1 moved to the trash bin"))
+            .unwrap();
+        // Shown once, and answered: nothing more for the phone.
+        let at_phone = Client::new(&phone, &transport).poll(0).unwrap();
+        assert!(at_phone.approvals.is_empty());
+        assert!(at_phone.cancelled.is_empty());
+
+        // A request withdrawn on the dashboard comes down on the phone too.
+        let second = ask(&mut admin, "Photos/a.jpg");
+        let at_phone = Client::new(&phone, &transport).poll(1).unwrap();
+        assert_eq!(at_phone.approvals.len(), 1);
+        let withdrawn = admin.post(&format!("{url}/api/commands/{second}/cancel"), &json!({}), true);
+        assert_eq!(withdrawn.status, 200, "{}", withdrawn.body);
+        let at_phone = Client::new(&phone, &transport).poll(0).unwrap();
+        assert_eq!(at_phone.cancelled, [second]);
+        let at_phone = Client::new(&phone, &transport).poll(0).unwrap();
+        assert!(at_phone.cancelled.is_empty());
     })
     .await;
 }

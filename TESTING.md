@@ -173,6 +173,13 @@ what was tried in the release's draft notes, and say what wasn't.
       good; Restore brings it back where it was.
 - [ ] With the Deleted files app off, the page warns and the request is
       refused.
+- [ ] (0.20.7) With FreeSize open on the phone, a Move to the trash bin…
+      request opens the approval dialog within seconds, before the
+      Nextcloud has looked; with FreeSize switched away from (not closed),
+      a notification comes instead and opens the dialog. Once allowed, the
+      file is in Deleted files after Nextcloud's next cron run (up to
+      about 5 minutes). Withdrawing a request on the dashboard closes the
+      dialog on the phone.
 
 ## Unraid plugin
 

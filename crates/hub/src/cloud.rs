@@ -320,6 +320,17 @@ fn thousands(n: u64) -> String {
     out
 }
 
+/// What the approver reads with a delete for `user`, as the app says it.
+pub fn delete_note(c: &Connection, device: &str, user: &str) -> rusqlite::Result<String> {
+    let name = report(c, device)?
+        .and_then(|r| r.users.into_iter().find(|u| u.id == user))
+        .map_or_else(|| user.to_string(), |u| u.name);
+    Ok(format!(
+        "Moves the files to {name}'s trash bin in Nextcloud, where they can be restored from \
+         Deleted files until the trash bin is emptied."
+    ))
+}
+
 /// The size of a delete the dashboard asks of a Nextcloud with the app:
 /// every path must be a file or folder its newest report listed for that
 /// user, or one the Hub's own listing of that user's account holds (the

@@ -1,5 +1,6 @@
 package io.github.mcgeaverbeaver.freesize;
 
+import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -110,6 +111,25 @@ public final class HubJob extends JobService {
         // Android took the slot back (the network went, or the phone is
         // busy): run again at the next period.
         return true;
+    }
+
+    /**
+     * The same notices from the running app, which polls the Hub itself
+     * then: shown only while FreeSize isn't on screen, where the request
+     * opens as a dialog anyway. Taking notices down always happens.
+     */
+    public static void fromApp(Context context, String json) {
+        try {
+            ActivityManager.RunningAppProcessInfo me = new ActivityManager.RunningAppProcessInfo();
+            ActivityManager.getMyMemoryState(me);
+            JSONObject answer = new JSONObject(json);
+            if (me.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                answer.remove("notices");
+            }
+            notify(context, answer.toString());
+        } catch (Throwable error) {
+            Log.w(TAG, "Hub notices failed", error);
+        }
     }
 
     private static void notify(Context context, String json) throws Exception {

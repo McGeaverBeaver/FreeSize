@@ -170,6 +170,27 @@ pub fn cancel_hub_job() {
     }
 }
 
+/// Hands the Hub job's notices JSON (`{"notices": [...], "cancel": [...]}`)
+/// to Java from the running app. Java shows the notices only while
+/// FreeSize isn't on screen: the background job leaves the Hub to the app
+/// whenever the app runs, even out of sight.
+pub fn hub_notices(json: &str) {
+    let result = with_activity(|env, context| {
+        let class = app_class(env, context, HUB_JOB)?;
+        let json = env.new_string(json)?;
+        env.call_static_method(
+            &class,
+            jni_str!("fromApp"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+            &[JValue::Object(context), JValue::Object(&json)],
+        )?;
+        Ok(())
+    });
+    if let Err(err) = result {
+        log(&format!("could not show the Hub's notices: {err}"));
+    }
+}
+
 /// Asks for the notifications permission (Android 13+), so the job's
 /// notices show. Android asks once; a refusal is respected.
 pub fn request_notifications() {

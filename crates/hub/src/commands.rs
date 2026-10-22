@@ -568,6 +568,53 @@ fn apps_report(c: &Connection, device: &str) -> ApiResult<AppsReport> {
         .ok_or_else(|| ApiError::bad_request("the device hasn't reported its apps"))
 }
 
+/// The FreeSize Nextcloud app looks for requests only when Nextcloud's
+/// cron runs it, every five minutes or more, and asks its approver only
+/// then. Its approver is asked straight away instead, unless a grant the
+/// app reported covers the request. The app still checks the answer is
+/// its approver's and about this request, and asks again (which changes
+/// nothing here) once it sees the request. Says whom to wake.
+fn ask_early(
+    c: &Connection,
+    device: &str,
+    target: &Target,
+    command: &Command,
+) -> ApiResult<Option<String>> {
+    let info = &target.info;
+    let Some(approver) = &info.approver else {
+        return Ok(None);
+    };
+    let kind = command.action.kind();
+    let granted = kind.grantable()
+        && info
+            .grants
+            .iter()
+            .any(|g| g.admin == command.by.subject && g.kind == kind && g.expires > now());
+    if info.attended || info.platform != freesize_proto::Platform::Nextcloud || granted {
+        return Ok(None);
+    }
+    if let Action::Delete { root, .. } = &command.action {
+        c.execute(
+            "UPDATE commands SET detail = ?1 WHERE id = ?2",
+            params![crate::cloud::delete_note(c, device, root)?, command.id],
+        )?;
+    }
+    c.execute(
+        "INSERT INTO approvals (command_id, approver, asked) VALUES (?1, ?2, ?3)",
+        params![command.id, approver, now()],
+    )?;
+    Ok(c.query_row(
+        "SELECT id FROM devices WHERE fingerprint = ?1 AND removed = 0",
+        [approver],
+        |r| r.get(0),
+    )
+    .optional()?)
+}
+
+/// A request made: its id, a folder to make on Nextcloud first, and the
+/// approver to wake.
+type Made = (String, Option<(Credentials, String)>, Option<String>);
+
 /// `POST /api/devices/{id}/commands`: asks a device to do something.
 pub async fn create(
     State(state): State<AppState>,
@@ -581,61 +628,59 @@ pub async fn create(
     let device_id = device.clone();
     let id = state
         .db
-        .call(
-            move |c| -> ApiResult<(String, Option<(Credentials, String)>)> {
-                let target: Target = c
-                    .query_row(
-                        "SELECT name, group_id, info FROM devices WHERE id = ?1 AND removed = 0",
-                        [&device],
-                        |r| {
-                            Ok(Target {
-                                name: r.get(0)?,
-                                group_id: r.get(1)?,
-                                info: serde_json::from_str(&r.get::<_, String>(2)?)
-                                    .unwrap_or_default(),
-                            })
-                        },
-                    )
-                    .optional()?
-                    .ok_or_else(|| ApiError::not_found("no such device"))?;
-                let groups = crate::dashboard::groups(c)?;
-                let group = groups
-                    .iter()
-                    .find(|g| g.id == target.group_id)
-                    .ok_or_else(|| ApiError::not_found("no such device"))?;
-                if !user.sees(&group.viewer_groups, &config) {
-                    return Err(ApiError::not_found("no such device"));
-                }
-                let mut action = request.action;
-                check_action(c, &device, &target, &mut action)?;
-                let make = folder_to_make(c, &device, &action);
-                let grantable = action.kind().grantable();
-                let command = Command {
-                    id: random_id::<10>(),
-                    device: device.clone(),
-                    action,
-                    by: AdminRef {
-                        subject: user.subject.clone(),
-                        name: user.name.clone(),
+        .call(move |c| -> ApiResult<Made> {
+            let target: Target = c
+                .query_row(
+                    "SELECT name, group_id, info FROM devices WHERE id = ?1 AND removed = 0",
+                    [&device],
+                    |r| {
+                        Ok(Target {
+                            name: r.get(0)?,
+                            group_id: r.get(1)?,
+                            info: serde_json::from_str(&r.get::<_, String>(2)?).unwrap_or_default(),
+                        })
                     },
-                    reason,
-                    created: now(),
-                    expires: now() + LIFETIME,
-                    // What can't be undone is asked for every time: no grant
-                    // lengths offered, whatever the group allows.
-                    grant_minutes: if grantable {
-                        group.grant_minutes.clone()
-                    } else {
-                        Vec::new()
-                    },
-                };
-                let signed = Signed::sign(
-                    &command,
-                    &freesize_proto::KeyPair::from_seed(key),
-                    Purpose::Command,
-                );
-                let summary = command.action.summary();
-                c.execute(
+                )
+                .optional()?
+                .ok_or_else(|| ApiError::not_found("no such device"))?;
+            let groups = crate::dashboard::groups(c)?;
+            let group = groups
+                .iter()
+                .find(|g| g.id == target.group_id)
+                .ok_or_else(|| ApiError::not_found("no such device"))?;
+            if !user.sees(&group.viewer_groups, &config) {
+                return Err(ApiError::not_found("no such device"));
+            }
+            let mut action = request.action;
+            check_action(c, &device, &target, &mut action)?;
+            let make = folder_to_make(c, &device, &action);
+            let grantable = action.kind().grantable();
+            let command = Command {
+                id: random_id::<10>(),
+                device: device.clone(),
+                action,
+                by: AdminRef {
+                    subject: user.subject.clone(),
+                    name: user.name.clone(),
+                },
+                reason,
+                created: now(),
+                expires: now() + LIFETIME,
+                // What can't be undone is asked for every time: no grant
+                // lengths offered, whatever the group allows.
+                grant_minutes: if grantable {
+                    group.grant_minutes.clone()
+                } else {
+                    Vec::new()
+                },
+            };
+            let signed = Signed::sign(
+                &command,
+                &freesize_proto::KeyPair::from_seed(key),
+                Purpose::Command,
+            );
+            let summary = command.action.summary();
+            c.execute(
                 "INSERT INTO commands (id, device_id, kind, summary, admin, admin_name, created,
                                        expires, signed, state, updated)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?7)",
@@ -654,20 +699,23 @@ pub async fn create(
                     serde_json::to_string(&signed).unwrap_or_default(),
                 ],
             )?;
-                audit::append(
-                    c,
-                    &user.name,
-                    "request made",
-                    Some(&device),
-                    &json!({"request": command.id, "summary": summary,
+            audit::append(
+                c,
+                &user.name,
+                "request made",
+                Some(&device),
+                &json!({"request": command.id, "summary": summary,
                         "action": command.action, "reason": command.reason}),
-                )?;
-                Ok((command.id, make))
-            },
-        )
+            )?;
+            let approver = ask_early(c, &device, &target, &command)?;
+            Ok((command.id, make, approver))
+        })
         .await?;
-    let (id, make) = id;
+    let (id, make, approver) = id;
     state.wakers.wake(&device_id);
+    if let Some(approver) = approver {
+        state.wakers.wake(&approver);
+    }
     if let Some((creds, path)) = make {
         // Best effort: the client makes the folder itself when it uploads;
         // this only has it there first, so other devices see it sooner.
@@ -900,6 +948,24 @@ pub async fn pending_for(
                 c.execute("UPDATE approvals SET delivered = ?1 WHERE command_id = ?2", params![now, id])?;
             }
 
+            // Requests it was asked about that ended without its answer:
+            // withdrawn, expired, or refused by the device.
+            let mut stmt = c.prepare(&format!(
+                "SELECT a.command_id FROM approvals a JOIN commands m ON m.id = a.command_id
+                 WHERE a.approver = ?1 AND a.delivered IS NOT NULL AND a.decision IS NULL
+                   AND a.withdrawn_delivered IS NULL AND m.state NOT IN {OPEN}"
+            ))?;
+            let ended: Vec<String> = stmt
+                .query_map([&device.fingerprint], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for id in ended {
+                c.execute(
+                    "UPDATE approvals SET withdrawn_delivered = ?1 WHERE command_id = ?2",
+                    params![now, id],
+                )?;
+                response.cancelled.push(id);
+            }
+
             // Its approver's decisions.
             let mut stmt = c.prepare(&format!(
                 "SELECT a.command_id, a.decision FROM approvals a JOIN commands m ON m.id = a.command_id
@@ -1054,7 +1120,7 @@ pub async fn decide(
                 .query_row(
                     "SELECT m.device_id, m.signed, m.summary, a.approver, a.decision FROM commands m
                      JOIN approvals a ON a.command_id = m.id
-                     WHERE m.id = ?1 AND m.state = 'needs_approver'",
+                     WHERE m.id = ?1 AND m.state IN ('queued', 'delivered', 'shown', 'needs_approver')",
                     [&decision.command],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )

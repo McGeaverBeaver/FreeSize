@@ -304,6 +304,11 @@ const MIGRATIONS: &[&str] = &[
         report TEXT NOT NULL
     );
     ",
+    // 11: when the approver was told a request it was asked about ended
+    // without its answer (0.20.7).
+    "
+    ALTER TABLE approvals ADD COLUMN withdrawn_delivered INTEGER;
+    ",
 ];
 
 impl Db {
