@@ -34,6 +34,9 @@
 # left on disk. FREESIZE_IMAGE names another image (log in to its registry
 # yourself); --no-image leaves the image out.
 #
+# Set CARGO_BUILD_JOBS to choose how many crates build at once; without
+# it, scripts/build-memory.sh picks fewer than the CPUs when memory is short.
+#
 # Needs everything android/build-apk.sh needs, the MinGW cross-compiler and
 # zip for the Windows build, musl-tools for the Unraid plugin's static build,
 # for the image the aarch64 cross-compiler and Docker with buildx, and the
@@ -240,6 +243,11 @@ if [ "${free_gb:-0}" -lt 15 ]; then
     echo "warning: only ${free_gb} GB free here; a release build needs about 15 GB." >&2
     echo "         If it fails with \"Bus error\" or \"No space left\", see \"Disk space\" in docs/DEVELOPING.md." >&2
 fi
+
+# Fewer parallel jobs when memory is short, and no leftovers of a build
+# that ran out of it.
+# shellcheck source=scripts/build-memory.sh
+source scripts/build-memory.sh
 
 dist="dist/$tag"
 rm -rf "$dist"

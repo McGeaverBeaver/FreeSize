@@ -29,6 +29,8 @@ source scripts/android/env.sh
 
 target="${CARGO_TARGET_DIR:-target}"
 output="${1:-$target/release/apk/FreeSize.apk}"
+# shellcheck source=scripts/build-memory.sh
+source scripts/build-memory.sh
 
 # Android 15+ devices may use 16 KB memory pages, and Google Play requires
 # native libraries built for them. cargo-apk ignores .cargo/config.toml

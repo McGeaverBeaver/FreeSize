@@ -101,6 +101,25 @@ gh auth login                    # GitHub.com, HTTPS, log in with a web browser
 `gh auth login` shows a code and a link; open the link on any computer, enter
 the code, and the machine can publish releases to your repositories.
 
+### Memory
+
+A release build runs one compiler per CPU, and each can take 1.5 GB or more.
+When memory runs out, the build stops with "Cannot allocate memory (os error
+12)", often followed by "can't find crate for `std`" (a side effect, not a
+missing toolchain). `scripts/release.sh` and `scripts/android/build-apk.sh`
+count free memory and swap first and build fewer crates at once when it's
+short; set `CARGO_BUILD_JOBS` to choose yourself, e.g.
+`CARGO_BUILD_JOBS=2 scripts/release.sh`. They also remove the half-written
+`.tmp*.temp-archive` folders such a failure leaves, so `cargo clean` isn't
+needed. `free -h` shows memory and swap; a 4 GB swap file helps a VM with
+8 GB or less:
+
+```sh
+sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
 ### Disk space
 
 Give the build machine at least 40 GB of disk and 8 GB of RAM. A release needs
