@@ -361,9 +361,18 @@ if [ -n "$image" ]; then
         sed -n '/^# The final image/,$p' Dockerfile
     } >"$work/Dockerfile"
     # A builder of its own, as Actions' setup-buildx makes: the default one
-    # can't always build for two platforms.
-    docker buildx inspect freesize >/dev/null 2>&1 ||
+    # can't always build for two platforms. One that won't start (its
+    # state volume went missing, e.g. after Docker's data folder moved) is
+    # made again; it holds only a build cache.
+    if ! docker buildx inspect --bootstrap freesize >/dev/null 2>&1; then
+        if docker buildx inspect freesize >/dev/null 2>&1; then
+            echo "    the freesize builder won't start; making it again" >&2
+        fi
+        docker buildx rm freesize >/dev/null 2>&1 || true
+        docker rm -f buildx_buildkit_freesize0 >/dev/null 2>&1 || true
+        docker volume rm buildx_buildkit_freesize0_state >/dev/null 2>&1 || true
         docker buildx create --name freesize --driver docker-container >/dev/null
+    fi
     labels=(--label "org.opencontainers.image.version=$version"
         --label "org.opencontainers.image.revision=$commit")
     if [ -n "$repo" ]; then
