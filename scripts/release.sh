@@ -50,7 +50,10 @@
 #   --no-image    leave out the Docker image
 #   --publish     make this version's draft public (if it isn't already)
 #                 and point the image's latest tag at it; builds nothing
-set -euo pipefail
+set -Eeuo pipefail
+# A failing command stops the script; say which, since some (gh's, in a
+# pipe) fail without a word.
+trap 'echo "error: release.sh stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 cd "$(dirname "$0")/.."
 
 usage() {
@@ -123,8 +126,13 @@ registry_login() {
         *) return 0 ;;
     esac
     # Classic tokens list their scopes; fine-grained ones don't.
-    local scopes
-    scopes="$(gh api -i user 2>/dev/null | tr -d '\r' | sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: //p')"
+    local headers scopes
+    if ! headers="$(gh api -i user 2>&1)"; then
+        echo "error: the GitHub CLI can't reach GitHub; check \`gh auth status\`:" >&2
+        echo "$headers" | tail -n 3 >&2
+        exit 1
+    fi
+    scopes="$(printf '%s\n' "$headers" | tr -d '\r' | sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: //p')"
     if [ -n "$scopes" ] && [[ "$scopes" != *write:packages* ]]; then
         echo "error: the GitHub CLI's token can't push packages; run: gh auth refresh -s write:packages" >&2
         exit 1
