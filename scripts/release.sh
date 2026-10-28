@@ -395,10 +395,23 @@ if [ -n "$image" ]; then
         output=(--push)
     fi
     # No provenance attestations: they show up as an extra "unknown/unknown"
-    # platform next to amd64 and arm64.
-    docker buildx build --builder freesize --platform linux/amd64,linux/arm64 \
-        --file "$work/Dockerfile" --build-context prebuilt="$hub" \
-        --provenance=false "${labels[@]}" --tag "$image:$version" "${output[@]}" .
+    # platform next to amd64 and arm64. A download cut short leaves a bad
+    # layer in the builder's cache ("unexpected commit size ... failed
+    # precondition"), so a failure empties the cache and tries again.
+    for try in 1 2 3; do
+        if docker buildx build --builder freesize --platform linux/amd64,linux/arm64 \
+            --file "$work/Dockerfile" --build-context prebuilt="$hub" \
+            --provenance=false "${labels[@]}" --tag "$image:$version" "${output[@]}" .; then
+            break
+        fi
+        if [ "$try" -eq 3 ]; then
+            echo "error: the image didn't build in 3 tries; the files in $dist are fine" >&2
+            exit 1
+        fi
+        echo "    the image build failed; emptying the builder's cache and trying again ($((try + 1)) of 3)" >&2
+        docker buildx prune --builder freesize --all --force >/dev/null 2>&1 || true
+        sleep 10
+    done
 fi
 
 if ! $publish; then
