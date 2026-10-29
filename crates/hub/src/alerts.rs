@@ -47,6 +47,9 @@ pub struct Rules {
     /// A device whose junk cleaner found at least this much, in GB; 0
     /// turns it off.
     pub junk_gb: u32,
+    /// A device not scanned for this many days is marked "out of date" on
+    /// its card; 0 turns it off. A mark, not an alert (0.21).
+    pub stale_days: u32,
 }
 
 impl Default for Rules {
@@ -58,6 +61,7 @@ impl Default for Rules {
             offline_hours: 24,
             requests: true,
             junk_gb: 2,
+            stale_days: 7,
         }
     }
 }
@@ -79,6 +83,9 @@ impl Rules {
         if self.junk_gb > 100_000 {
             return Err(ApiError::bad_request("junk: at most 100000 GB"));
         }
+        if self.stale_days > 365 {
+            return Err(ApiError::bad_request("out of date: at most 365 days"));
+        }
         Ok(())
     }
 }
@@ -97,7 +104,7 @@ pub fn load_rules(c: &Connection) -> rusqlite::Result<Rules> {
 }
 
 /// Something wrong right now.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Firing {
     /// Stays the same while it lasts, e.g. `disk_full:DEVICE:/mnt/user`.
     pub key: String,
@@ -107,6 +114,10 @@ pub struct Firing {
     pub severity: &'static str,
     pub title: String,
     pub message: String,
+    /// How bad it is, bigger is worse, for telling when an acknowledged
+    /// alert got clearly worse: percent full, bytes grown, minus days left,
+    /// hours quiet, bytes of junk.
+    pub measure: Option<f64>,
 }
 
 /// What alerts need from what a device says about itself.
@@ -209,6 +220,7 @@ pub fn evaluate(
                     kind: "disk_full",
                     device_id: Some(disk.device.clone()),
                     severity: if full >= 98.0 { "critical" } else { "warning" },
+                    measure: Some(full),
                     title: format!("{}: {label} is {full:.0}% full", disk.device_name),
                     message: format!(
                         "{} free of {} on {}.",
@@ -245,6 +257,7 @@ pub fn evaluate(
                     kind: "growth",
                     device_id: Some(disk.device.clone()),
                     severity: "warning",
+                    measure: Some(grew as f64),
                     title: format!(
                         "{}: {label} grew {} in {} days",
                         disk.device_name,
@@ -274,6 +287,7 @@ pub fn evaluate(
                         kind: "forecast",
                         device_id: Some(disk.device.clone()),
                         severity: "warning",
+                        measure: Some(-days),
                         title: format!(
                             "{}: {label} full in about {} days",
                             disk.device_name,
@@ -316,6 +330,7 @@ pub fn evaluate(
                     kind: "offline",
                     device_id: Some(id),
                     severity: "warning",
+                    measure: Some(hours as f64),
                     title: format!("{name} hasn't reported for {hours} hours"),
                     message: "Check that the machine is on and the FreeSize agent is running."
                         .into(),
@@ -347,6 +362,7 @@ pub fn evaluate(
                     kind: "junk",
                     device_id: Some(id),
                     severity: "info",
+                    measure: Some(junk.total as f64),
                     title: format!(
                         "{name}: {} of junk to review",
                         freesize_core::format_size(junk.total)
@@ -404,6 +420,7 @@ pub fn evaluate(
                 kind: "request",
                 device_id: Some(device),
                 severity: "info",
+                measure: None,
                 title: format!("{name}: a request is waiting"),
                 message: format!("{summary}. Open FreeSize on {where_} to approve or deny it."),
             });
@@ -412,7 +429,7 @@ pub fn evaluate(
     Ok(firing)
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Alert {
     pub id: i64,
     pub key: String,
@@ -424,10 +441,28 @@ pub struct Alert {
     pub message: String,
     pub opened: i64,
     pub resolved: Option<i64>,
+    /// "ack" or "snooze" once an admin hushed it: listed, but it doesn't
+    /// count on the device and sends nothing until it's over, the snooze
+    /// ends or it gets clearly worse.
+    pub hushed: Option<String>,
+    pub hushed_by: Option<String>,
+    pub hushed_at: Option<i64>,
+    /// When a snooze ends.
+    pub hushed_until: Option<i64>,
+    #[serde(skip)]
+    pub measure: Option<f64>,
+    #[serde(skip)]
+    pub hushed_severity: Option<String>,
+    #[serde(skip)]
+    pub hushed_measure: Option<f64>,
 }
 
 const ALERT_COLUMNS: &str = "a.id, a.key, a.kind, a.device_id, d.name, a.severity, a.title, \
-                             a.message, a.opened, a.resolved";
+                             a.message, a.opened, a.resolved, a.hushed, a.hushed_by, \
+                             a.hushed_at, a.hushed_until, a.measure, a.hushed_severity, \
+                             a.hushed_measure";
+/// The number of columns in `ALERT_COLUMNS`.
+const ALERT_COLUMN_COUNT: usize = 17;
 
 fn alert_row(r: &rusqlite::Row) -> rusqlite::Result<Alert> {
     Ok(Alert {
@@ -441,6 +476,13 @@ fn alert_row(r: &rusqlite::Row) -> rusqlite::Result<Alert> {
         message: r.get(7)?,
         opened: r.get(8)?,
         resolved: r.get(9)?,
+        hushed: r.get(10)?,
+        hushed_by: r.get(11)?,
+        hushed_at: r.get(12)?,
+        hushed_until: r.get(13)?,
+        measure: r.get(14)?,
+        hushed_severity: r.get(15)?,
+        hushed_measure: r.get(16)?,
     })
 }
 
@@ -451,6 +493,22 @@ fn active_alerts(c: &Connection) -> rusqlite::Result<Vec<Alert>> {
     ))?;
     let rows = stmt.query_map([], alert_row)?;
     rows.collect()
+}
+
+/// Whether an alert is clearly worse than when it was hushed: a forecast
+/// at half the days and under a week, a disk 3 points fuller, twice the
+/// growth or junk. Being quiet longer never counts: that's what was
+/// acknowledged.
+fn clearly_worse(kind: &str, then: Option<f64>, now: Option<f64>) -> bool {
+    let (Some(then), Some(now)) = (then, now) else {
+        return false;
+    };
+    match kind {
+        "forecast" => -now < 7.0_f64.min(-then / 2.0),
+        "disk_full" => now >= then + 3.0,
+        "growth" | "junk" => then > 0.0 && now >= then * 2.0,
+        _ => false,
+    }
 }
 
 /// An alert to send: it started (or got worse), or it's over.
@@ -474,24 +532,58 @@ pub fn sync(c: &Connection, firing: Vec<Firing>, now: i64) -> rusqlite::Result<V
         match active.get(&fire.key) {
             Some(alert) => {
                 c.execute(
-                    "UPDATE alerts SET title = ?1, message = ?2, severity = ?3 WHERE id = ?4",
-                    params![fire.title, fire.message, fire.severity, alert.id],
+                    "UPDATE alerts SET title = ?1, message = ?2, severity = ?3, measure = ?4
+                     WHERE id = ?5",
+                    params![
+                        fire.title,
+                        fire.message,
+                        fire.severity,
+                        fire.measure,
+                        alert.id
+                    ],
                 )?;
-                if severity_rank(fire.severity) > severity_rank(&alert.severity) {
-                    let mut worse = alert.clone();
-                    worse.severity = fire.severity.into();
-                    worse.title = fire.title;
-                    worse.message = fire.message;
+                let mut current = alert.clone();
+                current.severity = fire.severity.into();
+                current.title = fire.title;
+                current.message = fire.message;
+                current.measure = fire.measure;
+                if alert.hushed.is_some() {
+                    let snooze_over = alert.hushed.as_deref() == Some("snooze")
+                        && alert.hushed_until.is_some_and(|t| t <= now);
+                    let more_severe = severity_rank(fire.severity)
+                        > severity_rank(alert.hushed_severity.as_deref().unwrap_or("info"));
+                    if snooze_over
+                        || more_severe
+                        || clearly_worse(&alert.kind, alert.hushed_measure, fire.measure)
+                    {
+                        c.execute(
+                            "UPDATE alerts SET hushed = NULL, hushed_by = NULL, hushed_at = NULL,
+                                    hushed_until = NULL, hushed_severity = NULL,
+                                    hushed_measure = NULL
+                             WHERE id = ?1",
+                            [alert.id],
+                        )?;
+                        current.hushed = None;
+                        current.hushed_by = None;
+                        current.hushed_at = None;
+                        current.hushed_until = None;
+                        notices.push(Notice {
+                            alert: current,
+                            resolved: false,
+                        });
+                    }
+                } else if severity_rank(fire.severity) > severity_rank(&alert.severity) {
                     notices.push(Notice {
-                        alert: worse,
+                        alert: current,
                         resolved: false,
                     });
                 }
             }
             None => {
                 c.execute(
-                    "INSERT INTO alerts (key, kind, device_id, severity, title, message, opened)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO alerts (key, kind, device_id, severity, title, message, opened,
+                                         measure)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         fire.key,
                         fire.kind,
@@ -499,7 +591,8 @@ pub fn sync(c: &Connection, firing: Vec<Firing>, now: i64) -> rusqlite::Result<V
                         fire.severity,
                         fire.title,
                         fire.message,
-                        now
+                        now,
+                        fire.measure
                     ],
                 )?;
                 let id = c.last_insert_rowid();
@@ -523,6 +616,13 @@ pub fn sync(c: &Connection, firing: Vec<Firing>, now: i64) -> rusqlite::Result<V
                         message: fire.message,
                         opened: now,
                         resolved: None,
+                        hushed: None,
+                        hushed_by: None,
+                        hushed_at: None,
+                        hushed_until: None,
+                        measure: fire.measure,
+                        hushed_severity: None,
+                        hushed_measure: None,
                     },
                     resolved: false,
                 });
@@ -537,7 +637,8 @@ pub fn sync(c: &Connection, firing: Vec<Firing>, now: i64) -> rusqlite::Result<V
             "UPDATE alerts SET resolved = ?1 WHERE id = ?2",
             params![now, alert.id],
         )?;
-        // A request that was answered needs no message.
+        // A request that was answered needs no message. A hushed alert
+        // still says it's over.
         if alert.kind != "request" {
             alert.resolved = Some(now);
             notices.push(Notice {
@@ -551,6 +652,41 @@ pub fn sync(c: &Connection, firing: Vec<Firing>, now: i64) -> rusqlite::Result<V
         [now - KEEP_RESOLVED],
     )?;
     Ok(notices)
+}
+
+/// Hushes an alert that's on: `until` is when a snooze ends, None to
+/// acknowledge it. False if it's over or gone.
+pub fn hush(
+    c: &Connection,
+    id: i64,
+    by: &str,
+    until: Option<i64>,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    let changed = c.execute(
+        "UPDATE alerts SET hushed = ?1, hushed_by = ?2, hushed_at = ?3, hushed_until = ?4,
+                hushed_severity = severity, hushed_measure = measure
+         WHERE id = ?5 AND resolved IS NULL",
+        params![
+            if until.is_some() { "snooze" } else { "ack" },
+            by,
+            now,
+            until,
+            id
+        ],
+    )?;
+    Ok(changed > 0)
+}
+
+/// Undoes `hush`. Sends nothing: whoever did it is looking at it.
+pub fn unhush(c: &Connection, id: i64) -> rusqlite::Result<bool> {
+    let changed = c.execute(
+        "UPDATE alerts SET hushed = NULL, hushed_by = NULL, hushed_at = NULL, hushed_until = NULL,
+                hushed_severity = NULL, hushed_measure = NULL
+         WHERE id = ?1 AND resolved IS NULL AND hushed IS NOT NULL",
+        [id],
+    )?;
+    Ok(changed > 0)
 }
 
 // ----- Channels ------------------------------------------------------------
@@ -992,7 +1128,9 @@ pub async fn list(State(state): State<AppState>, user: User) -> ApiResult<Json<V
                  ORDER BY a.resolved IS NOT NULL, a.opened DESC LIMIT 300"
             ))?;
             let rows: Vec<(Alert, Option<i64>)> = stmt
-                .query_map([now() - 30 * 86_400], |r| Ok((alert_row(r)?, r.get(10)?)))?
+                .query_map([now() - 30 * 86_400], |r| {
+                    Ok((alert_row(r)?, r.get(ALERT_COLUMN_COUNT)?))
+                })?
                 .collect::<rusqlite::Result<_>>()?;
             let (active, recent): (Vec<Alert>, Vec<Alert>) = rows
                 .into_iter()
@@ -1036,6 +1174,121 @@ pub async fn set_rules(
         })
         .await?;
     Ok(Json(saved))
+}
+
+/// What an admin does with an alert that's on.
+#[derive(Deserialize)]
+pub struct Hush {
+    /// Snooze for 1, 7 or 30 days; without it, acknowledge.
+    #[serde(default)]
+    pub days: Option<u32>,
+}
+
+/// The alert `id` if `user` may see its device.
+fn find_alert(c: &Connection, user: &User, config: &crate::Config, id: i64) -> ApiResult<Alert> {
+    let groups = visible(c, user, config)?;
+    let (alert, group): (Alert, Option<i64>) = c
+        .query_row(
+            &format!(
+                "SELECT {ALERT_COLUMNS}, d.group_id FROM alerts a
+                 LEFT JOIN devices d ON d.id = a.device_id WHERE a.id = ?1"
+            ),
+            [id],
+            |r| Ok((alert_row(r)?, r.get(ALERT_COLUMN_COUNT)?)),
+        )
+        .optional()?
+        .ok_or_else(|| ApiError::not_found("no such alert"))?;
+    if group.is_some_and(|g| !groups.contains(&g)) {
+        return Err(ApiError::not_found("no such alert"));
+    }
+    Ok(alert)
+}
+
+/// `POST /api/alerts/{id}/hush`: acknowledge, or with `days` snooze, an
+/// alert that's on (admins).
+pub async fn hush_alert(
+    State(state): State<AppState>,
+    Admin(user): Admin,
+    Path(id): Path<i64>,
+    Json(body): Json<Hush>,
+) -> ApiResult<Json<Value>> {
+    if body.days.is_some_and(|d| ![1, 7, 30].contains(&d)) {
+        return Err(ApiError::bad_request("snooze for 1, 7 or 30 days"));
+    }
+    let config = state.config.clone();
+    state
+        .db
+        .call(move |c| -> ApiResult<()> {
+            let alert = find_alert(c, &user, &config, id)?;
+            let now = now();
+            let until = body.days.map(|d| now + i64::from(d) * 86_400);
+            if !hush(c, id, &user.name, until, now)? {
+                return Err(ApiError::bad_request("that alert is over"));
+            }
+            audit::append(
+                c,
+                &user.name,
+                if until.is_some() {
+                    "alert snoozed"
+                } else {
+                    "alert acknowledged"
+                },
+                alert.device_id.as_deref(),
+                &json!({"alert": alert.title, "days": body.days}),
+            )?;
+            Ok(())
+        })
+        .await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// `DELETE /api/alerts/{id}/hush`: shows an acknowledged or snoozed alert
+/// again (admins).
+pub async fn unhush_alert(
+    State(state): State<AppState>,
+    Admin(user): Admin,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<Value>> {
+    let config = state.config.clone();
+    state
+        .db
+        .call(move |c| -> ApiResult<()> {
+            let alert = find_alert(c, &user, &config, id)?;
+            if unhush(c, id)? {
+                audit::append(
+                    c,
+                    &user.name,
+                    "alert shown again",
+                    alert.device_id.as_deref(),
+                    &json!({"alert": alert.title}),
+                )?;
+            }
+            Ok(())
+        })
+        .await?;
+    Ok(Json(json!({"ok": true})))
+}
+
+/// `DELETE /api/alerts/over`: clears the alerts that are over (admins).
+pub async fn clear_over(
+    State(state): State<AppState>,
+    Admin(user): Admin,
+) -> ApiResult<Json<Value>> {
+    let cleared = state
+        .db
+        .call(move |c| -> rusqlite::Result<usize> {
+            let cleared = c.execute("DELETE FROM alerts WHERE resolved IS NOT NULL", [])?;
+            audit::append(
+                c,
+                &user.name,
+                "alerts that were over cleared",
+                None,
+                &json!({"alerts": cleared}),
+            )?;
+            Ok(cleared)
+        })
+        .await?;
+    Ok(Json(json!({"cleared": cleared})))
 }
 
 /// `GET /api/alerts/channels`: where alerts go, without their secrets.
@@ -1201,6 +1454,7 @@ pub async fn test_channel(
             ),
             opened: now(),
             resolved: None,
+            ..Alert::default()
         },
         resolved: false,
     };
@@ -1318,6 +1572,7 @@ mod tests {
             offline_hours: 0,
             requests: false,
             junk_gb: 2,
+            stale_days: 0,
         };
         db.now(|c| {
             c.execute(
@@ -1470,6 +1725,80 @@ mod tests {
             token: String::new(),
         };
         assert!(bad.check().is_err());
+    }
+
+    fn forecast(days: f64) -> Firing {
+        Firing {
+            key: "forecast:d:/mnt/disk1".into(),
+            kind: "forecast",
+            device_id: None,
+            severity: "warning",
+            title: format!("disk1 full in about {days} days"),
+            message: String::new(),
+            measure: Some(-days),
+        }
+    }
+
+    #[test]
+    fn acknowledged_alerts_stay_quiet_until_clearly_worse_or_over() {
+        let db = setup();
+        db.now(|c| {
+            assert_eq!(sync(c, vec![forecast(28.0)], 100).unwrap().len(), 1);
+            let id = active_alerts(c).unwrap()[0].id;
+            assert!(hush(c, id, "Bob", None, 110).unwrap());
+            // A little worse: still quiet.
+            assert!(sync(c, vec![forecast(20.0)], 200).unwrap().is_empty());
+            let alert = &active_alerts(c).unwrap()[0];
+            assert_eq!(alert.hushed.as_deref(), Some("ack"));
+            assert_eq!(alert.hushed_by.as_deref(), Some("Bob"));
+            // Under a week and half of what it was: back, and sent.
+            let notices = sync(c, vec![forecast(6.0)], 300).unwrap();
+            assert_eq!(notices.len(), 1);
+            assert!(!notices[0].resolved);
+            assert!(active_alerts(c).unwrap()[0].hushed.is_none());
+            // Hushed again, then over: "back to normal" still goes out.
+            assert!(hush(c, id, "Bob", None, 310).unwrap());
+            let notices = sync(c, vec![], 400).unwrap();
+            assert_eq!(notices.len(), 1);
+            assert!(notices[0].resolved);
+            // Nothing to hush once it's over.
+            assert!(!hush(c, id, "Bob", None, 410).unwrap());
+        });
+    }
+
+    #[test]
+    fn a_snooze_ends_on_its_own() {
+        let db = setup();
+        db.now(|c| {
+            sync(c, vec![forecast(28.0)], 100).unwrap();
+            let id = active_alerts(c).unwrap()[0].id;
+            assert!(hush(c, id, "Bob", Some(100 + 86_400), 100).unwrap());
+            assert!(
+                sync(c, vec![forecast(27.0)], 100 + 3600)
+                    .unwrap()
+                    .is_empty()
+            );
+            let notices = sync(c, vec![forecast(27.0)], 100 + 86_400).unwrap();
+            assert_eq!(notices.len(), 1);
+            assert!(active_alerts(c).unwrap()[0].hushed.is_none());
+            // Shown again by hand: nothing is sent.
+            assert!(hush(c, id, "Bob", Some(200_000), 100 + 86_400).unwrap());
+            assert!(unhush(c, id).unwrap());
+            assert!(!unhush(c, id).unwrap());
+        });
+    }
+
+    #[test]
+    fn what_counts_as_clearly_worse() {
+        assert!(clearly_worse("forecast", Some(-28.0), Some(-6.9)));
+        assert!(!clearly_worse("forecast", Some(-28.0), Some(-8.0)));
+        assert!(!clearly_worse("forecast", Some(-5.0), Some(-3.0)));
+        assert!(clearly_worse("forecast", Some(-5.0), Some(-2.0)));
+        assert!(clearly_worse("disk_full", Some(91.0), Some(94.0)));
+        assert!(!clearly_worse("disk_full", Some(91.0), Some(93.0)));
+        assert!(clearly_worse("junk", Some(2e9), Some(4e9)));
+        assert!(!clearly_worse("offline", Some(24.0), Some(500.0)));
+        assert!(!clearly_worse("request", None, None));
     }
 
     #[test]

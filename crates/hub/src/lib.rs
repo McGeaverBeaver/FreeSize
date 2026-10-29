@@ -14,6 +14,7 @@ pub mod dashboard;
 pub mod db;
 pub mod devices;
 pub mod error;
+pub mod events;
 pub mod history;
 pub mod limits;
 pub mod maintenance;
@@ -171,6 +172,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(dashboard::remove),
         )
         .route("/api/devices/{id}/audit", get(dashboard::device_audit))
+        .route("/api/devices/{id}/events", get(events::for_device))
         .route("/api/devices/{id}/report", get(reports::device_report))
         .route(
             "/api/devices/{id}/scans",
@@ -182,6 +184,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/scans/{id}/export", get(reports::export_scan))
         .route("/api/search", get(reports::search))
         .route("/api/alerts", get(alerts::list))
+        .route(
+            "/api/alerts/over",
+            axum::routing::delete(alerts::clear_over),
+        )
+        .route(
+            "/api/alerts/{id}/hush",
+            post(alerts::hush_alert).delete(alerts::unhush_alert),
+        )
         .route(
             "/api/alerts/rules",
             get(alerts::get_rules).put(alerts::set_rules),

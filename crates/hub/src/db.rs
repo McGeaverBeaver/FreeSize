@@ -309,6 +309,32 @@ const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE approvals ADD COLUMN withdrawn_delivered INTEGER;
     ",
+    // 12: alerts an admin acknowledged or snoozed, with how bad they were
+    // then; and the jobs devices finished, for the Activity tab (0.21).
+    "
+    ALTER TABLE alerts ADD COLUMN measure REAL;
+    -- 'ack' or 'snooze'; NULL while nobody has hushed it.
+    ALTER TABLE alerts ADD COLUMN hushed TEXT;
+    ALTER TABLE alerts ADD COLUMN hushed_by TEXT;
+    ALTER TABLE alerts ADD COLUMN hushed_at INTEGER;
+    ALTER TABLE alerts ADD COLUMN hushed_until INTEGER;
+    ALTER TABLE alerts ADD COLUMN hushed_severity TEXT;
+    ALTER TABLE alerts ADD COLUMN hushed_measure REAL;
+
+    CREATE TABLE events (
+        id INTEGER PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        time INTEGER NOT NULL,
+        -- scan, junk, apps, sync or cloud.
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        ok INTEGER NOT NULL DEFAULT 1,
+        detail TEXT NOT NULL DEFAULT '',
+        -- The same job again within the hour adds one here.
+        repeats INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX events_by_device ON events (device_id, time);
+    ",
 ];
 
 impl Db {

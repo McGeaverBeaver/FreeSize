@@ -75,7 +75,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.20.7)
+## Where things stand (0.21.0)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -222,6 +222,12 @@ compiling inside Docker.
   (`commands::ask_early`; the app only looks on Nextcloud's cron), tells
   approvers about requests that ended unanswered, and the running phone
   app notifies while out of sight (`HubJob.fromApp`).
+  0.21.0 (the Hub only): acknowledge, snooze and clear alerts
+  (`alerts::hush`, `clearly_worse`), devices' finished jobs as events
+  (`events.rs`) on the Activity tab, "Scanned / Checked in X ago" on
+  cards, ● ○ and "⚠ out of date" (`stale_days`). 0.21.1 has the devices
+  reporting failed jobs (three in a row alert). The Hub never starts scans
+  (the owner's call, 2026-10-29).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
      and linked to the repository. Claude Code runs as Remote Control in

@@ -1047,7 +1047,23 @@ it scans as its user.
   point of hysteresis; a week's growth; a least-squares forecast over 30
   days of samples; quiet servers; waiting requests), opens and closes alerts
   and sends what changed to ntfy (JSON publishing), Gotify, Pushover or a
-  webhook signed with HMAC-SHA256.
+  webhook signed with HMAC-SHA256. Each alert keeps a `measure` (bigger is
+  worse: percent full, bytes grown, minus days left, hours quiet, bytes of
+  junk). An admin can hush one (0.21): acknowledge (`hushed = 'ack'`) or
+  snooze until a time (`'snooze'`); the severity and measure then are kept,
+  a hushed alert doesn't count on the device card and sends nothing, and
+  `sync` wakes it, with a notice, when a snooze ends, its severity rises or
+  `clearly_worse` says so (a forecast at half the days and under a week, 3
+  points fuller, twice the growth or junk). It still says when it's over.
+- `events.rs` (0.21): the jobs a device finished, one line each on its
+  Activity tab: a scan (always its own line), and junk, apps, Nextcloud
+  folder and Nextcloud file reports when they say something new
+  (`changed`: the report differs from the stored one once `taken` is left
+  out), folded into the last line of the same job within the hour. Times
+  are the report's own `taken`. `dashboard.rs` puts the newest of each kind
+  on the device (`checked`, falling back to the stored reports from before
+  0.21) and marks it `stale` when its newest scan, or a Nextcloud's newest
+  look at its files, is older than the `stale_days` alert rule.
 - `metrics.rs`: Prometheus text and the same as JSON, behind a bearer token
   compared in constant time.
 - `audit.rs`: an append-only log; each entry's hash covers its fields and the

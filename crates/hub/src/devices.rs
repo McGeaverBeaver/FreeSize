@@ -27,7 +27,8 @@ use tokio::sync::Notify;
 
 use crate::db::now;
 use crate::error::{ApiError, ApiResult};
-use crate::{AppState, Via, audit};
+use crate::{AppState, Via, audit, events};
+use freesize_core::format_size;
 
 /// Wakes a device's waiting poll when something arrives for it.
 #[derive(Default)]
@@ -413,9 +414,43 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
         }
     }
     if let Some(scan) = report.scan {
+        let name = if scan.label.is_empty() {
+            scan.root.clone()
+        } else {
+            scan.label.clone()
+        };
+        let mut detail = format!(
+            "{}, {} files",
+            format_size(scan.allocated),
+            thousands(scan.files)
+        );
+        if !scan.complete {
+            detail.push_str(", cut short");
+        } else if scan.errors > 0 {
+            detail.push_str(&format!(", {} unreadable", thousands(scan.errors)));
+        }
+        events::record(
+            &tx,
+            &device.id,
+            "scan",
+            &format!("Scanned {name}"),
+            &detail,
+            scan.taken.clamp(0, time),
+        )?;
         store_scan(&tx, &device.id, scan)?;
     }
     if let Some(apps) = report.apps {
+        let new = serde_json::to_value(&apps).unwrap_or_default();
+        if events::changed(previous(&tx, "apps", &device.id)?.as_deref(), &new) {
+            events::record(
+                &tx,
+                &device.id,
+                "apps",
+                "Apps checked",
+                &format!("{} apps", thousands(apps.apps.len() as u64)),
+                apps.taken.clamp(0, time),
+            )?;
+        }
         tx.execute(
             "INSERT OR REPLACE INTO apps (device_id, taken, report) VALUES (?1, ?2, ?3)",
             params![
@@ -435,7 +470,12 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
             ],
         )?;
     }
+    let mut junk_checked = None;
     if let Some(junk) = report.junk {
+        let new = serde_json::to_value(&junk).unwrap_or_default();
+        if events::changed(previous(&tx, "junk", &device.id)?.as_deref(), &new) {
+            junk_checked = Some(junk.taken.clamp(0, time));
+        }
         tx.execute(
             "INSERT OR REPLACE INTO junk (device_id, taken, report) VALUES (?1, ?2, ?3)",
             params![
@@ -445,7 +485,30 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
             ],
         )?;
     }
+    if let Some(taken) = junk_checked {
+        let detail = match crate::dashboard::junk_summary(&tx, &device.id)? {
+            Some(j) if j.safe > 0 => format!(
+                "{} found, {} safe to clean",
+                format_size(j.total),
+                format_size(j.safe)
+            ),
+            Some(j) => format!("{} found", format_size(j.total)),
+            None => String::new(),
+        };
+        events::record(&tx, &device.id, "junk", "Junk checked", &detail, taken)?;
+    }
     if let Some(sync) = report.sync {
+        let new = serde_json::to_value(&sync).unwrap_or_default();
+        if events::changed(previous(&tx, "sync", &device.id)?.as_deref(), &new) {
+            events::record(
+                &tx,
+                &device.id,
+                "sync",
+                "Nextcloud folders checked",
+                &format!("{} accounts", sync.accounts.len()),
+                sync.taken.clamp(0, time),
+            )?;
+        }
         tx.execute(
             "INSERT OR REPLACE INTO sync (device_id, taken, report) VALUES (?1, ?2, ?3)",
             params![
@@ -456,6 +519,17 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
         )?;
     }
     if let Some(cloud) = report.cloud {
+        let new = serde_json::to_value(&cloud).unwrap_or_default();
+        if events::changed(previous(&tx, "cloud", &device.id)?.as_deref(), &new) {
+            events::record(
+                &tx,
+                &device.id,
+                "cloud",
+                "Nextcloud files checked",
+                &format!("{} users", cloud.users.len()),
+                cloud.taken.clamp(0, time),
+            )?;
+        }
         tx.execute(
             "INSERT OR REPLACE INTO cloud (device_id, taken, report) VALUES (?1, ?2, ?3)",
             params![
@@ -476,6 +550,30 @@ pub fn store_report(c: &mut Connection, device: &Device, report: Report) -> rusq
         )?;
     }
     tx.commit()
+}
+
+/// The report a device sent last of one kind (`apps`, `junk`, `sync` or
+/// `cloud`, each a table keyed by device).
+fn previous(c: &Connection, table: &str, device: &str) -> rusqlite::Result<Option<String>> {
+    c.query_row(
+        &format!("SELECT report FROM {table} WHERE device_id = ?1"),
+        [device],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// A whole number with thousands separators: 12,345.
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 pub fn store_scan(c: &Connection, device: &str, mut scan: ScanReport) -> rusqlite::Result<i64> {

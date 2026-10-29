@@ -456,6 +456,19 @@ Parked, each with its reason:
   dialog still can't be shown, the same direct delete is tried before
   giving up. Errors now carry Android's own message rather than "Java
   exception was thrown".
+- 0.21.0, Hub alerts and activity, the Hub's part (decided under After
+  polish, 2026-10-29). Admins acknowledge an alert or snooze it for 1, 7
+  or 30 days, and clear the ones that are over, all in the audit log; a
+  hushed alert comes back on its own when clearly worse (a forecast at
+  half the days and under a week, a disk 3 points fuller, twice the growth
+  or junk) and still says when it's over. Devices' finished scans and
+  their junk, apps and Nextcloud reports are events on the Activity tab
+  (a filter: All, Scans and jobs, Requests), only when they say something
+  new and folded within the hour. Cards and the device page say "Scanned 2
+  h ago · Junk checked 6 h ago · Checked in just now", disks say when they
+  were updated, the online dot is ● or ○, and "⚠ out of date" marks a
+  device not scanned for 7 days (Alerts → When to alert; 0 turns it off).
+  Only the Hub changes; failures need the devices (0.21.1).
 - 0.20.7, Nextcloud requests reach the approver's phone (the owner's
   test, 2026-10-21: two requests, the phone never asked). The Nextcloud
   app looks for requests only when Nextcloud's cron runs it, every five
@@ -823,7 +836,8 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   app pairs, a duplicate it reports is byte-identical, a delete approved
   on the phone lands in Nextcloud's trash and comes back from there, and
   one user can't see another's files.
-- **0.21, Hub alerts and activity.** Decided with the owner on
+- **0.21, Hub alerts and activity.** 0.21.0 (the Hub's part) under Done;
+  0.21.1 (devices report failures) next. Decided with the owner on
   2026-10-29. The Hub stays informational: it never starts a scan or
   anything else on a device, and devices keep pushing on their own.
   - Alerts: an admin can Acknowledge one (it stays listed, greyed, stops

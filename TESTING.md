@@ -132,6 +132,16 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] A device behind the Hub's version is flagged; the Hub says when a
       newer release exists (with the update check on).
 - [ ] Alerts reach a channel; the message carries the audit log's head.
+- [ ] Alerts (0.21): Acknowledge greys an alert, the device card stops
+      counting it and nothing more is sent; Snooze for 1 day brings it
+      back (and sends it) a day later; Show again undoes either; when it's
+      over the channel still says so; Clear empties "Over"; each is in the
+      audit log with your name. Viewers see no buttons.
+- [ ] Cards (0.21): "Scanned … · Checked in …" match what each device did
+      last; ● when online, ○ when not; a device not scanned for 7 days
+      shows ⚠ out of date, and 0 in When to alert turns the mark off. A
+      new scan or junk check on a device appears on its Activity tab, and
+      the same report again doesn't add a line.
 - [ ] A device's Junk tab shows what its cleaner found; Clean on a safe
       rule is approved on the device and the tab updates; a junk alert
       fires above the limit set on the Alerts page.

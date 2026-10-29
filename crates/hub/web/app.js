@@ -246,6 +246,28 @@ function unreadableText(scan) {
   return `${list} A scan as administrator or root reads them, except what the system keeps to itself.`.trim();
 }
 
+// Online or not, by shape and word as well as colour: a filled dot for
+// online, a hollow one for not.
+function statusDot(device) {
+  return h("span", { class: device.online ? "status online" : "status", "aria-hidden": "true" }, device.online ? "●" : "○");
+}
+
+function staleBadge(device) {
+  if (!device.stale) return null;
+  return h("span", { class: "badge warn", title: "Not scanned for longer than the Hub's \"out of date\" setting (Alerts)." }, "⚠ out of date");
+}
+
+const CHECKED = { scan: "Scanned", junk: "Junk checked", apps: "Apps checked", sync: "Nextcloud folders checked", cloud: "Files checked" };
+
+// When the device last finished each job and last checked in, e.g.
+// "Scanned 2 h ago · Junk checked 6 h ago · Checked in just now".
+function checkedText(device) {
+  const parts = (device.checked || []).filter((c) => c.kind !== "sync")
+    .map((c) => `${CHECKED[c.kind] || c.kind} ${ago(c.time)}`);
+  if (!device.agentless) parts.push(`Checked in ${ago(device.last_seen)}`);
+  return parts.join(" · ");
+}
+
 function seenText(device) {
   if (device.agentless) return `no agent · updated ${ago(device.last_seen)}`;
   return device.online ? "online" : `seen ${ago(device.last_seen)}`;
@@ -253,21 +275,22 @@ function seenText(device) {
 
 function deviceCard(device) {
   const info = device.info || {};
-  const latest = (device.scans || [])[0];
+  // The newest scan, for its "incomplete" badge.
+  const latest = [...(device.scans || [])].sort((a, b) => b.taken - a.taken)[0];
   return h("a", { class: "card device-card", href: `#/device/${encodeURIComponent(device.id)}` },
     h("div", { class: "row" },
       h("h2", { class: "grow", style: "margin:0" }, device.name),
       device.alerts ? h("span", { class: "badge danger" }, count(device.alerts, "alert", "alerts")) : null,
       device.waiting ? h("span", { class: "badge warn" }, count(device.waiting, "request", "requests")) : null,
       device.behind ? h("span", { class: "badge warn", title: `Runs ${device.version}, older than the Hub` }, "older version") : null,
+      staleBadge(device),
       h("span", { class: "badge" }, PLATFORMS[device.platform] || device.platform)),
     h("div", { class: "platform" },
-      h("span", { class: device.online ? "dot online" : "dot" }), seenText(device),
+      statusDot(device), seenText(device),
       ` · ${info.os || PLATFORMS[device.platform] || device.platform} · ${device.group.name}`),
     (device.disks || []).slice(0, 4).map(diskRow),
     !device.disks.length && !device.agentless ? h("p", { class: "dim small", style: "margin-top:10px" }, "No disks reported yet.") : null,
-    latest ? h("p", { class: "dim small", style: "margin:10px 0 0" },
-      `Last scan: ${latest.label || latest.root}, ${size(latest.allocated)}, ${ago(latest.taken)}`, incomplete(latest)) : null,
+    h("p", { class: "dim small", style: "margin:10px 0 0" }, checkedText(device), incomplete(latest)),
     device.junk && device.junk.total ? h("p", { class: "dim small", style: "margin:4px 0 0" },
       `${size(device.junk.total)} of junk to review`, device.junk.safe ? `, ${size(device.junk.safe)} safe to clean` : "") : null);
 }
@@ -480,11 +503,13 @@ PAGES.device = async (id, tab = "overview", ...rest) => {
     h("div", { class: "grow" },
       h("h1", {}, device.name),
       h("p", { class: "dim" },
-        h("span", { class: device.online ? "dot online" : "dot" }),
+        statusDot(device),
         device.agentless ? `updated ${ago(device.last_seen)}` : seenText(device),
         ` · ${info.os || PLATFORMS[device.platform] || device.platform}`,
         info.app && !device.agentless ? ` · ${info.app}` : "", ` · group ${device.group.name}`,
-        device.behind ? h("span", { class: "badge warn", style: "margin-left:8px" }, "older than the Hub") : null),
+        device.behind ? h("span", { class: "badge warn", style: "margin-left:8px" }, "older than the Hub") : null,
+        device.stale ? h("span", { style: "margin-left:8px" }, staleBadge(device)) : null),
+      h("p", { class: "dim small" }, h("a", { href: `#/device/${encodeURIComponent(id)}/activity` }, checkedText(device))),
       h("p", { class: "dim small" },
         device.agentless ? "No agent runs here: its scans are uploaded as files, and the Hub can't ask it to do anything."
           : info.attended ? "Requests are approved on the device itself."
@@ -588,7 +613,7 @@ function scanChart(scans, from, to, onPick) {
 
 async function deviceOverview(device) {
   const alerts = device.alerts ? (await api("/api/alerts").catch(() => ({ active: [] }))).active
-    .filter((a) => a.device_id === device.id && a.kind !== "request") : [];
+    .filter((a) => a.device_id === device.id && a.kind !== "request" && !a.hushed) : [];
   const history = Object.fromEntries((device.history || []).map((h) => [h.path, h.samples]));
   const disks = (device.disks || []).map((disk) => {
     const samples = history[disk.path] || [];
@@ -609,7 +634,8 @@ async function deviceOverview(device) {
       h("div", { class: "row small", style: "margin-top:6px" },
         h("span", { class: "grow" }, `${size(used)} used of ${size(disk.total)}`),
         h("span", { class: "dim" }, `${size(disk.free)} free`)),
-      samples.length >= 2 ? [sparkline(samples), h("p", { class: "dim small", style: "margin:0" }, trend)] : null);
+      samples.length >= 2 ? [sparkline(samples), h("p", { class: "dim small", style: "margin:0" }, trend)] : null,
+      h("p", { class: "dim small", style: "margin:4px 0 0" }, `Updated ${ago(disk.updated)}`));
   });
   const roots = device.roots || [];
   const scans = roots.length
@@ -1240,14 +1266,34 @@ async function deviceRequests(device) {
   return body;
 }
 
-async function deviceActivity(device) {
-  const entries = await api(`/api/devices/${encodeURIComponent(device.id)}/audit`);
-  if (!entries.length) return h("div", { class: "card dim" }, "Nothing yet.");
-  return h("div", { class: "card table-wrap" }, h("table", {},
+const ACTIVITY_FILTERS = [["all", "All"], ["jobs", "Scans and jobs"], ["requests", "Requests"]];
+
+// What the device finished (scans, junk and apps checks, Nextcloud passes)
+// and what was asked of it, newest first, from the events and the audit log.
+async function deviceActivity(device, filter = "all") {
+  const [events, entries] = await Promise.all([
+    api(`/api/devices/${encodeURIComponent(device.id)}/events`),
+    api(`/api/devices/${encodeURIComponent(device.id)}/audit`),
+  ]);
+  const rows = [
+    ...events.map((e) => ({ time: e.time, job: true, who: device.name,
+      what: e.repeats > 1 ? `${e.label} (${e.repeats} times in the hour)` : e.label, detail: e.detail, ok: e.ok })),
+    ...entries.map((e) => ({ time: e.time, job: false, who: e.actor, what: e.action, detail: details(e.details), ok: true })),
+  ].filter((r) => filter === "all" || (filter === "jobs") === r.job)
+    .sort((a, b) => b.time - a.time);
+  const link = (key) => `#/device/${encodeURIComponent(device.id)}/activity/${key}`;
+  const chips = h("nav", { class: "tabs small" }, ACTIVITY_FILTERS.map(([key, label]) =>
+    h("a", { href: link(key), class: key === filter ? "active" : "" }, label)));
+  if (!rows.length) {
+    return h("div", { class: "stack" }, chips, h("div", { class: "card dim" },
+      filter === "requests" ? "No requests yet." : "Nothing yet. Each scan or check the device sends shows here, from FreeSize 0.21 on."));
+  }
+  return h("div", { class: "stack" }, chips, h("div", { class: "card table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, h("th", {}, "When"), h("th", {}, "Who"), h("th", {}, "What"))),
-    h("tbody", {}, entries.map((e) => h("tr", {},
-      h("td", { class: "small" }, date(e.time)), h("td", {}, e.actor),
-      h("td", {}, e.action, details(e.details) ? h("div", { class: "sub" }, details(e.details)) : null))))));
+    h("tbody", {}, rows.map((r) => h("tr", {},
+      h("td", { class: "small" }, date(r.time)), h("td", {}, r.who),
+      h("td", {}, r.ok ? null : h("span", { class: "badge warn", style: "margin-right:6px" }, "⚠ failed"), r.what,
+        r.detail ? h("div", { class: "sub" }, r.detail) : null)))))));
 }
 
 function renameDevice(device) {
@@ -1362,14 +1408,59 @@ const CHANNEL_KINDS = {
   webhook: { label: "Webhook", fields: [["url", "Address", "https://homeassistant.lan/api/webhook/freesize"], ["secret", "Signing secret (optional)", "", true]] },
 };
 
+function hushedText(a) {
+  const by = a.hushed_by ? ` by ${a.hushed_by}` : "";
+  return a.hushed === "snooze"
+    ? `Snoozed${by} until ${date(a.hushed_until)}. It comes back then, or sooner if it gets clearly worse.`
+    : `Acknowledged${by} ${ago(a.hushed_at)}. It stays quiet until it's over, unless it gets clearly worse.`;
+}
+
+async function hushAlert(a, days) {
+  try {
+    if (days === null) await api(`/api/alerts/${a.id}/hush`, { method: "DELETE" });
+    else await api(`/api/alerts/${a.id}/hush`, { method: "POST", body: days ? { days } : {} });
+    render();
+  } catch (e) { toast(e.message, true); }
+}
+
+function alertActions(a) {
+  if (!state.me.admin || a.resolved) return null;
+  if (a.hushed) return h("div", { class: "alert-actions" }, h("button", { class: "link", onclick: () => hushAlert(a, null) }, "Show again"));
+  const snooze = h("select", { "aria-label": "Snooze", onchange: (e) => { if (e.target.value) hushAlert(a, Number(e.target.value)); } },
+    h("option", { value: "" }, "Snooze…"),
+    h("option", { value: "1" }, "for 1 day"), h("option", { value: "7" }, "for 7 days"), h("option", { value: "30" }, "for 30 days"));
+  return h("div", { class: "alert-actions" },
+    h("button", { onclick: () => hushAlert(a, 0) }, "Acknowledge"), snooze);
+}
+
 function alertRow(a) {
   const link = a.device_id ? `#/device/${encodeURIComponent(a.device_id)}` : null;
-  return h("div", { class: "alert-row" },
-    h("span", { class: `badge ${a.resolved ? "" : SEVERITY[a.severity] || ""}` }, a.resolved ? "over" : a.severity),
+  const badge = a.resolved ? h("span", { class: "badge" }, "over")
+    : a.hushed ? h("span", { class: "badge" }, a.hushed === "snooze" ? "snoozed" : "acknowledged")
+    : h("span", { class: `badge ${SEVERITY[a.severity] || ""}` }, a.severity);
+  return h("div", { class: a.hushed ? "alert-row hushed" : "alert-row" },
+    badge,
     h("div", { class: "grow" },
       link ? h("a", { href: link }, a.title) : h("strong", {}, a.title),
-      h("div", { class: "sub" }, a.message)),
+      h("div", { class: "sub" }, a.message),
+      a.hushed ? h("div", { class: "sub" }, hushedText(a)) : null,
+      alertActions(a)),
     h("span", { class: "dim small" }, a.resolved ? `over ${ago(a.resolved)}` : `since ${ago(a.opened)}`));
+}
+
+function clearOver() {
+  dialog((close) => {
+    const go = async () => {
+      try {
+        await api("/api/alerts/over", { method: "DELETE" });
+        close();
+        render();
+      } catch (e) { toast(e.message, true); }
+    };
+    return [h("h2", {}, "Clear alerts that are over?"),
+      h("p", {}, "They go from this list for everyone. Alerts still on stay, and the audit log keeps a note that you cleared them."),
+      h("div", { class: "actions" }, h("button", { onclick: close }, "Cancel"), h("button", { class: "primary", onclick: go }, "Clear"))];
+  });
 }
 
 function channelDialog(channel) {
@@ -1427,6 +1518,7 @@ function rulesCard(rules) {
     forecast_days: number("forecast_days", 0, 365),
     offline_hours: number("offline_hours", 0, 720),
     junk_gb: number("junk_gb", 0, 100000),
+    stale_days: number("stale_days", 0, 365),
   };
   // An on/off rule, shown like the others: a field inside its sentence.
   const requests = h("select", { class: "inline-number", "aria-label": "requests" },
@@ -1450,6 +1542,7 @@ function rulesCard(rules) {
     h("p", {}, "A server (a device nobody is at) hasn't reported for ", fields.offline_hours, " hours."),
     h("p", {}, "A device's junk cleaner found at least ", fields.junk_gb, " GB to review."),
     h("p", {}, "A request has waited 2 minutes for its device or approver: ", requests, "."),
+    h("p", {}, "Mark a device ⚠ out of date when it hasn't scanned for ", fields.stale_days, " days. (A mark on its card, not an alert.)"),
     h("p", { class: "hint" }, "0 turns a rule off. The FreeSize app on a phone only hears from the Hub while it's open; the request alert tells you to open it."),
     editable ? h("button", { class: "primary", onclick: save }, "Save") : null);
 }
@@ -1874,11 +1967,16 @@ PAGES.alerts = async () => {
     api("/api/alerts"), api("/api/alerts/rules"),
     state.me.admin ? api("/api/alerts/channels") : Promise.resolve(null),
   ]);
+  // Hushed alerts go below the ones still asking for attention.
+  const ordered = [...alerts.active.filter((a) => !a.hushed), ...alerts.active.filter((a) => a.hushed)];
   const active = alerts.active.length
-    ? h("div", { class: "card" }, h("h2", {}, "Now"), alerts.active.map(alertRow))
+    ? h("div", { class: "card" }, h("h2", {}, "Now"), ordered.map(alertRow))
     : h("div", { class: "card empty" }, h("h2", {}, "All quiet"), h("p", {}, "No disk is near full, growing fast or about to fill, and every server is reporting."));
   const recent = alerts.recent.length
-    ? h("div", { class: "card" }, h("h2", {}, "Over in the past 30 days"), alerts.recent.slice(0, 30).map(alertRow))
+    ? h("div", { class: "card" },
+        h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Over in the past 30 days"),
+          state.me.admin ? h("button", { onclick: clearOver }, "Clear") : null),
+        alerts.recent.slice(0, 30).map(alertRow))
     : null;
   const channelCard = channels ? h("div", { class: "card table-wrap" },
     h("div", { class: "row" }, h("h2", { class: "grow", style: "margin:0" }, "Where alerts go"),
@@ -1903,7 +2001,7 @@ PAGES.alerts = async () => {
     h("p", { class: "hint" }, "Tokens and secrets stay on the Hub; they're never shown again.")) : null;
   return [
     h("div", { class: "page-head" }, h("div", { class: "grow" }, h("h1", {}, "Alerts"),
-      h("p", { class: "dim" }, "Checked every minute. You hear when something starts and when it's over."))),
+      h("p", { class: "dim" }, "Checked every minute. You hear when something starts and when it's over. An admin can acknowledge or snooze one: it stays listed but sends nothing more until it's over, the snooze ends, or it gets clearly worse."))),
     h("div", { class: "stack" }, active, recent,
       rulesCard(rules),
       channelCard,

@@ -120,6 +120,53 @@ pub struct DeviceSummary {
     pub behind: bool,
     /// What its junk cleaner found, if it reported.
     pub junk: Option<JunkSummary>,
+    /// When each kind of job last finished (scan, junk, apps, sync, cloud),
+    /// newest first (0.21).
+    pub checked: Vec<Checked>,
+    /// Not scanned for longer than the Hub's "out of date" setting.
+    pub stale: bool,
+}
+
+/// When a kind of job last finished on a device.
+#[derive(Clone, Debug, Serialize)]
+pub struct Checked {
+    pub kind: String,
+    pub time: i64,
+}
+
+/// When each kind of job last finished: the Activity tab's events, and
+/// for what came in before 0.21 kept them, the reports themselves.
+fn checked(
+    c: &Connection,
+    device: &str,
+    scans: &[ScanRow],
+    junk: Option<&JunkSummary>,
+) -> rusqlite::Result<Vec<Checked>> {
+    let mut times: Vec<(String, i64)> = crate::events::latest(c, device)?;
+    let mut add = |kind: &str, time: Option<i64>| {
+        if let Some(time) = time
+            && !times.iter().any(|(k, _)| k == kind)
+        {
+            times.push((kind.into(), time));
+        }
+    };
+    add("scan", scans.iter().map(|s| s.taken).max());
+    add("junk", junk.map(|j| j.taken));
+    for kind in ["apps", "cloud"] {
+        let taken: Option<i64> = c
+            .query_row(
+                &format!("SELECT taken FROM {kind} WHERE device_id = ?1"),
+                [device],
+                |r| r.get(0),
+            )
+            .optional()?;
+        add(kind, taken);
+    }
+    times.sort_by_key(|t| std::cmp::Reverse(t.1));
+    Ok(times
+        .into_iter()
+        .map(|(kind, time)| Checked { kind, time })
+        .collect())
 }
 
 /// A device's junk in one line.
@@ -263,7 +310,7 @@ pub(crate) fn device_summaries(
                    AND m.state IN ('queued', 'delivered', 'shown', 'needs_approver')),
                 d.agentless,
                 (SELECT count(*) FROM alerts a WHERE a.device_id = d.id AND a.resolved IS NULL
-                   AND a.kind != 'request')
+                   AND a.kind != 'request' AND a.hushed IS NULL)
          FROM devices d JOIN device_groups g ON g.id = d.group_id
          WHERE d.removed = 0 AND (?1 IS NULL OR d.id = ?1)
          ORDER BY d.name COLLATE NOCASE",
@@ -294,9 +341,12 @@ pub(crate) fn device_summaries(
                 version: String::new(),
                 behind: false,
                 junk: None,
+                checked: Vec::new(),
+                stale: false,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
+    let stale_after = i64::from(crate::alerts::load_rules(c)?.stale_days) * 86_400;
     let mut visible = Vec::new();
     for mut device in rows {
         if !groups.contains(&device.group.id) {
@@ -307,6 +357,19 @@ pub(crate) fn device_summaries(
         device.disks = disks(c, &device.id)?;
         device.scans = latest_scans(c, &device.id)?;
         device.junk = junk_summary(c, &device.id)?;
+        device.checked = checked(c, &device.id, &device.scans, device.junk.as_ref())?;
+        // A Nextcloud with the app looks at its files instead of scanning.
+        let scan_kind = if device.platform == "nextcloud" {
+            "cloud"
+        } else {
+            "scan"
+        };
+        device.stale = stale_after > 0
+            && device
+                .checked
+                .iter()
+                .find(|c| c.kind == scan_kind)
+                .is_some_and(|c| now() - c.time > stale_after);
         if let Some(approver) = &device.info.approver {
             device.approver_name = c
                 .query_row(

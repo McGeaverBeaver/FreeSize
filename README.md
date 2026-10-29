@@ -826,8 +826,15 @@ What it does:
 - **Requests**: an admin can ask a device to delete files, clean up junk or
   uninstall an app. The device shows every path and asks first (below);
   nothing happens on its own.
-- **Alerts** to ntfy, Gotify, Pushover or a webhook, and **metrics** for
-  Prometheus and Home Assistant.
+- **Alerts** to ntfy, Gotify, Pushover or a webhook, which an admin can
+  acknowledge or snooze, and **metrics** for Prometheus and Home Assistant.
+- **When things last happened**: each device card says when it last
+  scanned, checked for junk or apps, and checked in with the Hub ("Scanned
+  2 h ago · Checked in just now"), with a filled ● when it's online and a
+  hollow ○ when it isn't. A device not scanned for 7 days (Alerts → When to
+  alert) is marked ⚠ out of date. The device's Activity tab lists every
+  scan and check it sent, and every request. Nothing on the Hub is live:
+  devices send what they find, and the Hub never starts a scan.
 - **Devices without an agent** (a router, a VPS, a Proxmox host): upload
   scans made with `ncdu`.
 - **Copies**: connect the Nextcloud account your devices sync with, and
@@ -1178,7 +1185,13 @@ of 5% of a disk in a week, a disk full within 30 days at the past month's
 rate, a server silent for 24 hours, requests left waiting two minutes, and
 a device's junk over a size (2 GB).
 Alerts are checked every minute and sent when they start, when they get
-worse and when they're over, to:
+worse and when they're over. An admin can **acknowledge** one, or
+**snooze** it for 1, 7 or 30 days: it stays listed, greyed, stops counting
+on the device's card and sends nothing more until it's over (that still
+sends "back to normal"), the snooze ends, or it gets clearly worse (a
+forecast down to half the days and under a week, a disk 3 points fuller,
+twice the growth or junk). **Clear** empties the list of alerts that are
+over. Each of these is in the audit log with who did it. They go to:
 
 - **ntfy** (ntfy.sh or your own server, with an access token for protected
   topics),

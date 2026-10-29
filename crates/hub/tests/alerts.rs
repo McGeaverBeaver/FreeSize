@@ -220,6 +220,27 @@ async fn alerts_go_out_and_metrics_come_in() {
         assert_eq!(alerts["active"][0]["device_name"], "NAS");
         assert_eq!(admin.get(&format!("{url}/api/devices")).json()[0]["alerts"], 1);
 
+        // Acknowledged: still listed, no longer counted on the card, logged.
+        let id = alerts["active"][0]["id"].as_i64().unwrap();
+        let odd = admin.post(
+            &format!("{url}/api/alerts/{id}/hush"),
+            &json!({"days": 3}),
+            true,
+        );
+        assert_eq!(odd.status, 400);
+        let hushed = admin.post(&format!("{url}/api/alerts/{id}/hush"), &json!({}), true);
+        assert_eq!(hushed.status, 200, "{}", hushed.body);
+        let alerts = admin.get(&format!("{url}/api/alerts")).json();
+        assert_eq!(alerts["active"][0]["hushed"], "ack");
+        assert_eq!(admin.get(&format!("{url}/api/devices")).json()[0]["alerts"], 0);
+        let log = admin.get(&format!("{url}/api/audit")).json();
+        assert_eq!(log[0]["action"], "alert acknowledged");
+        // Disks alone aren't a job finished.
+        assert_eq!(
+            admin.get(&format!("{url}/api/devices/{page_nas}/events")).json(),
+            json!([])
+        );
+
         // Metrics need the token.
         let mut scraper = Browser::new();
         assert_eq!(scraper.get(&format!("{url}/metrics")).status, 401);
@@ -263,6 +284,16 @@ async fn alerts_go_out_and_metrics_come_in() {
         let ntfy = got.iter().find(|(to, _, _, _)| to == "ntfy").unwrap();
         assert_eq!(ntfy.2["title"], "Over: NAS: disk1 is 95% full");
     }
+    let clear_url = url.clone();
+    blocking(move || {
+        let url = clear_url;
+        let mut admin = Browser::new();
+        admin.sign_in(&url, "%2F");
+        assert_eq!(admin.delete(&format!("{url}/api/alerts/over")).status, 200);
+        let alerts = admin.get(&format!("{url}/api/alerts")).json();
+        assert_eq!(alerts["recent"], json!([]));
+    })
+    .await;
 
     // Viewers see alerts, not where they go.
     hub.idp
@@ -282,6 +313,13 @@ async fn alerts_go_out_and_metrics_come_in() {
                 .status,
             403
         );
+        assert_eq!(
+            viewer
+                .post(&format!("{url}/api/alerts/1/hush"), &json!({}), true)
+                .status,
+            403
+        );
+        assert_eq!(viewer.delete(&format!("{url}/api/alerts/over")).status, 403);
     })
     .await;
     drop(sink);
