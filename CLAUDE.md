@@ -198,7 +198,7 @@ compiling inside Docker.
   it; the Hub's `cloud.rs` (each person sees the account with their
   email; admins all), the device's Nextcloud tab and Copies' In
   Nextcloud. Bump the app's version with `Cargo.toml` (a test checks).
-  0.21 has what it left (folders only in the cloud, camera uploads,
+  0.22 has what it left (folders only in the cloud, camera uploads,
   review on Nextcloud). 0.20.1: the Copies page's Folders and Big files
   tabs made plain (copies counted with the server, sortable columns,
   filters, Last changed, Open in Nextcloud, deletes through the app from

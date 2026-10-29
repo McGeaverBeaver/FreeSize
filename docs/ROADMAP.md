@@ -485,7 +485,7 @@ Parked, each with its reason:
   and the trash bin as suggestions. Checked here against a real Nextcloud
   34: pairing over HTTPS, a reported duplicate byte-identical, an approved
   delete in the trash bin and restored from it, a grant, and one person
-  not seeing another's account. Left for 0.21: folders only in the cloud,
+  not seeing another's account. Left for 0.22: folders only in the cloud,
   camera uploads kept elsewhere, and folder review on Nextcloud.
 - 0.19.0, review a folder (decided under After polish). Right-click a
   folder in the tree, Review this folder (the Review button in the
@@ -802,7 +802,7 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   compare is right for files checked by hand, and keywords are found in
   each supported format.
 - **0.20, the FreeSize Nextcloud app, and cleanup in Nextcloud.** Under
-  Done, apart from what moved to 0.21 below. A real
+  Done, apart from what moved to 0.22 below. A real
   Nextcloud app (PHP, from Nextcloud's app store or installed by hand),
   so suggestions come from the real files: no downloading and no guessing.
   It pairs with the Hub like any device (the Hub's code in Nextcloud's
@@ -823,7 +823,37 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   app pairs, a duplicate it reports is byte-identical, a delete approved
   on the phone lands in Nextcloud's trash and comes back from there, and
   one user can't see another's files.
-- **0.21, Nextcloud, second half.** What 0.20 left: the app's folders
+- **0.21, Hub alerts and activity.** Decided with the owner on
+  2026-10-29. The Hub stays informational: it never starts a scan or
+  anything else on a device, and devices keep pushing on their own.
+  - Alerts: an admin can Acknowledge one (it stays listed, greyed, stops
+    counting on the device card and sends no more notifications, and
+    comes back if it gets clearly worse, such as a forecast falling under
+    a week) or Snooze it for 1, 7 or 30 days. Admins can Clear the "Over"
+    list. Every acknowledge, snooze and clear is in the audit log with
+    who did it. An acknowledged alert still sends "back to normal" when
+    it's over.
+  - Activity: each finished job a device pushes (a scan, a junk or apps
+    check, an Unraid round, a Nextcloud pass, a request carried out) is
+    an event on the device's Activity tab, with a filter (All, Scans and
+    jobs, Requests). Check-ins ("anything for me?") are not events.
+  - Devices tell the Hub when a job fails, with the reason. One failure
+    shows quietly on the Activity tab; three of the same job in a row
+    open an alert, and the next success closes it. Older devices show
+    successes only.
+  - The device card shows the newest result of each kind and when the
+    device last checked in: "Scanned 2 h ago · Junk checked 6 h ago ·
+    Checked in 1 min ago", linking to Activity. The device page says
+    "updated … ago" per disk and tab. Nothing is called "live".
+  - Status by shape and word, not colour alone: a filled green ● online,
+    a hollow grey ○ offline, an amber ⚠ "out of date" when a device
+    hasn't scanned in 7 days (a setting next to the alert rules, 0 turns
+    it off; a badge, not an alert).
+  Done when an alert can be acknowledged and snoozed and comes back when
+  worse, a scan on each kind of device appears on its Activity tab and
+  card, three failed scans in a row raise an alert that a success closes,
+  and the status reads the same in grayscale.
+- **0.22, Nextcloud, second half.** What 0.20 left: the app's folders
   joined with the devices' reports for folders only in the cloud and on no
   device; camera uploads the app sees that a device or another folder
   already keeps, by fingerprint; folder review (0.19) on a Nextcloud
