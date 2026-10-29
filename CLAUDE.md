@@ -4,6 +4,9 @@ FreeSize (DiskTree until 0.8.6) is a disk space analyzer (Rust + Slint) for Wind
 and Android, with a self-hosted Hub for all devices and an Unraid plugin.
 Read [README.md](README.md) for what it does, [ARCHITECTURE.md](ARCHITECTURE.md)
 for how, and [docs/ROADMAP.md](docs/ROADMAP.md) for what's done and next.
+[docs/NEXT-PATCH.md](docs/NEXT-PATCH.md) lists the small adds and fixes the
+owner wants in the next update: put new ones there, and build them into
+the next release.
 
 ## Rules from the owner (always)
 
