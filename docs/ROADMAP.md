@@ -221,6 +221,15 @@ Left over and planned (the release it goes in is under Next releases):
   look at a fresh machine finds only the id-named folders.
 
 Parked, each with its reason:
+- **Devices reporting failed jobs** (the second half of 0.21, once
+  planned as 0.21.1 and then 0.21.2; parked by the owner on 2026-11-09):
+  a device tells the Hub when a scan or check fails, with the reason;
+  one failure shows quietly on the Activity tab, three of the same job
+  in a row open an alert, and the next success closes it. It needs new
+  builds of every device app, and "⚠ out of date" (0.21.0) already marks
+  a device whose scans have stopped, whatever the reason; a shorter
+  out-of-date setting on the Alerts page tells sooner. Back when a
+  device does fail without anyone noticing.
 - **The Hub on Windows** as a service from the installer: needs the
   installer (NSIS) and a Windows service wrapper, tested on real Windows.
   The Hub runs in Docker Desktop meanwhile.
@@ -470,7 +479,7 @@ Parked, each with its reason:
   double-click to open a folder, View for Unraid's file browser, and
   Move to the quarantine as on the Quarantine tab. Also `freesize unraid
   map build|view|cancel|discard`. Only the plugin changes. The devices
-  reporting failed jobs, planned as 0.21.1, are 0.21.2 now.
+  reporting failed jobs, planned as 0.21.1, are parked (2026-11-09).
 - 0.21.0, Hub alerts and activity, the Hub's part (decided under After
   polish, 2026-10-29). Admins acknowledge an alert or snooze it for 1, 7
   or 30 days, and clear the ones that are over, all in the audit log; a
@@ -483,7 +492,7 @@ Parked, each with its reason:
   h ago · Junk checked 6 h ago · Checked in just now", disks say when they
   were updated, the online dot is ● or ○, and "⚠ out of date" marks a
   device not scanned for 7 days (Alerts → When to alert; 0 turns it off).
-  Only the Hub changes; failures need the devices (0.21.2).
+  Only the Hub changes; failures need the devices (parked).
 - 0.20.7, Nextcloud requests reach the approver's phone (the owner's
   test, 2026-10-21: two requests, the phone never asked). The Nextcloud
   app looks for requests only when Nextcloud's cron runs it, every five
@@ -852,8 +861,9 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   on the phone lands in Nextcloud's trash and comes back from there, and
   one user can't see another's files.
 - **0.21, Hub alerts and activity.** 0.21.0 (the Hub's part) under Done;
-  0.21.2 (devices report failures) next; 0.21.1 went to the Unraid
-  plugin's Map tab. Decided with the owner on
+  the devices reporting failures are parked (the owner's call,
+  2026-11-09; see Parked); 0.21.1 went to the Unraid plugin's Map tab.
+  Decided with the owner on
   2026-10-29. The Hub stays informational: it never starts a scan or
   anything else on a device, and devices keep pushing on their own.
   - Alerts: an admin can Acknowledge one (it stays listed, greyed, stops
@@ -867,10 +877,10 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
     check, an Unraid round, a Nextcloud pass, a request carried out) is
     an event on the device's Activity tab, with a filter (All, Scans and
     jobs, Requests). Check-ins ("anything for me?") are not events.
-  - Devices tell the Hub when a job fails, with the reason. One failure
-    shows quietly on the Activity tab; three of the same job in a row
-    open an alert, and the next success closes it. Older devices show
-    successes only.
+  - Parked: devices tell the Hub when a job fails, with the reason. One
+    failure shows quietly on the Activity tab; three of the same job in
+    a row open an alert, and the next success closes it. Older devices
+    show successes only.
   - The device card shows the newest result of each kind and when the
     device last checked in: "Scanned 2 h ago · Junk checked 6 h ago ·
     Checked in 1 min ago", linking to Activity. The device page says
@@ -881,8 +891,9 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
     it off; a badge, not an alert).
   Done when an alert can be acknowledged and snoozed and comes back when
   worse, a scan on each kind of device appears on its Activity tab and
-  card, three failed scans in a row raise an alert that a success closes,
-  and the status reads the same in grayscale.
+  card, and the status reads the same in grayscale (and, once the parked
+  part is built, three failed scans in a row raise an alert that a
+  success closes).
 - **0.22, Nextcloud, second half.** What 0.20 left: the app's folders
   joined with the devices' reports for folders only in the cloud and on no
   device; camera uploads the app sees that a device or another folder

@@ -236,8 +236,9 @@ compiling inside Docker.
   merged by path, the map kept in a file on a pool. To see the page
   without a server: a folder laid out like the tests' `server()`, the
   daemon with `--root`, `php -S` with `FREESIZE_TEST_ROOT` and
-  `FREESIZE_TEST_BIN`, and Unraid's stylesheets. 0.21.2 has the devices
-  reporting failed jobs (three in a row alert). The Hub never starts scans
+  `FREESIZE_TEST_BIN`, and Unraid's stylesheets. The devices
+  reporting failed jobs (three in a row alert) are parked (the owner's
+  call, 2026-11-09; docs/ROADMAP.md, Parked). The Hub never starts scans
   (the owner's call, 2026-10-29).
 - Not yet done:
   1. 0.8.3 is public (2026-10-12), with the Hub's image public on ghcr.io
