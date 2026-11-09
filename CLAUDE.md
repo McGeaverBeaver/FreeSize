@@ -78,7 +78,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.21.0)
+## Where things stand (0.21.1)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -228,7 +228,15 @@ compiling inside Docker.
   0.21.0 (the Hub only): acknowledge, snooze and clear alerts
   (`alerts::hush`, `clearly_worse`), devices' finished jobs as events
   (`events.rs`) on the Activity tab, "Scanned / Checked in X ago" on
-  cards, ● ○ and "⚠ out of date" (`stale_days`). 0.21.1 has the devices
+  cards, ● ○ and "⚠ out of date" (`stale_days`). 0.21.1 (the Unraid
+  plugin only): the Map tab (`crates/unraid/src/map.rs`, `FreeSizeMap.page`,
+  `renderMap` in `freesize.js`), a treemap or bubbles of the whole array,
+  a disk or a share, built only when asked there (the owner's call,
+  2026-11-09: not by the scheduled look), each disk read on its own and
+  merged by path, the map kept in a file on a pool. To see the page
+  without a server: a folder laid out like the tests' `server()`, the
+  daemon with `--root`, `php -S` with `FREESIZE_TEST_ROOT` and
+  `FREESIZE_TEST_BIN`, and Unraid's stylesheets. 0.21.2 has the devices
   reporting failed jobs (three in a row alert). The Hub never starts scans
   (the owner's call, 2026-10-29).
 - Not yet done:

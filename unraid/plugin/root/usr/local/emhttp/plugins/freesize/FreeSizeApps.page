@@ -1,4 +1,4 @@
-Menu="FreeSize:3"
+Menu="FreeSize:4"
 Title="Docker and VMs"
 ---
 <?require_once "$docroot/plugins/freesize/include/page.php";?>

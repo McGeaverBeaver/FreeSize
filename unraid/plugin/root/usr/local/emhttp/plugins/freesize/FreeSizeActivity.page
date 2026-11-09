@@ -1,4 +1,4 @@
-Menu="FreeSize:4"
+Menu="FreeSize:5"
 Title="Disk activity"
 ---
 <?require_once "$docroot/plugins/freesize/include/page.php";?>

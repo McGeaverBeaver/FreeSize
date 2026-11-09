@@ -112,3 +112,48 @@
 .freesize .dt-inline { display: flex; gap: 10px; align-items: center; }
 .freesize .dt-inline button { margin: 0; flex: none; }
 .dt-dialog p { text-align: left; }
+/* The map: boxes or bubbles placed by the background part's layout, for
+   the stage's size in pixels. Their colours are their own in every theme,
+   so the text on them is always white. */
+.freesize .dt-map-pick { align-items: flex-end; }
+.freesize .dt-map-pick select { min-width: 200px; }
+.freesize .dt-busy .dt-grow { flex: 1 1 auto; }
+.freesize .dt-busy > button { margin: 0; flex: none; align-self: center; }
+.freesize .dt-map-body { margin-top: 10px; }
+.freesize .dt-map-tools { display: flex; gap: 10px 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
+.freesize .dt-map-crumbs { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+.freesize .dt-map-switches { display: flex; gap: 10px; flex-wrap: wrap; }
+.freesize .dt-seg { display: inline-flex; border: 1px solid var(--dt-line); border-radius: 16px; overflow: hidden; }
+.freesize .dt-seg button { margin: 0; padding: 5px 14px; min-width: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; font-size: 0.92em; line-height: 1.4; text-transform: none; letter-spacing: normal; cursor: pointer; }
+.freesize .dt-seg button:hover { background: var(--dt-soft); color: inherit; }
+.freesize .dt-seg button.dt-on { background: var(--dt-accent); color: #fff; font-weight: 600; }
+.freesize .dt-map-stage { position: relative; width: 100%; height: 420px; overflow: hidden; border-radius: 6px; background: var(--dt-soft); transition: opacity 0.15s; }
+.freesize .dt-map-stage.dt-map-loading { opacity: 0.55; }
+.freesize .dt-map-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; padding: 16px; text-align: center; opacity: 0.72; }
+.freesize .dt-map-item { position: absolute; box-sizing: border-box; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.38); color: #fff; font-size: 12px; line-height: 1.25; cursor: pointer; }
+.freesize .dt-map-item:hover { filter: brightness(1.14); }
+.freesize .dt-map-nested:hover { filter: none; }
+.freesize .dt-map-smaller, .freesize .dt-map-other { background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0 5px, transparent 5px 10px); }
+.freesize .dt-map-closed { background-image: linear-gradient(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.14)); }
+.freesize .dt-map-gone { opacity: 0.35; background-image: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.45) 0 4px, transparent 4px 8px); }
+.freesize .dt-map-sel { outline: 2px solid #fff; outline-offset: -2px; box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.55); }
+/* Not above its own contents, which come after it. */
+.freesize .dt-map-sel:not(.dt-map-nested) { z-index: 2; }
+.freesize .dt-map-head { display: block; height: 18px; padding: 1px 5px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.freesize .dt-map-head small, .freesize .dt-map-text small { font-weight: 400; font-size: 1em; opacity: 0.88; }
+.freesize .dt-map-text { display: block; padding: 2px 5px; }
+.freesize .dt-map-text > span, .freesize .dt-map-text > small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.freesize .dt-map-bubbles .dt-map-item { border-radius: 50%; }
+.freesize .dt-map-bubbles .dt-map-nested { background-image: none; }
+.freesize .dt-map-bubbles .dt-map-text { position: absolute; left: 8%; right: 8%; top: 50%; transform: translateY(-50%); padding: 0; text-align: center; }
+.freesize .dt-map-name { position: absolute; z-index: 3; pointer-events: none; color: #fff; font-size: 11px; font-weight: 600; line-height: 1.25; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 0 3px #000, 0 0 2px #000; }
+.freesize .dt-map-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 0.92em; }
+.freesize .dt-map-legend:empty { display: none; }
+.freesize .dt-map-picked { display: flex; gap: 10px 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin: 10px 0 6px; padding: 10px 12px; border: 1px solid var(--dt-line); border-radius: 6px; min-height: 40px; }
+.freesize .dt-map-picked .dt-grow { flex: 1 1 260px; min-width: 0; }
+.freesize .dt-map-picked .dt-actions { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; white-space: normal; }
+.freesize .dt-map-picked .dt-actions > * { margin: 0; }
+@media (max-width: 700px) {
+  .freesize .dt-map-pick label { flex: 1 1 100%; }
+  .freesize .dt-map-item { font-size: 11px; }
+}

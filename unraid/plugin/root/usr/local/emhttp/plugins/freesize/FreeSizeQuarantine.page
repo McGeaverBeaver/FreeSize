@@ -1,4 +1,4 @@
-Menu="FreeSize:5"
+Menu="FreeSize:6"
 Title="Quarantine"
 ---
 <?require_once "$docroot/plugins/freesize/include/page.php";?>

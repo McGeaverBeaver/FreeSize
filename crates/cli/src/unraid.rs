@@ -25,6 +25,7 @@ use freesize_proto::{ActionKind, Command, DeviceInfo, Platform, PollResponse, Re
 use freesize_unraid::activity::{self, Monitor};
 use freesize_unraid::array::{self, Array};
 use freesize_unraid::docker::{self, Engine, Inventory};
+use freesize_unraid::map::{self, Map, Target};
 use freesize_unraid::protect::{self, Rule, UnraidGuard, UnraidPlaces};
 use freesize_unraid::round::{self, Round, Settings};
 use freesize_unraid::shares::DiskTops;
@@ -118,6 +119,40 @@ pub enum UnraidAction {
     Junk {
         #[command(subcommand)]
         action: JunkAction,
+    },
+    /// The map of what fills the array, a disk or a share: build it
+    /// (the background part reads the disks), or look at it.
+    Map {
+        #[command(subcommand)]
+        action: MapAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MapAction {
+    /// Ask the background part for a map of `all`, a disk or pool
+    /// (`disk:disk1`) or a share (`share:Movies`). Sleeping disks it
+    /// covers are spun up.
+    Build { target: String },
+    /// Stop the map being built.
+    Cancel,
+    /// Forget the map and remove its file.
+    Discard,
+    /// One folder of the map: its biggest things, or with `--json` the
+    /// boxes or bubbles to draw at a size.
+    View {
+        /// A folder below the map's top; the top without it.
+        #[arg(long, default_value = "")]
+        path: String,
+        /// `treemap` or `bubbles`.
+        #[arg(long, default_value = "treemap")]
+        style: String,
+        #[arg(long, default_value_t = 1000.0)]
+        width: f32,
+        #[arg(long, default_value_t = 600.0)]
+        height: f32,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -293,6 +328,9 @@ struct Status {
     #[serde(default)]
     junk: Vec<serde_json::Value>,
     settings: serde_json::Value,
+    /// The map the page asked for, if any.
+    #[serde(default)]
+    map: MapStatus,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -329,6 +367,102 @@ pub fn main(action: UnraidAction, args: DirArgs) -> Result<(), String> {
         } => folders(&dirs, &share, &folder, wake, json),
         UnraidAction::DockerCleanup { items } => docker_cleanup(&dirs, &items),
         UnraidAction::Junk { action } => junk(action),
+        UnraidAction::Map { action } => map_command(&dirs, action),
+    }
+}
+
+/// What the page knows about the map, written by the daemon to
+/// `map.json` and into the status.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct MapStatus {
+    /// Empty (no map), `building` or `ready`.
+    state: String,
+    /// What it's of, or is being built of: `all`, `disk:disk1`, …
+    target: String,
+    /// How far building has got.
+    doing: String,
+    started: i64,
+    /// Why the last build came to nothing, if it did.
+    error: String,
+    file: PathBuf,
+    meta: Option<map::Meta>,
+}
+
+fn map_status(dirs: &Dirs) -> MapStatus {
+    std::fs::read_to_string(dirs.data.join("map.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn map_command(dirs: &Dirs, action: MapAction) -> Result<(), String> {
+    match action {
+        MapAction::Build { target } => {
+            let target = Target::parse(&target)?;
+            dirs.request("map", &target.code())?;
+            println!(
+                "Asked for a map of {}; the status shows when it's done.",
+                target.label()
+            );
+            Ok(())
+        }
+        MapAction::Cancel => dirs.request("map-cancel", ""),
+        MapAction::Discard => dirs.request("map-discard", ""),
+        MapAction::View {
+            path,
+            style,
+            width,
+            height,
+            json,
+        } => {
+            let style = map::Style::parse(&style)?;
+            let status = map_status(dirs);
+            if status.state != "ready" {
+                return Err(if status.state == "building" {
+                    "the map is still being built".into()
+                } else {
+                    "there's no map yet; build one first".into()
+                });
+            }
+            let map = Map::load(&status.file)?;
+            let view = map.view(&path, style, width, height)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&view).map_err(|e| e.to_string())?
+                );
+                return Ok(());
+            }
+            let at = if view.path.is_empty() {
+                map.meta.root.clone()
+            } else {
+                format!("{}/{}", map.meta.root, view.path)
+            };
+            println!(
+                "{at}: {} in {} files",
+                format_size(view.size),
+                freesize_core::format_count(view.files)
+            );
+            for item in view.items.iter().filter(|i| i.depth == 0) {
+                let name = match item.kind {
+                    "smaller" => format!("({} smaller files)", item.files),
+                    "other" => format!("({} smaller things)", item.files),
+                    "file" => item.name.clone(),
+                    _ => format!("{}/", item.name),
+                };
+                let disks: Vec<&str> = item.disks.iter().map(|(d, _)| d.as_str()).collect();
+                println!(
+                    "  {:>10}  {name}{}",
+                    format_size(item.size),
+                    if disks.len() > 1 {
+                        format!("  ({})", disks.join(", "))
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -856,6 +990,9 @@ enum Event {
     Round(Box<Round>),
     Polled(Result<PollResponse, AgentError>),
     Move(MoveJob, bool),
+    MapProgress(String),
+    /// The map's file and what it's of, or why there's none.
+    Map(Result<(map::Meta, PathBuf), String>),
 }
 
 /// Carries out the Hub's requests on Unraid.
@@ -949,6 +1086,11 @@ struct Daemon {
     connection: String,
     pending: HashMap<String, Request>,
     events: mpsc::Sender<Event>,
+    map: MapStatus,
+    /// The map there was before the one being built, to go back to if
+    /// building comes to nothing.
+    map_before: Option<MapStatus>,
+    map_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Daemon {
@@ -1194,6 +1336,137 @@ impl Daemon {
         }
     }
 
+    fn save_map(&self) {
+        let _ = write_atomic(
+            &self.dirs.data.join("map.json"),
+            &serde_json::to_vec(&self.map).unwrap_or_default(),
+        );
+    }
+
+    /// Builds the map the page asked for, on a thread of its own: each
+    /// disk it covers is read (and spun up), one at a time. The scheduled
+    /// look never does this.
+    fn start_map(&mut self, target: &str) {
+        if self.map_cancel.is_some() {
+            return;
+        }
+        let target = match Target::parse(target) {
+            Ok(target) => target,
+            Err(err) => return log(&format!("a map request was garbled: {err}")),
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (system, events, flag) = (
+            self.dirs.system.clone(),
+            self.events.clone(),
+            cancel.clone(),
+        );
+        let fallback = self.dirs.data.clone();
+        let building = target.clone();
+        let spawned = std::thread::Builder::new()
+            .name("freesize-map".into())
+            .spawn(move || {
+                let array = array::read(&system);
+                let progress = |what: &str| {
+                    let _ = events.send(Event::MapProgress(what.to_string()));
+                };
+                let limits = map::Limits::default();
+                let result =
+                    map::build(&system, &array, &building, limits, now(), &progress, &flag)
+                        .and_then(|built| {
+                            let file = map::file_for(&system, &array, &fallback);
+                            let in_memory = fallback.join(file.file_name().unwrap_or_default());
+                            match built.save(&file) {
+                                Ok(()) => Ok((built.meta, file)),
+                                // The pool is full or read-only.
+                                Err(_) if file != in_memory => {
+                                    built.save(&in_memory).map(|()| (built.meta, in_memory))
+                                }
+                                Err(err) => Err(err),
+                            }
+                        });
+                let _ = events.send(Event::Map(result));
+            });
+        if spawned.is_err() {
+            return;
+        }
+        self.map_cancel = Some(cancel);
+        if self.map.state == "ready" {
+            self.map_before = Some(self.map.clone());
+        }
+        self.map = MapStatus {
+            state: "building".into(),
+            target: target.code(),
+            doing: "starting".into(),
+            started: now(),
+            ..MapStatus::default()
+        };
+        log(&format!("building a map of {}", target.label()));
+        self.save_map();
+        self.write_status();
+    }
+
+    fn finish_map(&mut self, result: Result<(map::Meta, PathBuf), String>) {
+        self.map_cancel = None;
+        let before = self.map_before.take();
+        match result {
+            Ok((meta, file)) => {
+                log(&format!(
+                    "map of {}: {} in {} files, {} s{}",
+                    Target::parse(&meta.target).map_or_else(|_| meta.target.clone(), |t| t.label()),
+                    format_size(meta.size),
+                    freesize_core::format_count(meta.files),
+                    meta.seconds,
+                    match meta.peak_memory {
+                        Some(bytes) => format!("; peak memory {}", format_size(bytes)),
+                        None => String::new(),
+                    }
+                ));
+                for missed in &meta.missed {
+                    log(&format!("map: left out {missed}"));
+                }
+                if let Some(old) = before
+                    && old.file != file
+                {
+                    let _ = std::fs::remove_file(&old.file);
+                }
+                self.map = MapStatus {
+                    state: "ready".into(),
+                    target: meta.target.clone(),
+                    started: self.map.started,
+                    file,
+                    meta: Some(meta),
+                    ..MapStatus::default()
+                };
+            }
+            Err(why) => {
+                let stopped = why == "stopped";
+                log(&format!("no map: {why}"));
+                // The map there was is still on file.
+                self.map = before.filter(|old| old.file.exists()).unwrap_or_default();
+                self.map.error = if stopped { String::new() } else { why };
+            }
+        }
+        self.save_map();
+        self.write_status();
+    }
+
+    fn discard_map(&mut self) {
+        if let Some(flag) = &self.map_cancel {
+            flag.store(true, Ordering::Relaxed);
+            // What there was goes too, once the build has stopped.
+            if let Some(old) = self.map_before.take() {
+                let _ = std::fs::remove_file(&old.file);
+            }
+            return;
+        }
+        if !self.map.file.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.map.file);
+        }
+        self.map = MapStatus::default();
+        self.save_map();
+        self.write_status();
+    }
+
     /// Keeps the last 20 moves, and every one still to run.
     fn save_moves(&mut self) {
         while self.moves.len() > 20 {
@@ -1229,6 +1502,14 @@ impl Daemon {
             let _ = std::fs::remove_file(entry.path());
             if name == "scan" {
                 self.start_round();
+            } else if name == "map" {
+                self.start_map(body.trim());
+            } else if name == "map-cancel" {
+                if let Some(flag) = &self.map_cancel {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            } else if name == "map-discard" {
+                self.discard_map();
             } else if name == "refresh" {
                 refresh = true;
             } else if name == "settings" {
@@ -1359,6 +1640,7 @@ impl Daemon {
             report,
             quarantine: self.quarantine().list(),
             settings: serde_json::to_value(&self.config).unwrap_or_default(),
+            map: self.map.clone(),
         };
         let _ = std::fs::create_dir_all(&self.dirs.data);
         let text = serde_json::to_vec(&status).unwrap_or_default();
@@ -1478,6 +1760,13 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
         connection: String::new(),
         pending: HashMap::new(),
         events: events_tx.clone(),
+        // A map being built when the daemon stopped was cut short; a
+        // finished one is still on file.
+        map: Some(map_status(dirs))
+            .filter(|m| m.state == "ready" && m.file.exists())
+            .unwrap_or_default(),
+        map_before: None,
+        map_cancel: None,
     };
     log(&format!(
         "FreeSize {} for Unraid {} started",
@@ -1587,6 +1876,13 @@ fn daemon(dirs: &Dirs) -> Result<(), String> {
                 daemon.save_moves();
                 daemon.write_status();
             }
+            Ok(Event::MapProgress(what)) => {
+                if daemon.map.state == "building" {
+                    daemon.map.doing = what;
+                    daemon.write_status();
+                }
+            }
+            Ok(Event::Map(result)) => daemon.finish_map(result),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }

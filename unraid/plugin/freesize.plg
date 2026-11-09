@@ -18,6 +18,7 @@
 ### @VERSION@
 - DiskTree is called FreeSize now: installing it takes over DiskTree's settings, Hub pairing and quarantine, and removes DiskTree
 - Where the space goes on the array and pools, per share and per disk, without waking sleeping disks
+- New in 0.21.1, the Map tab: a treemap or bubbles of the whole array, one disk or one share, built when you ask; a folder spread over several disks shows once, and can be coloured by disk
 - Docker and VMs: what's safe to remove, what to check first, and what's in use and never offered
 - A quarantine to move things aside and put them back; nothing is deleted until you empty it
 - What keeps disks spun up, a permissions report, and moving shares between disks with checked copies
@@ -75,6 +76,9 @@ echo "FreeSize &version; is installed: Tools, then FreeSize."
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 /etc/rc.d/rc.freesize stop
+# The map's file, on a pool.
+map=$(sed -n 's/.*"file":"\([^"]*\/\.freesize\/map\.dat\)".*/\1/p' /var/local/freesize/map.json 2&gt;/dev/null)
+[ -n "$map" ] &amp;&amp; rm -f "$map" &amp;&amp; rmdir "${map%/*}" 2&gt;/dev/null
 removepkg &package;
 rm -rf /usr/local/emhttp/plugins/&name; /var/local/freesize
 rm -f &config;/&name;-*.txz

@@ -334,6 +334,26 @@ pub fn fit(sizes: &[u64], width: f32, height: f32, margin: f32) -> Vec<Circle> {
         .collect()
 }
 
+/// Circles whose areas follow `sizes`, packed and fitted inside the circle
+/// `into`, leaving `inner_margin` (a share of its radius) around them, in
+/// input order. For drawing a folder's contents inside its own bubble.
+pub fn fit_circle(sizes: &[u64], into: Circle, inner_margin: f32) -> Vec<Circle> {
+    let entries: Vec<Entry> = sizes.iter().map(|&size| (None, size, 1)).collect();
+    let Some(placed) = pack_sizes(&entries) else {
+        return Vec::new();
+    };
+    let around = enclose(&placed);
+    let fit = f64::from(into.r * (1.0 - inner_margin)) / around.r;
+    placed
+        .iter()
+        .map(|c| Circle {
+            x: into.x + ((c.x - around.x) * fit) as f32,
+            y: into.y + ((c.y - around.y) * fit) as f32,
+            r: (c.r * fit) as f32,
+        })
+        .collect()
+}
+
 /// The biggest children of `dir`, then one "other" entry for the rest.
 fn biggest(tree: &Tree, dir: NodeId, mode: SizeMode, max: usize, min_share: f64) -> Vec<Entry> {
     let children: Vec<(NodeId, u64)> = tree
@@ -392,6 +412,25 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    #[test]
+    fn fit_circle_stays_inside() {
+        let into = Circle {
+            x: 100.0,
+            y: 50.0,
+            r: 40.0,
+        };
+        let circles = fit_circle(&[900, 400, 100, 100, 25], into, 0.1);
+        assert_eq!(circles.len(), 5);
+        for c in &circles {
+            let reach = (c.x - into.x).hypot(c.y - into.y) + c.r;
+            assert!(reach <= into.r * 0.9 + 0.01, "{c:?} reaches {reach}");
+        }
+        // Areas follow the sizes.
+        let ratio = (circles[0].r / circles[1].r).powi(2);
+        assert!((ratio - 2.25).abs() < 0.01);
+        assert!(fit_circle(&[], into, 0.1).is_empty());
+    }
     use crate::{ScanOptions, ScanProgress, scan};
 
     fn overlaps(a: (f64, f64, f64), b: (f64, f64, f64)) -> bool {

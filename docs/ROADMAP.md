@@ -456,6 +456,21 @@ Parked, each with its reason:
   dialog still can't be shown, the same direct delete is tried before
   giving up. Errors now carry Android's own message rather than "Java
   exception was thrown".
+- 0.21.1, the Unraid plugin's Map tab (asked for by the owner,
+  2026-11-09: the desktop app's Map, on the server). A treemap or bubbles
+  of the whole array, one disk or pool, or one share, built only when
+  asked for on the tab (Build map) and never by the scheduled look, so
+  the daily jobs and what they keep don't change. Each disk is read on
+  its own and merged by path, so a share on several disks is one box
+  with its parts added and no file is counted twice; By disk colours the
+  map by where things are. One disk's files are in memory at a time, the
+  finished map is a file on a pool, and the page loads one folder of it
+  at a time; the biggest 200,000 files have boxes of their own and the
+  rest are added up per folder. Click for the path, size and disks,
+  double-click to open a folder, View for Unraid's file browser, and
+  Move to the quarantine as on the Quarantine tab. Also `freesize unraid
+  map build|view|cancel|discard`. Only the plugin changes. The devices
+  reporting failed jobs, planned as 0.21.1, are 0.21.2 now.
 - 0.21.0, Hub alerts and activity, the Hub's part (decided under After
   polish, 2026-10-29). Admins acknowledge an alert or snooze it for 1, 7
   or 30 days, and clear the ones that are over, all in the audit log; a
@@ -468,7 +483,7 @@ Parked, each with its reason:
   h ago · Junk checked 6 h ago · Checked in just now", disks say when they
   were updated, the online dot is ● or ○, and "⚠ out of date" marks a
   device not scanned for 7 days (Alerts → When to alert; 0 turns it off).
-  Only the Hub changes; failures need the devices (0.21.1).
+  Only the Hub changes; failures need the devices (0.21.2).
 - 0.20.7, Nextcloud requests reach the approver's phone (the owner's
   test, 2026-10-21: two requests, the phone never asked). The Nextcloud
   app looks for requests only when Nextcloud's cron runs it, every five
@@ -837,7 +852,8 @@ Decided with the owner on 2026-10-14. These wait until the polish is done
   on the phone lands in Nextcloud's trash and comes back from there, and
   one user can't see another's files.
 - **0.21, Hub alerts and activity.** 0.21.0 (the Hub's part) under Done;
-  0.21.1 (devices report failures) next. Decided with the owner on
+  0.21.2 (devices report failures) next; 0.21.1 went to the Unraid
+  plugin's Map tab. Decided with the owner on
   2026-10-29. The Hub stays informational: it never starts a scan or
   anything else on a device, and devices keep pushing on their own.
   - Alerts: an admin can Acknowledge one (it stays listed, greyed, stops

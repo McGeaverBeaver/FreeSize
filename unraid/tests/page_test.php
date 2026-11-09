@@ -135,6 +135,22 @@ reset_root();
 $args = explode("\n", trim((string)@file_get_contents("$root/args")));
 check($status === 200 && end($args) === '--empty-after', 'the tick to delete the originals reaches the command');
 
+// The map: what to build is checked, and a folder's name reaches the
+// command whole, dashes and spaces and all.
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'map_build', 'target' => 'share:My Films'], true);
+$args = explode("\n", trim((string)@file_get_contents("$root/args")));
+check($status === 200 && array_slice($args, -4) === ['map', 'build', '--', 'share:My Films'], 'a map of a share is asked for');
+foreach (['', 'disk:../x', 'share:a/b', 'everything'] as $bad) {
+  reset_root();
+  [$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'map_build', 'target' => $bad], true);
+  check($status === 400 && !file_exists("$root/args"), "a map of \"$bad\" is refused before the command runs");
+}
+reset_root();
+[$status, $reply] = post(['csrf_token' => 'T0KEN', 'action' => 'map_view', 'path' => '/Movies/--help (1999)/', 'style' => 'bubbles', 'width' => '99999', 'height' => 'x'], true);
+$args = explode("\n", trim((string)@file_get_contents("$root/args")));
+check($status === 200 && array_slice($args, -7) === ['map', 'view', '--json', '--style=bubbles', '--width=8000', '--height=120', '--path=Movies/--help (1999)'], 'a view gets the folder, the style and a sane size');
+
 // Without Unraid's prelude the page checks the token itself.
 reset_root();
 [$status, $reply] = post(['action' => 'keep', 'paths' => ''], false);

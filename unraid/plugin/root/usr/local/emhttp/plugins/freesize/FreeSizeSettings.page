@@ -1,4 +1,4 @@
-Menu="FreeSize:6"
+Menu="FreeSize:7"
 Title="Settings and Hub"
 ---
 <?require_once "$docroot/plugins/freesize/include/page.php";?>

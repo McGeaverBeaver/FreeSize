@@ -1274,6 +1274,34 @@ and fills in by itself.
 
 What it does, only when asked:
 
+- **The map** (the Map tab, since 0.21.1): what takes the space as a
+  treemap or as bubbles, like the Map tab of the desktop app. Choose the
+  whole array, one disk or pool, or one share, and press **Build map**.
+  The background part then reads those disks, one after another, and the
+  map shows when the last one is done; the page says which disk it's on.
+  The scheduled look never builds it, so the map shows the server as it
+  was when you asked, and **Build again** makes a fresh one.
+  - A folder spread over several disks shows **once**, with its parts
+    added together: each disk is read on its own and every file is
+    counted on the disk it's really on, so nothing appears twice.
+    **By disk** colours the same map by the disk each thing is on (a
+    folder by the disk holding most of it), with the disks named below.
+  - Click anything to see its path, size, number of files and which
+    disks it's on; double-click a folder (or **Open**) to go into it, and
+    the path above the map or **Up** to go back. **View** opens Unraid's
+    file browser there, and **Move to the quarantine…** works as on the
+    Quarantine tab: the path listed first, what the server needs refused.
+  - Memory stays low on a big array: only one disk's files are in memory
+    at a time, the finished map is kept in a file (on a pool, in a
+    hidden `.freesize` folder; in memory only when there's no pool), and
+    the page loads one folder of it at a time. The biggest 200,000 files
+    get boxes of their own; past that the smallest are added up per
+    folder as "smaller files", and the page says under what size. Past
+    200,000 folders the smallest are drawn closed. **Remove this map**
+    deletes the file.
+  - On the terminal: `freesize unraid map build all` (or `disk:disk1`,
+    `share:Movies`), then `freesize unraid map view --path Movies`.
+
 - **Quarantine**: moves files and folders aside on the disk they're on (a
   rename; nothing is copied). Put them back any time. They're deleted only
   when you empty the quarantine, after a list of every path with links to
@@ -1360,6 +1388,8 @@ freesize unraid quarantine add /mnt/user/isos/old.iso --reason "not needed"
 freesize unraid quarantine restore <batch>
 freesize unraid quarantine empty <batch>...
 freesize unraid folders --share Movies --folder "Old Films"   # --wake: sleeping disks too
+freesize unraid map build share:Movies    # or all, or disk:disk1; reads those disks now
+freesize unraid map view --path "Old Films"                   # the biggest things in a folder of the map
 freesize unraid move plan --share Movies --folder "Old Films" --from disk1 --to disk3
 freesize unraid move start --share Movies --folder "Old Films" --from disk1 --from disk2 --to disk3
 freesize unraid docker-cleanup <id>...    # ids from status --json

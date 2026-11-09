@@ -209,5 +209,14 @@ what was tried in the release's draft notes, and say what wasn't.
 - [ ] Empty a disk plans every share on the disk and runs the moves one
       after another; with the tick, the originals are gone once each move
       says every copy checked out.
+- [ ] Map tab: Build map of the whole array reads every disk (sleeping
+      ones spin up) and shows the treemap; a share that's on several
+      disks is one box whose size matches the Shares tab, and By disk
+      colours its parts. Double-click goes into a folder, Up comes back,
+      Bubbles draws the same folder. A map of one disk and of one share
+      match `du -sh` within 1%. Move to the quarantine on a file lists
+      it, and the box is hatched after. The log's "map of …" line gives
+      the time and peak memory; `ls -la /mnt/cache/.freesize/` shows the
+      file, and Remove this map deletes it.
 - [ ] After a round on the whole array, `/var/log/freesize.log` gives the
       peak memory, and it stays well under the server's free memory.

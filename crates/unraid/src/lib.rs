@@ -14,6 +14,7 @@ pub mod activity;
 pub mod array;
 pub mod docker;
 pub mod ini;
+pub mod map;
 pub mod mover;
 pub mod nextcloud;
 pub mod perms;

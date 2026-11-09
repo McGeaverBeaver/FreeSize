@@ -109,6 +109,27 @@ case 'folders':
   if (($_POST['wake'] ?? '') === 'yes') $args[] = '--wake';
   dt_json(dt_run($args));
 
+case 'map_build':
+  // The whole array, a disk or pool, or a share; the command checks it too.
+  $target = (string)($_POST['target'] ?? '');
+  if (!preg_match('#^(all|disk:[a-z][a-z0-9_]{0,30}|share:[^/\x00-\x1f]{1,100})$#', $target)) dt_fail('choose what to map');
+  dt_reply(dt_run(['unraid', 'map', 'build', '--', $target]));
+
+case 'map_cancel':
+  dt_reply(dt_run(['unraid', 'map', 'cancel']));
+
+case 'map_discard':
+  dt_reply(dt_run(['unraid', 'map', 'discard']));
+
+case 'map_view':
+  // One folder of the map, as boxes or bubbles for the page's size.
+  $style = ($_POST['style'] ?? '') === 'bubbles' ? 'bubbles' : 'treemap';
+  $width = max(120, min(8000, (int)($_POST['width'] ?? 1000)));
+  $height = max(120, min(8000, (int)($_POST['height'] ?? 600)));
+  $path = trim(preg_replace('/[\x00]/', '', (string)($_POST['path'] ?? '')), '/');
+  if (strlen($path) > 4000) dt_fail('no such folder');
+  dt_json(dt_run(['unraid', 'map', 'view', '--json', "--style=$style", "--width=$width", "--height=$height", "--path=$path"]));
+
 case 'move_cancel':
   dt_reply(dt_run(['unraid', 'move', 'cancel', dt_id('id')]));
 

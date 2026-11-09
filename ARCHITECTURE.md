@@ -1297,6 +1297,26 @@ server's root (`/`, or a folder laid out like a server in the tests).
 - `round.rs`: one look at the server: scan the disks that are awake (and
   one that slept for `WAKE_DAYS`), then shares, Docker, VMs, Nextcloud,
   permissions and the rules.
+- `map.rs`: the map the page's Map tab asks for (0.21.1), never built by
+  a round. `build` scans each disk the `Target` covers on its own (all
+  data disks and pools, one of them, or a share's folder on each disk
+  that has it; sleeping disks are read too), and `Builder::add_disk`
+  merges each tree by path and lets it go: a file's bytes are kept per
+  disk (`on`), so a folder on several disks is one node with their sizes
+  added and nothing is counted twice. What's kept is bounded by `Limits`:
+  before a disk goes in, `make_room` raises `floor` so about 200,000
+  files keep nodes of their own (the rest are summed per folder as a
+  `Smaller` node) and `folder_floor` so about 200,000 folders stay open
+  (the rest are `Closed`: one node, nothing inside). `finish` writes the
+  nodes folders-first with each folder's contents together, biggest
+  first, and `Map::save` puts them in a file a line each
+  (`file_for`: `<pool>/.freesize/map.dat`, the daemon's data folder
+  without a pool). `Map::view` loads the file and lays one folder out
+  for a width and height: `treemap` with `freesize_core::treemap::squarify`
+  (three levels, 1,500 boxes at most), `bubbles` with
+  `freesize_core::bubbles::fit` and `fit_circle` (40 bubbles, 16 inside
+  each, the rest as one `other`), each `Item` with its path, kind, size,
+  the disks it's on and a colour group.
 - The junk cleaner's Unraid rules (`freesize_core::junk`, `$SHARES` as
   `/mnt/user`): the Recycle Bin plugin's `.Recycle.bin` folders and the
   `.Trash-*` folders clients leave. `freesize unraid junk list|clean` and
@@ -1310,8 +1330,13 @@ starts), samples activity each minute, runs moves on a thread of their
 own, one at a time (a move from several disks queues one per disk, each
 planned again just before it starts), and writes `status.json` to `/var/local/freesize` for the page. The page
 asks it for things with files in `requests/` (scan, refresh, settings,
-hub, `move-<id>.json`, `cancel-<id>`); quick actions (quarantine,
-estimates, plans, Docker cleanup) it runs with the same command directly.
+hub, `move-<id>.json`, `cancel-<id>`, `map` with the target, `map-cancel`,
+`map-discard`); quick actions (quarantine, estimates, plans, Docker
+cleanup, a view of the map) it runs with the same command directly. A
+map is built on a thread of its own (`start_map`); its state
+(`MapStatus`: building with `doing`, or ready with the file and `Meta`)
+is in the status and in `map.json`, and a build that fails or is stopped
+leaves the map there was.
 Once paired (`agent.json` on the flash drive), a second thread long-polls
 the Hub, and the daemon carries out what the approver allows through
 `UnraidExecutor`: deletes go to the quarantine, and putting back, emptying
@@ -1332,7 +1357,12 @@ the daemon's `doing` ("scanning disk2 (2 of 5)"), rather than reading a
 missing Docker or VM section as switched off. Unraid's stylesheet keeps
 every table cell on one line with a fixed height; `freesize.css` undoes
 that for its own tables, and lists findings in grid rows (`.dt-rows`), so
-long paths wrap and the buttons stay on the page. `rc.freesize`
+long paths wrap and the buttons stay on the page. The Map tab
+(`renderMap`) asks `map_view` for the folder shown at the stage's size
+in pixels (again when the width changes or a folder is opened) and draws
+each `Item` as a positioned `div`, coloured by its group or by its
+biggest disk; what was moved to the quarantine since is hatched until
+the map is built again. `rc.freesize`
 starts the daemon at nice 19 with idle I/O priority; the array's events
 (`event/stopping`, `stopped`, `started`) stop it before the disks unmount
 and start it again. `scripts/unraid-plugin.sh` packs the static binary

@@ -168,6 +168,7 @@
   function render() {
     renderOverview();
     renderShares();
+    renderMap();
     renderApps();
     renderActivity();
     renderQuarantine();
@@ -292,7 +293,7 @@
 
   function tabLink(tab) {
     // Unraid's tabs are inputs labelled by the page titles; click through.
-    const tabs = { FreeSizeApps: 3, FreeSizeQuarantine: 5, FreeSizeSettings: 6 };
+    const tabs = { FreeSizeApps: 4, FreeSizeQuarantine: 6, FreeSizeSettings: 7 };
     const n = tabs[tab];
     if (!n) return null;
     return h("a", { href: "#", class: "dt-link", onclick: (e) => {
@@ -1177,6 +1178,360 @@
     toast(reply.output, reply.ok ? "good" : "bad");
     built.hubKey = null;
     refreshSoon();
+  }
+
+  // ----- Map ----------------------------------------------------------
+  //
+  // The map is built only when asked for here, never by the scheduled
+  // look. The background part keeps it in a file; the page asks for one
+  // folder of it at a time, laid out for the size it has to draw in.
+
+  // One hue per thing in the folder shown: [hue, saturation %, lightness %].
+  const MAP_HUES = [[214, 58, 50], [152, 48, 42], [32, 62, 46], [354, 55, 52], [186, 55, 40], [322, 48, 50], [268, 48, 56], [88, 42, 40], [16, 62, 50], [232, 42, 58], [48, 60, 40], [170, 40, 34]];
+  const map = { key: "", path: "", style: "treemap", colour: "folder", view: null, picked: null, moved: new Set(), width: 0, asking: 0, poll: null };
+
+  function num(n) {
+    return (Number(n) || 0).toLocaleString();
+  }
+
+  function mapStatus() {
+    return (model.status && model.status.map) || {};
+  }
+
+  function targetLabel(code) {
+    if (!code || code === "all") return "the whole array";
+    const [kind, name] = [code.slice(0, code.indexOf(":")), code.slice(code.indexOf(":") + 1)];
+    return kind === "share" ? `the ${name} share` : name;
+  }
+
+  function mapFull(path) {
+    const meta = mapStatus().meta || {};
+    return path ? `${meta.root}/${path}` : meta.root || "";
+  }
+
+  function renderMap() {
+    const root = document.getElementById("dt-map");
+    if (!root || !model.loaded) return;
+    if (!built.map) {
+      const b = {
+        note: h("div"),
+        target: h("select", { "aria-label": "What to map" }),
+        build: h("button", { type: "button", class: "dt-primary", onclick: () => buildMap() }),
+        state: h("div"),
+        tools: h("div", { class: "dt-map-tools" }),
+        stage: h("div", { class: "dt-map-stage", role: "img", "aria-label": "Map of what takes the space" }),
+        legend: h("div", { class: "dt-map-legend" }),
+        picked: h("div", { class: "dt-map-picked" }),
+        about: h("div"),
+      };
+      b.body = h("div", { class: "dt-map-body", hidden: true }, b.tools, b.stage, b.legend, b.picked);
+      built.map = b;
+      fill(root,
+        b.note,
+        h("div", { class: "dt-form dt-map-pick" },
+          h("label", {}, "Map of", b.target),
+          b.build),
+        b.state,
+        b.body,
+        b.about);
+      // Drawn again when the page's width changes, and when the tab is
+      // first shown (it has no width while another tab is in front).
+      if (window.ResizeObserver) {
+        new ResizeObserver(() => {
+          const w = Math.round(b.stage.clientWidth);
+          if (w && Math.abs(w - map.width) > 8) {
+            clearTimeout(map.resize);
+            map.resize = setTimeout(() => askView(), 150);
+          }
+        }).observe(b.stage);
+      }
+    }
+    const b = built.map;
+    const s = mapStatus();
+    const building = s.state === "building";
+    const ready = s.state === "ready" && s.meta;
+    fill(b.note, notRunning());
+
+    // What can be mapped: kept as chosen while the lists refresh.
+    const disks = (report().disks || []).filter((d) => (d.kind === "data" || d.kind === "pool") && d.path);
+    const shares = (report().shares || []).map((x) => x.name);
+    const options = `all|${disks.map((d) => d.name).join(",")}|${shares.join("/")}`;
+    if (b.options !== options) {
+      b.options = options;
+      const chosen = b.target.value || (ready ? s.target : "all");
+      fill(b.target,
+        h("option", { value: "all" }, "The whole array"),
+        disks.length ? h("optgroup", { label: "One disk or pool" }, disks.map((d) => h("option", { value: `disk:${d.name}` }, d.name))) : null,
+        shares.length ? h("optgroup", { label: "One share" }, shares.map((n) => h("option", { value: `share:${n}` }, n))) : null);
+      b.target.value = chosen;
+      if (!b.target.value) b.target.value = "all";
+    }
+    b.build.textContent = ready ? "Build again" : "Build map";
+    b.build.disabled = building || !model.running;
+
+    if (building) {
+      fill(b.state, h("div", { class: "dt-note dt-busy", role: "status" }, h("span", { class: "dt-spinner" }),
+        h("div", { class: "dt-grow" },
+          h("b", {}, `Building the map of ${targetLabel(s.target)}`),
+          h("div", { class: "dt-muted" }, s.doing && s.doing !== "starting" ? `${s.doing.charAt(0).toUpperCase()}${s.doing.slice(1)}.` : "Starting…", " Each disk is read in turn; the map shows here when the last one is done.")),
+        h("button", { type: "button", onclick: async (e) => {
+          await busy(e.target, () => post("map_cancel"));
+          refreshSoon();
+        } }, "Stop")));
+    } else if (!ready) {
+      fill(b.state,
+        s.error ? h("p", { class: "dt-note dt-bad" }, `The map couldn't be built: ${s.error}.`) : null,
+        h("p", { class: "dt-muted" }, "See what takes the space as boxes or bubbles, sized by what they hold. Choose the whole array, one disk or one share, then Build map. A folder spread over several disks shows once, with its parts added together. The map is only built when you ask for it here."));
+    } else {
+      fill(b.state, s.error ? h("p", { class: "dt-note dt-bad" }, `A new map couldn't be built (${s.error}), so this is still the one from before.`) : null);
+    }
+    b.body.hidden = !ready;
+
+    // While it builds, look more often than every ten seconds.
+    clearTimeout(map.poll);
+    if (building) map.poll = setTimeout(load, 2000);
+
+    if (!ready) {
+      map.key = "";
+      map.view = null;
+      fill(b.about);
+      return;
+    }
+    const meta = s.meta;
+    const key = `${meta.target}:${meta.built}`;
+    if (map.key !== key) {
+      map.key = key;
+      map.path = "";
+      map.view = null;
+      map.picked = null;
+      map.moved = new Set();
+      if ((meta.disks || []).length < 2) map.colour = "folder";
+      askView();
+    }
+    const cut = [];
+    if (meta.floor) cut.push(`Files under ${size(meta.floor)} are added up per folder as "smaller files".`);
+    if (meta.folder_floor) cut.push(`Folders under ${size(meta.folder_floor)} are drawn closed.`);
+    fill(b.about,
+      h("p", { class: "dt-muted" },
+        `Map of ${targetLabel(meta.target)}: ${size(meta.size)} in ${num(meta.files)} files, on ${count((meta.disks || []).length, "disk")}. Built ${ago(meta.built)} in ${meta.seconds < 90 ? `${Math.max(1, meta.seconds)} s` : `${Math.round(meta.seconds / 60)} min`}; it shows the server as it was then. `,
+        cut.join(" "), " ",
+        h("a", { href: "#", class: "dt-link", onclick: async (e) => {
+          e.preventDefault();
+          if (!window.confirm("Remove this map? Nothing on the disks changes; you can build it again.")) return;
+          await post("map_discard");
+          refreshSoon();
+        } }, "Remove this map")),
+      (meta.missed || []).length ? h("p", { class: "dt-note" }, `Not on the map: ${meta.missed.join("; ")}.`) : null,
+      meta.unreadable ? h("p", { class: "dt-muted" }, `${count(meta.unreadable, "folder or file", "folders or files")} couldn't be read and aren't counted.`) : null);
+  }
+
+  async function buildMap() {
+    const b = built.map;
+    const target = b.target.value || "all";
+    const reply = await busy(b.build, () => post("map_build", { target }));
+    if (!reply.ok) return toast(reply.output, "bad");
+    b.build.disabled = true;
+    setTimeout(load, 800);
+  }
+
+  // Asks for the folder shown, laid out for the stage's size now.
+  async function askView() {
+    const b = built.map;
+    if (!b || mapStatus().state !== "ready") return;
+    const width = Math.round(b.stage.clientWidth);
+    if (!width) return;
+    const height = Math.round(Math.max(300, Math.min(680, width * 0.62, window.innerHeight * 0.72)));
+    map.width = width;
+    b.stage.style.height = `${height}px`;
+    const asking = ++map.asking;
+    b.stage.classList.add("dt-map-loading");
+    const reply = await post("map_view", { path: map.path, style: map.style, width, height });
+    if (asking !== map.asking) return;
+    b.stage.classList.remove("dt-map-loading");
+    if (!reply.ok || !reply.result) {
+      // The folder isn't on a map built since: back to the top.
+      if (map.path) {
+        map.path = "";
+        return askView();
+      }
+      map.view = null;
+      fill(b.tools);
+      fill(b.legend);
+      fill(b.picked);
+      fill(b.stage, h("p", { class: "dt-map-empty" }, reply.output || "The map couldn't be read."));
+      return;
+    }
+    map.view = reply.result;
+    if (map.picked && !map.view.items.some((i) => sameItem(i, map.picked))) map.picked = null;
+    drawMap();
+  }
+
+  function sameItem(a, b) {
+    return a.path === b.path && a.kind === b.kind && a.name === b.name;
+  }
+
+  function openFolder(path) {
+    map.path = path;
+    map.picked = null;
+    askView();
+  }
+
+  function itemName(i) {
+    if (i.kind === "smaller") return `${num(i.files)} smaller ${i.files === 1 ? "file" : "files"}`;
+    if (i.kind === "other") return `${num(i.files)} smaller ${i.files === 1 ? "thing" : "things"}`;
+    return i.name;
+  }
+
+  function onDisks(disks) {
+    if (!disks || !disks.length) return "";
+    if (disks.length === 1) return `on ${disks[0][0]}`;
+    return `on ${disks.map(([name, bytes]) => `${name} (${size(bytes)})`).join(", ")}`;
+  }
+
+  function mapColour(i, colours) {
+    if (map.colour === "disk") {
+      const disk = i.disks && i.disks.length ? i.disks[0][0] : null;
+      const base = colours[disk] || "#7a7f87";
+      // Folders with their contents inside are frames, darker.
+      return i.nested ? `color-mix(in srgb, ${base} 62%, #000)` : base;
+    }
+    const [hue, sat, light] = MAP_HUES[i.group % MAP_HUES.length];
+    if (i.nested) return `hsl(${hue} ${sat}% ${Math.max(18, light - 16)}%)`;
+    return `hsl(${hue} ${sat}% ${Math.min(62, light + i.depth * 3)}%)`;
+  }
+
+  function drawMap() {
+    const b = built.map;
+    const view = map.view;
+    if (!b || !view) return;
+    const meta = mapStatus().meta || {};
+    const colours = diskColors();
+    const bubbles = map.style === "bubbles";
+    const several = (meta.disks || []).length > 1;
+
+    const seg = (value, current, label, set) => h("button", { type: "button", class: value === current ? "dt-on" : null, "aria-pressed": value === current ? "true" : "false", onclick: () => set(value) }, label);
+    const setStyle = (v) => {
+      if (map.style === v) return;
+      map.style = v;
+      askView();
+    };
+    const setColour = (v) => {
+      map.colour = v;
+      drawMap();
+    };
+    const top = targetLabel(meta.target);
+    fill(b.tools,
+      h("div", { class: "dt-map-crumbs" },
+        view.crumbs.map((c, n) => {
+          const name = n === 0 ? top.charAt(0).toUpperCase() + top.slice(1) : c.name;
+          const last = n === view.crumbs.length - 1;
+          return [n ? h("span", { class: "dt-muted" }, " › ") : null,
+            last ? h("b", {}, name) : h("a", { href: "#", onclick: (e) => {
+              e.preventDefault();
+              openFolder(c.path);
+            } }, name)];
+        }),
+        h("span", { class: "dt-muted" }, `  ${size(view.size)}`)),
+      h("div", { class: "dt-map-switches" },
+        several ? h("div", { class: "dt-seg", role: "group", "aria-label": "Colour by" },
+          seg("folder", map.colour, "By folder", setColour), seg("disk", map.colour, "By disk", setColour)) : null,
+        h("div", { class: "dt-seg", role: "group", "aria-label": "Kind of map" },
+          seg("treemap", map.style, "Treemap", setStyle), seg("bubbles", map.style, "Bubbles", setStyle))));
+
+    // A bubble's name when its contents are drawn inside it: on top of
+    // them all, along its upper edge.
+    const names = [];
+    const shapes = view.items.map((i) => {
+      const full = mapFull(i.path);
+      const label = itemName(i);
+      const tip = [label, `${size(i.size)}${i.kind === "file" || i.kind === "other" || i.kind === "smaller" ? "" : ` · ${num(i.files)} ${i.files === 1 ? "file" : "files"}`}`, onDisks(i.disks)].filter(Boolean).join("\n");
+      const classes = ["dt-map-item", `dt-map-${i.kind}`];
+      if (i.nested) classes.push("dt-map-nested");
+      if (map.picked && sameItem(i, map.picked)) classes.push("dt-map-sel");
+      if ([...map.moved].some((p) => full === p || full.startsWith(`${p}/`)) && i.kind !== "smaller" && i.kind !== "other") classes.push("dt-map-gone");
+      let style;
+      let text = null;
+      if (bubbles) {
+        style = `left:${i.x - i.r}px;top:${i.y - i.r}px;width:${2 * i.r}px;height:${2 * i.r}px;`;
+        if (i.nested) {
+          if (i.r >= 60) names.push(h("span", { class: "dt-map-name", style: `left:${i.x - i.r * 0.62}px;top:${i.y - i.r + 3}px;width:${i.r * 1.24}px;` }, label));
+        } else if (i.r >= 26) {
+          text = h("span", { class: "dt-map-text" }, h("span", {}, label), i.r >= 34 ? h("small", {}, size(i.size)) : null);
+        }
+      } else {
+        style = `left:${i.x}px;top:${i.y}px;width:${i.w}px;height:${i.h}px;`;
+        if (i.nested) {
+          if (i.w >= 40) text = h("span", { class: "dt-map-head" }, label, i.w >= 120 ? h("small", {}, ` ${size(i.size)}`) : null);
+        } else if (i.w >= 46 && i.h >= 18) {
+          text = h("span", { class: "dt-map-text" }, h("span", {}, label), i.h >= 34 ? h("small", {}, size(i.size)) : null);
+        }
+      }
+      return h("div", {
+        class: classes.join(" "),
+        style: `${style}background:${mapColour(i, colours)};`,
+        title: tip,
+        onclick: (e) => {
+          e.stopPropagation();
+          map.picked = i;
+          drawMap();
+        },
+        ondblclick: (e) => {
+          e.stopPropagation();
+          if (i.kind === "folder") openFolder(i.path);
+        },
+      }, text);
+    });
+    b.stage.classList.toggle("dt-map-bubbles", bubbles);
+    b.stage.onclick = () => {
+      if (!map.picked) return;
+      map.picked = null;
+      drawMap();
+    };
+    fill(b.stage, shapes.length ? [shapes, names] : h("p", { class: "dt-map-empty" }, "Nothing here takes any space."));
+
+    // Which colour is which disk.
+    fill(b.legend, map.colour === "disk" && several
+      ? (view.disks || []).map(([name, bytes]) => h("span", {}, h("span", { class: "dt-swatch", style: `background:${colours[name] || "#7a7f87"}` }), `${name} ${size(bytes)}`))
+      : null);
+
+    drawPicked();
+  }
+
+  function drawPicked() {
+    const b = built.map;
+    const view = map.view;
+    const i = map.picked;
+    const up = view.crumbs.length > 1
+      ? h("button", { type: "button", onclick: () => openFolder(view.crumbs[view.crumbs.length - 2].path) }, "Up")
+      : null;
+    if (!i) {
+      fill(b.picked,
+        h("div", { class: "dt-grow dt-muted" }, "Click anything on the map to see what it is; double-click a folder to open it."),
+        h("div", { class: "dt-actions" }, up, view.path ? browse(mapFull(view.path)) : null));
+      return;
+    }
+    const full = mapFull(i.path);
+    const real = i.kind === "file" || i.kind === "folder" || i.kind === "closed";
+    const moved = map.moved.has(full);
+    const meta = mapStatus().meta || {};
+    let more = "";
+    if (i.kind === "smaller") more = `Files under ${size(meta.floor)} in this folder, added together.`;
+    else if (i.kind === "other") more = "The things here too small for a bubble of their own.";
+    else if (i.kind === "closed") more = "Too small for the map to keep what's inside it.";
+    if (moved) more = "Moved to the quarantine since the map was built.";
+    fill(b.picked,
+      h("div", { class: "dt-grow" },
+        h("b", { class: "dt-path" }, real ? full : itemName(i)),
+        h("div", { class: "dt-muted" },
+          [size(i.size), i.kind === "folder" || i.kind === "closed" ? `${num(i.files)} ${i.files === 1 ? "file" : "files"}` : null, onDisks(i.disks), real ? null : `in ${full}`, more].filter(Boolean).join(" · "))),
+      h("div", { class: "dt-actions" },
+        up,
+        i.kind === "folder" ? h("button", { type: "button", onclick: () => openFolder(i.path) }, "Open") : null,
+        browse(full, i.kind === "file"),
+        real && !moved ? h("button", { type: "button", onclick: () => askQuarantine([full], "", () => {
+          map.moved.add(full);
+          drawMap();
+        }) }, "Move to the quarantine…") : null));
   }
 
   // ----- Start --------------------------------------------------------
