@@ -1235,7 +1235,141 @@ A plugin for Unraid 6.12 and newer: a page under **Tools → FreeSize** and a
 small background part. It knows the array, the pools, Docker and the VMs,
 and keeps what the server needs out of reach.
 
-![The plugin's overview](docs/screenshots/unraid-plugin.png)
+The page has seven tabs. The tour below goes through them in order, with
+pictures of a made-up server (five disks, a cache pool, a few apps and two
+VMs); after it, [In more detail](#in-more-detail) lists everything the
+plugin shows and does.
+
+### Using the plugin, tab by tab
+
+Nothing on the page removes anything by itself. Everything it finds is a
+suggestion, every button that moves or removes something first lists the
+exact paths (each with **View**, which opens Unraid's file browser there),
+and what's moved aside goes to the **quarantine**, where it can be put
+back.
+
+#### Overview: how full each disk is
+
+![The Overview tab: each disk and pool with how full it is, its temperature and when it was last scanned, and boxes for Docker, the quarantine and the Hub](docs/screenshots/unraid/overview.png)
+
+Every disk and pool, with how much is used and free, its temperature, and
+when FreeSize last scanned it. FreeSize looks at the disks once a day (or
+as often as Settings says) and **never wakes a sleeping disk**: a disk
+that's asleep (disk4 here) keeps its last scan until it's awake at the next
+look, or until a week has passed. **Look now** scans the awake disks
+straight away. The boxes at the bottom say how much Docker could free, what
+waits in the quarantine and whether the Hub is connected; **Open** goes to
+that tab.
+
+#### Shares and moves: which disk holds what
+
+![The Shares and moves tab: each share with a bar split by disk, and the Move between disks form with presets below](docs/screenshots/unraid/shares-and-moves.png)
+
+Each share with a bar split by the disks it's on, so you can see that
+Media is spread over three disks while isos sits on one. A part from a
+disk that slept through the last look is marked *earlier scan*. **View**
+opens the share in Unraid's file browser.
+
+To move a share, or a folder in it, to another disk: press **Move…** on its
+row (or pick it under **Move between disks**), use **Choose…** to browse to
+the folder (it ticks the disks that hold it), tick the disks to move it
+from, pick the disk to move it to, and press **Plan**. The plan shows first:
+whether there's room, files in the way, hard links that would be split.
+Starting it copies each file, checks the copy against the original, and
+only then moves the original into the source disk's quarantine; the path
+under `/mnt/user` doesn't change. Under **Presets**, *Empty a disk…* works
+out moves that empty a disk before you pull it, and *Gather a share…* moves
+a share spread over several disks onto one.
+
+#### Map: what takes the space
+
+![The Map tab: a treemap of the whole array, Media and its films biggest, with one film picked and its path, size and disk shown below](docs/screenshots/unraid/map.png)
+
+A picture of what fills the array, a disk or a share, like the Map of the
+desktop app. Choose what to map under **Map of** and press **Build map**:
+the disks are read one after another (they spin up for this, since you
+asked), and the map shows when the last is done. It isn't built on a
+schedule, so it shows the server as it was then; **Build again** makes a
+fresh one.
+
+Click a box to see its path, size, file count and which disks it's on;
+double-click a folder (or **Open**) to go into it, and **Up** to go back.
+**By disk** colours the same map by the disk each thing is on, and
+**Bubbles** draws it as circles. **Move to the quarantine…** moves the
+picked thing aside, after listing it.
+
+#### Docker and VMs: images, appdata and VM files nobody uses
+
+![The Docker and VMs tab: safe to remove (build cache, untagged images), check first (appdata of a removed app, a container writing inside itself, unused volumes and images), and the VMs with their disks and ISOs](docs/screenshots/unraid/docker-and-vms.png)
+
+Docker's findings in three groups, the same safety words as the rest of
+FreeSize:
+
+- **Safe to remove**: the build cache and untagged images left behind by
+  updates. Tick them and press **Remove…**.
+- **Check first**: things you probably don't need but might want back.
+  Images no container uses (they can be downloaded again) are ticked and
+  removed the same way. The appdata folder of an app you uninstalled has
+  **Quarantine…**, so it can be put back (Apps → Previous Apps reinstalls
+  the app with its settings). Unused volumes, and containers that write
+  inside themselves and fill `docker.img` (jellyfin here), are only shown:
+  you deal with those in Unraid's Docker tab or the app's settings.
+- **In use**, folded: what installed apps use. Never offered.
+
+Under **VMs**, each VM with its disks and the ISO in its CD drive, then the
+ISOs no VM has in a CD drive (with **Quarantine…**) and the files in the
+VMs' folder.
+
+#### Disk activity: what keeps disks awake
+
+![The Disk activity tab: per disk, spin-ups, hours awake, reads and writes over the last day and the files open on it now, then a Permissions list](docs/screenshots/unraid/disk-activity.png)
+
+For each disk, over the last day: how often it spun up, how long it was
+awake, how much it read and wrote, and which files are open on it right
+now, by which program or container (jellyfin playing a film from disk1,
+someone reading a PDF over SMB on disk3). A disk that keeps waking up is
+usually read by an app on a schedule: move what it reads to a pool, or
+change the app's schedule.
+
+**Permissions** lists files in the shares that SMB may not reach (not owned
+by nobody:users, or without read and write for the group), per share; open
+a share to see them. FreeSize only reports these: Tools → New Permissions
+fixes them.
+
+#### Quarantine: put back, or delete for good
+
+![The Quarantine tab: three batches with Put back and Delete for good, then the Recycle Bin plugin's and computers' trash folders with Empty for good](docs/screenshots/unraid/quarantine.png)
+
+Everything moved aside, in batches: when, from where (this page, a move
+between disks, or a Hub request) and why. Moving is a rename on the same
+disk, so it's instant, and the space is freed only when you delete. **Put
+back…** returns a batch to where it was; **Delete for good…** lists every
+path first and asks for a tick. Nothing here is deleted on a timer. A batch
+on a sleeping disk shows again when the disk wakes. **Move something to the
+quarantine** takes any path in a share.
+
+**Trash folders in the shares** are what the Recycle Bin plugin and
+computers' own trash (`.Trash-1000`, `.Trashes`) keep. They aren't in the
+quarantine, so **Empty for good…** really deletes, after listing what goes.
+
+#### Settings and Hub
+
+![The Settings and Hub tab: how often to look, when to wake a sleeping disk, the Never touch list, and the Hub pairing with its approver](docs/screenshots/unraid/settings-and-hub.png)
+
+- **Settings**: how often FreeSize looks at the disks, after how many days
+  it may wake a sleeping disk to scan it (0: never), whether to look for odd
+  permissions, and whether to report to the Hub. **Apply** saves them.
+- **Never touch**: paths, one per line, that are never offered, never moved
+  and refused when the Hub asks, on top of what FreeSize always keeps (see
+  below). **Save** keeps the list.
+- **FreeSize Hub**: paste a pairing link from the Hub to show this server on
+  the dashboard with your other devices (see [With the Hub](#with-the-hub)).
+  The **approver** is the phone or computer that allows or refuses the Hub's
+  requests; it can only be chosen here or with `freesize approver set` on
+  the server, never from the Hub. **End all grants** cancels approvals that
+  are still running, and **Unpair** disconnects the Hub.
+
+### In more detail
 
 What it shows:
 
