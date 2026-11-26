@@ -51,14 +51,18 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/freesize-hub"
           digest="$(docker buildx imagetools inspect "$image:latest" --format '{{json .Manifest}}' | jq -r .digest)"
           mkdir -p hub/amd64 hub/arm64
+          # Each architecture's own manifest (one digest can't be pulled
+          # for two platforms into Docker's image store).
+          index="$(docker buildx imagetools inspect --raw "$image@$digest")"
           for arch in amd64 arm64; do
-            docker pull --quiet --platform "linux/$arch" "$image@$digest" >/dev/null
-            id="$(docker create --platform "linux/$arch" "$image@$digest")"
+            one="$(jq -r --arg a "$arch" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest' <<<"$index")"
+            docker pull --quiet "$image@$one" >/dev/null
+            id="$(docker create "$image@$one")"
             docker cp "$id:/usr/local/bin/freesize-hub" "hub/$arch/freesize-hub"
             docker rm "$id" >/dev/null
           done
-          version="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image@$digest")"
-          revision="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest")"
+          version="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image@$one")"
+          revision="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$one")"
           if [ -z "$version" ]; then
             echo "::error::$image:latest has no version label" >&2
             exit 1
