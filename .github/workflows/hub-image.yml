@@ -1,0 +1,129 @@
+name: Hub image
+
+# Rebuilds the Hub's Docker image on Debian's newest image, so its fixes
+# reach Hubs between releases. It takes the Hubs out of the image that
+# `latest` points at (the ones scripts/release.sh built), so the program is
+# exactly the same and only the system around it changes; then it builds
+# the Dockerfile's final stage around them for amd64 and arm64, checks each
+# with packaging/docker/smoke-test.sh, and lists what Trivy finds.
+#
+# Weekly, and when started by hand with "publish" ticked, it then pushes the
+# image as <version>, <version>-<date> (to go back to, if ever needed) and
+# latest. A push to master that changes the image only builds and checks.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  push:
+    branches: [master]
+    paths:
+      - Dockerfile
+      - packaging/docker/**
+      - .github/workflows/hub-image.yml
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Push the rebuilt image (version, dated and latest tags)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: hub-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Take the Hubs out of the published image
+        id: source
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/freesize-hub"
+          digest="$(docker buildx imagetools inspect "$image:latest" --format '{{json .Manifest}}' | jq -r .digest)"
+          mkdir -p hub/amd64 hub/arm64
+          for arch in amd64 arm64; do
+            docker pull --quiet --platform "linux/$arch" "$image@$digest" >/dev/null
+            id="$(docker create --platform "linux/$arch" "$image@$digest")"
+            docker cp "$id:/usr/local/bin/freesize-hub" "hub/$arch/freesize-hub"
+            docker rm "$id" >/dev/null
+          done
+          version="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image@$digest")"
+          revision="$(docker inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image@$digest")"
+          if [ -z "$version" ]; then
+            echo "::error::$image:latest has no version label" >&2
+            exit 1
+          fi
+          cp /etc/ssl/certs/ca-certificates.crt hub/
+          file hub/*/freesize-hub
+          echo "Rebuilding $image $version ($revision), now $digest"
+          {
+            echo "image=$image"
+            echo "digest=$digest"
+            echo "version=$version"
+            echo "revision=$revision"
+          } >>"$GITHUB_OUTPUT"
+          # The Dockerfile's final image with a `hub` stage taking those,
+          # as scripts/release.sh builds it.
+          {
+            echo "# syntax=docker/dockerfile:1"
+            echo "FROM scratch AS hub"
+            echo "COPY --from=prebuilt / /"
+            sed -n '/^# The final image/,$p' Dockerfile
+          } >Dockerfile.image
+
+      - name: Build and check amd64
+        run: |
+          docker buildx build --pull --no-cache --platform linux/amd64 --load \
+            --file Dockerfile.image --build-context prebuilt=hub --tag hub-test:amd64 .
+          packaging/docker/smoke-test.sh hub-test:amd64 linux/amd64
+
+      - name: Build and check arm64
+        run: |
+          docker buildx build --pull --no-cache --platform linux/arm64 --load \
+            --file Dockerfile.image --build-context prebuilt=hub --tag hub-test:arm64 .
+          packaging/docker/smoke-test.sh hub-test:arm64 linux/arm64
+
+      - name: What Trivy finds (high and critical)
+        run: |
+          for arch in amd64 arm64; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
+              image --quiet --scanners vuln --severity HIGH,CRITICAL "hub-test:$arch" || true
+          done
+          docker images hub-test
+
+      - name: Push
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          IMAGE: ${{ steps.source.outputs.image }}
+          VERSION: ${{ steps.source.outputs.version }}
+          REVISION: ${{ steps.source.outputs.revision }}
+          PREVIOUS: ${{ steps.source.outputs.digest }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # Only if latest is still what was checked (a release may have
+          # moved it meanwhile).
+          now="$(docker buildx imagetools inspect "$IMAGE:latest" --format '{{json .Manifest}}' | jq -r .digest)"
+          if [ "$now" != "$PREVIOUS" ]; then
+            echo "latest moved to $now while this ran; leaving it"
+            exit 0
+          fi
+          # The same layers as the checks above (the build cache), for both.
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false \
+            --file Dockerfile.image --build-context prebuilt=hub \
+            --label "org.opencontainers.image.version=$VERSION" \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$IMAGE:$VERSION" --tag "$IMAGE:$VERSION-$(date -u +%Y%m%d)" --tag "$IMAGE:latest" \
+            --push .
+          echo "Pushed $IMAGE $VERSION; the one before was $IMAGE@$PREVIOUS"

@@ -1195,10 +1195,17 @@ suggestions that need no guessing (old big files, the trash bin).
 
 - `Dockerfile`: builds on the build machine's architecture and
   cross-compiles for amd64 or arm64, so a multi-architecture image needs no
-  emulation. The image is Debian slim with the Hub and an entrypoint
-  (`packaging/docker/entrypoint.sh`) that gives `/data` to `PUID:PGID` and
-  drops to that user with `setpriv`. `freesize-hub health` is the health
-  check.
+  emulation. The image is Debian 13 slim, upgraded and cut down to what
+  runs (the `base` stage: glibc, dash, coreutils, util-linux's `setpriv`,
+  dpkg so scanners still see the packages, a few small tools; no apt,
+  perl, bash or PAM, no setuid bits), flattened into one layer, with the
+  Hub and an entrypoint (`packaging/docker/entrypoint.sh`) that gives
+  `/data` to `PUID:PGID` and drops to that user with `setpriv`, which needs
+  only SETUID and SETGID (coreutils' `chroot --userspec` would need
+  SYS_CHROOT too, breaking `--cap-drop`). `freesize-hub health` is the
+  health check. `.github/workflows/hub-image.yml` rebuilds it weekly around
+  the Hubs in the current `latest`, checks it with
+  `packaging/docker/smoke-test.sh` and pushes.
 - `unraid/freesize-hub.xml`: the Unraid template.
 - `unraid/plugin/`: the Unraid plugin (below).
 - `packaging/systemd/`: units for the Hub (its own dynamic user and
@@ -1412,7 +1419,8 @@ release built (a named build context), so Docker compiles nothing: the
 build machine's big disk is a 9p share Docker can't keep layers on, and
 the root disk has little room. Those Hubs link to the build machine's
 glibc, so the script checks they need no newer one than the image's Debian
-has. Every release, drafts too, is tagged `<version>` and `latest`, since
+has (2.41 in Debian 13). The base stage runs on each architecture, so
+arm64's needs QEMU on the build machine. Every release, drafts too, is tagged `<version>` and `latest`, since
 drafts are often made public on GitHub's website, which can't move the
 tag; `--publish` makes a draft public and points `latest` at it again. The script only publishes a clean checkout that
 matches GitHub, and lets `gh release create --target` create the tag for

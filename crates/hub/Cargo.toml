@@ -15,13 +15,16 @@ path = "src/main.rs"
 axum = "0.8.9"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-freesize-agent.workspace = true
+# The update check (`updates.rs`) uses the agent's ureq transport. Release builds
+# get it anyway from the command line built alongside; this lets the Hub
+# build on its own too, as the Dockerfile's build stage does.
+freesize-agent = { workspace = true, features = ["ureq"] }
 freesize-core.workspace = true
 freesize-proto.workspace = true
 flate2 = "1.1.10"
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.0"

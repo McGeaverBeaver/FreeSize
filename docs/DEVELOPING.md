@@ -208,14 +208,29 @@ hundred MB. It logs in to GitHub's registry with the GitHub CLI's token
 the token isn't left on disk. Once, on the build machine:
 
 ```sh
-sudo apt install docker.io docker-buildx gcc-aarch64-linux-gnu
+sudo apt install docker.io docker-buildx gcc-aarch64-linux-gnu qemu-user-static binfmt-support
 sudo usermod -aG docker $USER   # then log in again
 ```
+
+(QEMU because the image's Debian is upgraded and trimmed on each
+architecture: a few seconds of arm64 programs, run emulated.)
 
 and the first time the image is pushed, make the package public on GitHub
 (Packages → freesize-hub → Package settings → Change visibility) so Unraid
 can pull it without logging in; the script reminds you while it's private.
 `FREESIZE_IMAGE` names another image, and `--no-image` leaves it out.
+
+Between releases, the "Hub image" workflow (`.github/workflows/hub-image.yml`)
+rebuilds the image every Monday on Debian's newest image, with the Hubs
+taken out of the image `latest` points at, so only the system around them
+changes. It checks amd64 and arm64 with `packaging/docker/smoke-test.sh`
+(a fresh and an existing data folder, other PUID/PGID, dropped
+capabilities, a read-only root), lists what Trivy finds, and only then
+pushes `<version>`, `<version>-<date>` and `latest`. A push to master that
+changes the Dockerfile or `packaging/docker/` runs the same checks without
+pushing; Actions → Hub image → Run workflow with "publish" ticked pushes
+by hand. It pushes with the workflow's own token, so the package must give
+the repository write access (Package settings → Manage Actions access).
 
 The script refuses to publish uncommitted or unpushed code, or a version
 that's already released. The image is tagged `<version>` and `latest` (the

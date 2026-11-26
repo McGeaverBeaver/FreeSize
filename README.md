@@ -983,7 +983,16 @@ would stay in your shell history and show in `docker inspect`.
 
 The container runs the Hub as `PUID`:`PGID` (99:100 by default) and gives
 it the data folder. The image is built for amd64 and arm64 by
-`scripts/release.sh` (see Releases).
+`scripts/release.sh` (see Releases), on a cut-down Debian 13 with nothing
+the Hub doesn't use (no package manager, no shell but `sh`), and rebuilt
+every Monday so Debian's fixes arrive between releases: the Hub inside
+stays the same, and `latest` gets a new digest, so Unraid shows an update.
+Each rebuild is also tagged `<version>-<date>`, to go back to if needed.
+It starts as root only to give the data folder to `PUID`:`PGID`, then runs
+as that user with no capabilities. To give it less from the start, it
+works with `--cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add
+SETGID --security-opt no-new-privileges` (in Unraid, Extra Parameters),
+or `--user 99:100` when the data folder already belongs to that user.
 
 **Plain Linux**: `freesize-hub-linux-<arch>.tar.gz` from a release has the
 program, a systemd unit and a settings file:

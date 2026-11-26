@@ -465,6 +465,21 @@ Parked, each with its reason:
   dialog still can't be shown, the same direct delete is tried before
   giving up. Errors now carry Android's own message rather than "Java
   exception was thrown".
+- The Hub's Docker image hardened (asked for by the owner, 2026-11-26;
+  on master, not a release of its own). Debian 13 slim instead of 12,
+  upgraded and cut down to what the Hub and its start script run (apt,
+  gpgv/sqv, perl, bash, PAM, login and util-linux's libraries gone; only
+  `setpriv` of util-linux kept, since it switches user with SETUID and
+  SETGID alone), one layer, no setuid bits: 134 MB to 69 MB, and Trivy's
+  high and critical findings from 39 to 6, none fixable then. Same ports,
+  volume, variables, PUID/PGID start and health check. A weekly workflow
+  rebuilds and checks it around the Hubs already published and pushes
+  `<version>`, `<version>-<date>` and `latest`. The Hub's flagged Rust
+  libraries were bumped (rustls, rustls-webpki, webpki-roots, tokio, and
+  rusqlite 0.40 to 0.41 for SQLite 3.54); those arrive with the next
+  release. The Hub now builds on its own (`cargo build -p freesize-hub`
+  failed without the agent's `ureq` feature, so the Dockerfile's build
+  stage did too).
 - 0.21.1, the Unraid plugin's Map tab (asked for by the owner,
   2026-11-09: the desktop app's Map, on the server). A treemap or bubbles
   of the whole array, one disk or pool, or one share, built only when

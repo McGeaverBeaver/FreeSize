@@ -191,6 +191,13 @@ if [ -n "$image" ] && ! $promote; then
         echo "       sudo apt install gcc-aarch64-linux-gnu (or pass --no-image)" >&2
         exit 1
     fi
+    # The image's Debian is upgraded and trimmed on each architecture
+    # (see the Dockerfile), so arm64's steps run under QEMU.
+    if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+        echo "error: the Docker image's arm64 half needs QEMU to run arm64 programs; run:" >&2
+        echo "       sudo apt install qemu-user-static binfmt-support (or pass --no-image)" >&2
+        exit 1
+    fi
 fi
 
 if $publish; then
@@ -356,8 +363,8 @@ if [ -n "$image" ]; then
     # than the image's Debian has.
     for bin in "$hub"/*/freesize-hub; do
         need="$(readelf -V "$bin" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)"
-        if [ "$(printf '%s\n' "$need" 2.36 | sort -V | tail -n 1)" != 2.36 ]; then
-            echo "error: $bin needs glibc $need, newer than the 2.36 in the image" >&2
+        if [ "$(printf '%s\n' "$need" 2.41 | sort -V | tail -n 1)" != 2.41 ]; then
+            echo "error: $bin needs glibc $need, newer than the 2.41 in the image (Debian 13)" >&2
             exit 1
         fi
     done
@@ -394,12 +401,13 @@ if [ -n "$image" ]; then
         registry_login
         output=(--push)
     fi
+    # --pull takes Debian's newest image, so each release has its fixes.
     # No provenance attestations: they show up as an extra "unknown/unknown"
     # platform next to amd64 and arm64. A download cut short leaves a bad
     # layer in the builder's cache ("unexpected commit size ... failed
     # precondition"), so a failure empties the cache and tries again.
     for try in 1 2 3; do
-        if docker buildx build --builder freesize --platform linux/amd64,linux/arm64 \
+        if docker buildx build --builder freesize --platform linux/amd64,linux/arm64 --pull \
             --file "$work/Dockerfile" --build-context prebuilt="$hub" \
             --provenance=false "${labels[@]}" --tag "$image:$version" "${output[@]}" .; then
             break
