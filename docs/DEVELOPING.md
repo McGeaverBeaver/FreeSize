@@ -230,7 +230,9 @@ capabilities, a read-only root), lists what Trivy finds, and only then
 pushes `<version>`, `<version>-<date>` and `latest`. A push to master that
 changes the Dockerfile or `packaging/docker/` runs the same checks without
 pushing; Actions → Hub image → Run workflow with "publish" ticked pushes
-by hand. It pushes with the workflow's own token, so the package must give
+by hand. It pushes only if its commit is still master's head (or the
+newer commit builds the same image) and `latest` hasn't moved since it
+started. It pushes with the workflow's own token, so the package must give
 the repository write access (Package settings → Manage Actions access).
 
 The script refuses to publish uncommitted or unpushed code, or a version
@@ -241,10 +243,13 @@ check first; `scripts/release.sh --publish` makes it public and points
 `latest` at it again, also when it was made public on the website. `--build-only` just builds into `dist/` (and builds the image
 without pushing it). macOS builds need a Mac, so releases have none.
 
-The GitHub Actions CI workflow (`.github/workflows/ci.yml`) no longer runs on
-its own. It runs formatting, clippy and tests on Windows, macOS and Linux,
-builds the APK and the Unraid plugin, when started by hand from the Actions
-tab. The same checks locally:
+The GitHub Actions CI workflow (`.github/workflows/ci.yml`) runs formatting,
+clippy and tests on Windows, macOS and Linux on every push to master and on
+pull requests, and builds the APK and the Unraid plugin when started by hand
+from the Actions tab. A newer run cancels an older one still going on the
+same branch or pull request; tag builds and runs that publish never cancel,
+and only the newest commit publishes. Every workflow follows that rule
+(`docs/agents/ci.md`); new ones too. The same checks locally:
 
 ```sh
 cargo fmt --all --check
