@@ -11,6 +11,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer run for the same branch or pull request cancels the one still
+# going (docs/agents/ci.md). Hand-started runs (the APK and the plugin) have
+# a group of their own, so a push doesn't cancel them; tags never cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'dispatch' || 'auto' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 env:
   CARGO_TERM_COLOR: always
 

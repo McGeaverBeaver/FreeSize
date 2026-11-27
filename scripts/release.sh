@@ -39,7 +39,7 @@
 #
 # Needs everything android/build-apk.sh needs, the MinGW cross-compiler and
 # zip for the Windows build, musl-tools for the Unraid plugin's static build,
-# for the image the aarch64 cross-compiler and Docker with buildx, and the
+# for the image the aarch64 cross-compiler, Docker with buildx and jq, and the
 # GitHub CLI logged in (`gh auth login`).
 #
 # Usage: scripts/release.sh [--draft] [--build-only] [--no-image]
@@ -107,6 +107,11 @@ if $with_image; then
         echo "       and log in again (or pass --no-image)" >&2
         exit 1
     fi
+    if ! command -v jq >/dev/null; then
+        echo "error: the Docker image needs jq (to check latest never goes backwards); run:" >&2
+        echo "       sudo apt install jq (or pass --no-image)" >&2
+        exit 1
+    fi
     if ! docker info >/dev/null 2>&1; then
         echo "error: can't reach Docker; is $USER in the docker group? Log in again after adding" >&2
         echo "       it, or run this with: sg docker -c 'scripts/release.sh ...'" >&2
@@ -148,7 +153,17 @@ registry_login() {
 # Points the image's latest tag at this version, in the registry. (Until
 # 0.16.2 it also tagged the old disktree-hub name; that and disktree.plg
 # stopped at the owner's word, 2026-10-13.)
+# Never backwards: if latest already holds a newer version (an older one
+# released or published after it), latest stays where it is.
 tag_latest() {
+    local current
+    current="$(docker buildx imagetools inspect "$image:latest" --format '{{json .Image}}' 2>/dev/null |
+        jq -r 'if has("config") then . else .["linux/amd64"] end | .config.Labels["org.opencontainers.image.version"] // empty' 2>/dev/null || true)"
+    if [ -n "$current" ] && [ "$current" != "$version" ] &&
+        [ "$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)" = "$current" ]; then
+        echo "==> $image:latest holds $current, newer than $version; leaving it"
+        return
+    fi
     echo "==> Pointing $image:latest at $version"
     docker buildx imagetools create --tag "$image:latest" "$image:$version"
 }
