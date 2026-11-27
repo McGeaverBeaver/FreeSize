@@ -195,7 +195,8 @@ if [ -n "$image" ] && ! $promote; then
     # (see the Dockerfile), so arm64's steps run under QEMU.
     if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
         echo "error: the Docker image's arm64 half needs QEMU to run arm64 programs; run:" >&2
-        echo "       sudo apt install qemu-user-static binfmt-support (or pass --no-image)" >&2
+        echo "       sudo apt install qemu-user-static binfmt-support   (Ubuntu 24.04)" >&2
+        echo "       sudo apt install qemu-user-binfmt                  (newer Ubuntu; or pass --no-image)" >&2
         exit 1
     fi
 fi

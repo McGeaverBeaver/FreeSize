@@ -209,6 +209,7 @@ the token isn't left on disk. Once, on the build machine:
 
 ```sh
 sudo apt install docker.io docker-buildx gcc-aarch64-linux-gnu qemu-user-static binfmt-support
+# (on Ubuntu newer than 24.04 the QEMU package is qemu-user-binfmt instead)
 sudo usermod -aG docker $USER   # then log in again
 ```
 
