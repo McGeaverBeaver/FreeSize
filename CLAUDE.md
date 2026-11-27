@@ -78,7 +78,7 @@ every release, drafts too: the owner publishes drafts on GitHub's website.
 (the big disk is a 9p share it can't use), so images must not be built by
 compiling inside Docker.
 
-## Where things stand (0.21.1)
+## Where things stand (0.21.2)
 
 - 0.8.0: the Unraid plugin (phase 4). 0.8.1: the Android "App caches" card
   is honest: Android's own cache cleaner only empties the cache folders in
@@ -236,7 +236,13 @@ compiling inside Docker.
   merged by path, the map kept in a file on a pool. To see the page
   without a server: a folder laid out like the tests' `server()`, the
   daemon with `--root`, `php -S` with `FREESIZE_TEST_ROOT` and
-  `FREESIZE_TEST_BIN`, and Unraid's stylesheets. The devices
+  `FREESIZE_TEST_BIN`, and Unraid's stylesheets. 0.21.2: the Hub's Docker image on a
+  cut-down Debian 13 (only what the Hub and `entrypoint.sh` run; keep
+  `setpriv`, which `--cap-drop` setups need), rebuilt and checked every
+  Monday by `.github/workflows/hub-image.yml` around the Hubs in `latest`
+  (`packaging/docker/smoke-test.sh`), and the Hub's flagged Rust
+  libraries bumped (rusqlite 0.41). The release needs QEMU for the
+  image's arm64 half (`qemu-user-binfmt` on this VM). The devices
   reporting failed jobs (three in a row alert) are parked (the owner's
   call, 2026-11-09; docs/ROADMAP.md, Parked). The Hub never starts scans
   (the owner's call, 2026-10-29).

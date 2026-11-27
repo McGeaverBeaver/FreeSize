@@ -465,8 +465,9 @@ Parked, each with its reason:
   dialog still can't be shown, the same direct delete is tried before
   giving up. Errors now carry Android's own message rather than "Java
   exception was thrown".
-- The Hub's Docker image hardened (asked for by the owner, 2026-11-26;
-  on master, not a release of its own). Debian 13 slim instead of 12,
+- 0.21.2, the Hub's Docker image hardened (asked for by the owner,
+  2026-11-26; the image itself went out on 2026-11-26 through the new
+  weekly workflow, around 0.21.1's Hub). Debian 13 slim instead of 12,
   upgraded and cut down to what the Hub and its start script run (apt,
   gpgv/sqv, perl, bash, PAM, login and util-linux's libraries gone; only
   `setpriv` of util-linux kept, since it switches user with SETUID and
@@ -476,8 +477,7 @@ Parked, each with its reason:
   rebuilds and checks it around the Hubs already published and pushes
   `<version>`, `<version>-<date>` and `latest`. The Hub's flagged Rust
   libraries were bumped (rustls, rustls-webpki, webpki-roots, tokio, and
-  rusqlite 0.40 to 0.41 for SQLite 3.54); those arrive with the next
-  release. The Hub now builds on its own (`cargo build -p freesize-hub`
+  rusqlite 0.40 to 0.41 for SQLite 3.54), which 0.21.2 ships. The Hub now builds on its own (`cargo build -p freesize-hub`
   failed without the agent's `ureq` feature, so the Dockerfile's build
   stage did too).
 - 0.21.1, the Unraid plugin's Map tab (asked for by the owner,
