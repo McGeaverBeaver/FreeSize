@@ -35,6 +35,10 @@ the next release.
   (`--target aarch64-apple-darwin --exclude freesize-hub`). For Android
   changes, `scripts/android/build-apk.sh dist/test.apk` builds and checks
   the APK.
+- Every workflow in `.github/workflows/` follows `docs/agents/ci.md`: a
+  newer run cancels the older one on the same branch or pull request, tag
+  builds and publishing runs never cancel, and only the newest commit
+  publishes (`latest` never goes backwards).
 - Keep README.md (the user page), docs/DEVELOPING.md (the developer page),
   ARCHITECTURE.md and docs/ROADMAP.md in step with changes.
 - The repository is public, history included: never commit keys, tokens,
@@ -53,6 +57,10 @@ Issues live in the repository's GitHub Issues (McGeaverBeaver/freesize). See `do
 ### Triage labels
 
 The five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### CI workflows
+
+Newest run wins, tags always finish, only the newest commit publishes. See `docs/agents/ci.md`.
 
 ### Domain docs
 

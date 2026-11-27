@@ -1388,6 +1388,9 @@ that no file in the scan accounts for, on every platform.
   quarantine.
 - The name is FreeSize; the Android package id is
   `io.github.mcgeaverbeaver.freesize`, since the project has no domain.
+- CI: a newer run cancels an older one on the same branch or pull request;
+  tag builds and publishing runs never cancel, and only the newest commit
+  publishes (decided 2026-11-27, `docs/agents/ci.md`).
 - The license is GPL-3.0-or-later for everything.
 - Nextcloud beside the plugin is the supported setup; elsewhere works
   read-only through WebDAV.
