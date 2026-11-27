@@ -30,9 +30,13 @@ permissions:
   contents: read
   packages: write
 
+# Runs that push (Mondays, or by hand with "publish") share one group and
+# are never cancelled: they run one at a time, and a newer one waiting
+# replaces an older one waiting. Runs that only check are grouped per
+# branch, and a newer one cancels the one still going (docs/agents/ci.md).
 concurrency:
-  group: hub-image
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ (github.event_name == 'schedule' || inputs.publish) && 'publish' || github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'schedule' || inputs.publish) && !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   image:
@@ -113,6 +117,18 @@ jobs:
           REVISION: ${{ steps.source.outputs.revision }}
           PREVIOUS: ${{ steps.source.outputs.digest }}
         run: |
+          # Only the newest commit publishes. If the branch has moved on
+          # since this run started and the newer commit changes the image,
+          # this run's image is older code: leave latest alone.
+          head="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            git fetch --quiet --depth=1 origin "$head"
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- Dockerfile packaging/docker .github/workflows/hub-image.yml; then
+              echo "::warning::$GITHUB_REF moved to $head, which changes the image; leaving latest (run this again with publish ticked)"
+              exit 0
+            fi
+            echo "$GITHUB_REF moved to $head, which builds the same image; pushing"
+          fi
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           # Only if latest is still what was checked (a release may have
           # moved it meanwhile).
